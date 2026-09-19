@@ -53,6 +53,8 @@ Windows 不需要 WSL 即可正常开发。需要在 Windows 机器演示 POSIX 
 
 Ubuntu 24.04 安装 `build-essential cmake ninja-build python3` 和 Qt 6.10.2 的 Linux 桌面包。系统仓库的 Qt 版本可能过旧，优先使用与 CI 相同的官方 Qt 包，然后指定其路径：
 
+若用 aqtinstall 精简下载，Linux 必须同时下载 `qtbase` 和 `icu`：`python -m aqt install-qt linux desktop 6.10.2 linux_gcc_64 --archives qtbase icu --outputdir "$HOME/Qt"`。Qt 官方预编译包需要它自带的 ICU 版本，不能只依赖 Ubuntu 系统 ICU。
+
 ```sh
 cmake --preset dev -DCMAKE_PREFIX_PATH="$HOME/Qt/6.10.2/gcc_64"
 cmake --build --preset dev --parallel 2

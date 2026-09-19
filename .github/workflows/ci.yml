@@ -36,7 +36,8 @@ jobs:
         with:
           version: '6.10.2'
           cache: true
-          archives: qtbase
+          archives: ${{ runner.os == 'Linux' && 'qtbase icu' || 'qtbase' }}
+          cache-key-prefix: qt-with-linux-icu-v1
       - name: Configure
         run: cmake --preset ci
       - name: Build

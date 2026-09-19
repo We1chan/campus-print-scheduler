@@ -1,4 +1,5 @@
 #include "cps/runtime/job_io.hpp"
+#include "cps/platform/stdio.hpp"
 
 #include <QCommandLineParser>
 #include <QCoreApplication>
@@ -9,6 +10,7 @@
 #include <cstdio>
 
 int main(int argc, char* argv[]) {
+    cps::configureIpcStdio();
     QCoreApplication app(argc, argv);
     QCoreApplication::setApplicationName("print-worker");
     QCommandLineParser parser;

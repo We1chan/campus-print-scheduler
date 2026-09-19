@@ -1,4 +1,5 @@
 #include "cps/platform/daemon.hpp"
+#include "cps/platform/stdio.hpp"
 #include "cps/runtime/job_io.hpp"
 
 #include <QCommandLineParser>
@@ -51,6 +52,7 @@ int main(int argc, char* argv[]) {
         }
 #endif
     }
+    cps::configureIpcStdio();
     QCoreApplication app(argc, argv);
     QCoreApplication::setApplicationName("print-supervisor");
     QCommandLineParser parser;

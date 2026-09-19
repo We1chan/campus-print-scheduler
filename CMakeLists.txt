@@ -41,7 +41,7 @@ endif()
 
 if(CPS_BUILD_QT_APPS)
     find_package(Qt6 6.5 REQUIRED COMPONENTS Core Widgets)
-    add_library(cps_runtime src/runtime/job_io.cpp src/platform/daemon.cpp)
+    add_library(cps_runtime src/runtime/job_io.cpp src/platform/daemon.cpp src/platform/stdio.cpp)
     target_include_directories(cps_runtime PUBLIC include)
     target_link_libraries(cps_runtime PUBLIC Qt6::Core cps_core PRIVATE cps_options)
 
@@ -55,6 +55,7 @@ if(CPS_BUILD_QT_APPS)
     target_link_libraries(campus-print PRIVATE cps_runtime Qt6::Widgets cps_options)
 
     if(BUILD_TESTING)
+        set(Python3_FIND_STRATEGY LOCATION)
         find_package(Python3 3.10 REQUIRED COMPONENTS Interpreter)
         add_test(NAME process_integration COMMAND "${Python3_EXECUTABLE}"
             "${CMAKE_SOURCE_DIR}/tests/process_integration.py"

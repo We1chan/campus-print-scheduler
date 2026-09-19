@@ -59,9 +59,10 @@ class Processes(unittest.TestCase):
             self.assertFalse((self.output / "test-job.txt").exists())
 
     def test_supervisor_normal_completion(self):
-        result = self.run_command(self.command(ARGS.supervisor))
+        result = subprocess.run(self.command(ARGS.supervisor), capture_output=True, timeout=20)
         self.assertEqual(result.returncode, 0, result.stderr)
-        events = [json.loads(line) for line in result.stdout.splitlines()]
+        self.assertNotIn(b"\r", result.stdout, "IPC must preserve LF instead of CRT CRCRLF translation")
+        events = [json.loads(line) for line in result.stdout.decode("utf-8").splitlines()]
         self.assertEqual(events[-1]["type"], "supervisor_completed")
         self.assertEqual(events[-1]["restarts"], 0)
 

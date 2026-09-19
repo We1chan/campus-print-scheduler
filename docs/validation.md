@@ -18,6 +18,8 @@
 
 1. Qt 6.8.3 的旧 AGL 链接与 macOS SDK 27 不兼容：统一使用 Qt 6.10.2。
 2. macOS 系统框架不能在 fork 子进程中继续沿用继承状态：daemon 脱离后 exec 自身，再初始化 Qt。
+3. Windows CRT 文本输出会把转发的 CRLF 变成 CRCRLF，破坏 JSONL 分帧：IPC stdout 使用二进制模式，并增加原始字节检查。
+4. Linux 精简安装仅选 qtbase 缺失 ICU 73：CI 同时安装官方 `icu` archive。
 
 ## 尚未验证 / 未完成
 

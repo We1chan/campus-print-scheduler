@@ -33,7 +33,7 @@
 ## 进程通信
 
 `print-supervisor --job <file> --output-dir <dir>` 启动同目录 `print-worker`。
-stdout 为 UTF-8 JSON Lines，一行一个对象；stderr 为诊断文本。接收方应缓存未完成的一行，不能假设一次 readyRead 对应一个对象。
+stdout 为 UTF-8 JSON Lines，一行一个对象，分隔符统一为 LF；Windows CRT stdout 配置成二进制模式，避免转发时 CRLF 被二次转换。stderr 为诊断文本。接收方应缓存未完成的一行，不能假设一次 readyRead 对应一个对象。
 
 所有事件包含 `schema_version: 1`、`type`、`job_id`。
 
