@@ -1,12 +1,12 @@
 # 三人分工与验收
 
-成员名称暂用 A / B / C，不代表三个账号。每个人用自己的 Git 提交身份。后续把姓名与 GitHub handle 填入下表即可，账号邀请由仓库管理员处理。
+分工已确定：A 为 @We1chan，B 为 @YI1990442038，C 为 @korwave。每个人用自己的 Git 提交身份；A / B / C 在文档和接口约定中继续作为角色简称。
 
 | 成员 | 姓名 / GitHub | 主责 | 推荐分支 |
 | --- | --- | --- | --- |
-| [A](https://github.com/We1chan/campus-print-scheduler/issues/1) | 待填写 | 调度、状态机、性能统计、负载回放 | `feat/scheduler-*` |
-| [B](https://github.com/We1chan/campus-print-scheduler/issues/2) | 待填写 | 进程、IPC、守护、文件锁与持久化 | `feat/runtime-*` |
-| [C](https://github.com/We1chan/campus-print-scheduler/issues/3) | 待填写 | 界面、异步事件处理、跨平台集成与发布 | `feat/ui-*` / `chore/ci-*` |
+| [A](https://github.com/We1chan/campus-print-scheduler/issues/1) | [@We1chan](https://github.com/We1chan) | 调度、状态机、性能统计、负载回放 | `feat/scheduler-*` |
+| [B](https://github.com/We1chan/campus-print-scheduler/issues/2) | [@YI1990442038](https://github.com/YI1990442038) | 进程、IPC、守护、文件锁与持久化 | `feat/runtime-*` |
+| [C](https://github.com/We1chan/campus-print-scheduler/issues/3) | [@korwave](https://github.com/korwave) | 界面、异步事件处理、跨平台集成与发布 | `feat/ui-*` / `chore/ci-*` |
 
 三人投入按约 1/3 分配。共同开题、共同评审；不安排一个人只写文档或 PPT。
 

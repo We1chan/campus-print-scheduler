@@ -6,7 +6,7 @@ body:
     id: owner
     attributes:
       label: 负责成员
-      options: ['成员 A：调度与统计', '成员 B：进程与存储', '成员 C：界面与集成']
+      options: ['成员 A（@We1chan）：调度与统计', '成员 B（@YI1990442038）：进程与存储', '成员 C（@korwave）：界面与集成']
     validations:
       required: true
   - type: textarea
