@@ -5,16 +5,16 @@
 ```sh
 git switch main
 git pull --ff-only
-git switch -c feat/scheduler-aging
 # 修改本模块，运行测试
 git add <明确的文件路径>
 git commit -m "feat(scheduler): add waiting-time aging"
-git push -u origin feat/scheduler-aging
+git pull --rebase origin main
+git push origin main
 ```
 
-在 GitHub 开 PR，关联开发任务，写明行为变化与验收步骤；至少另一位成员评审，CI 三个平台通过后合并。完成后删除自己的已合并功能分支即可。不要强推 main。
+直接在 `main` 开发，按可运行增量及时 commit 和 push，不要求创建功能分支或 PR。提交中关联对应 Issue，写明行为变化和实际验证情况。
 
-初始化骨架可以由仓库管理员提交到 main；后续功能遵循上面的 PR 流程。
+三人并行开发时，开始工作前先拉取，推送前再次同步。如果远端有新提交，完成 rebase 并解决冲突，再运行受影响的检查后推送。不要强推 `main`，不要覆盖其他成员的改动。推送后查看三平台 CI，失败及时修复；公共接口仍需与相关成员沟通。
 
 ## 提交身份
 

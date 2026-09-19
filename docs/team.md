@@ -2,11 +2,11 @@
 
 分工已确定：A 为 @We1chan，B 为 @YI1990442038，C 为 @korwave。每个人用自己的 Git 提交身份；A / B / C 在文档和接口约定中继续作为角色简称。
 
-| 成员 | 姓名 / GitHub | 主责 | 推荐分支 |
+| 成员 | 姓名 / GitHub | 主责 | 开发分支 |
 | --- | --- | --- | --- |
-| [A](https://github.com/We1chan/campus-print-scheduler/issues/1) | [@We1chan](https://github.com/We1chan) | 调度、状态机、性能统计、负载回放 | `feat/scheduler-*` |
-| [B](https://github.com/We1chan/campus-print-scheduler/issues/2) | [@YI1990442038](https://github.com/YI1990442038) | 进程、IPC、守护、文件锁与持久化 | `feat/runtime-*` |
-| [C](https://github.com/We1chan/campus-print-scheduler/issues/3) | [@korwave](https://github.com/korwave) | 界面、异步事件处理、跨平台集成与发布 | `feat/ui-*` / `chore/ci-*` |
+| [A](https://github.com/We1chan/campus-print-scheduler/issues/1) | [@We1chan](https://github.com/We1chan) | 调度、状态机、性能统计、负载回放 | `main` |
+| [B](https://github.com/We1chan/campus-print-scheduler/issues/2) | [@YI1990442038](https://github.com/YI1990442038) | 进程、IPC、守护、文件锁与持久化 | `main` |
+| [C](https://github.com/We1chan/campus-print-scheduler/issues/3) | [@korwave](https://github.com/korwave) | 界面、异步事件处理、跨平台集成与发布 | `main` |
 
 三人投入按约 1/3 分配。共同开题、共同评审；不安排一个人只写文档或 PPT。
 
@@ -66,11 +66,12 @@
 
 ## 接口与评审规则
 
-- `docs/interfaces.md` 是共同契约，修改先提交小 PR，至少另一人评审。
+- 直接在 `main` 开发并及时提交推送，不要求 PR；开始工作和推送前按 `CONTRIBUTING.md` 同步远端。
+- `docs/interfaces.md` 是共同契约，接口改动与文档放在同一提交，并请相关成员核对。
 - 核心 Job / 状态机由 A 提案、B 评审；事件协议由 B 提案、C 评审；构建改动由 C 提案、至少另一平台成员验证。
 - 轮换评审：A 评 C、B 评 A、C 评 B；复杂公共接口三人共同看。
 - 每人每周提交一个可运行增量、对应测试和一个答辩素材。截图和计时必须来自实际运行。
-- 合并前 CI 必须全绿。这是团队约定，目前没有声称 GitHub 已强制启用分支保护。
+- 推送后检查三平台 CI，失败及时修复。这是团队约定，目前没有声称 GitHub 已强制启用分支保护。
 
 ## 开始的第一项任务
 
