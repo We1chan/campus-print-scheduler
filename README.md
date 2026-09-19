@@ -1,0 +1,97 @@
+# 校园共享打印任务调度与故障恢复系统
+
+[![Cross-platform CI](https://github.com/We1chan/campus-print-scheduler/actions/workflows/ci.yml/badge.svg)](https://github.com/We1chan/campus-print-scheduler/actions/workflows/ci.yml)
+
+操作系统课程设计，三人协作。使用 **C++17 + Qt 6 Widgets + CMake**，Windows 和 macOS 原生开发，Linux 用于 POSIX 守护进程验收。
+
+## 当前交付：可运行的协作起点
+
+这是 v0.1 开发骨架，**尚未完成全部课设功能**。真实打印机接入不在第一版范围内，以独立工作进程向文本文件输出模拟打印。
+
+| 功能 | 状态 |
+| --- | --- |
+| FCFS / SJF、线程安全队列、原子领取任务 | 已实现并测试 |
+| Qt 任务提交界面、两台模拟打印机 | 已实现 |
+| 独立 supervisor / worker、JSONL 进程通信 | 已实现 |
+| worker 崩溃后有限重试、静默超时检测 | 已实现并有真实进程测试 |
+| JSON 任务文件、原子提交输出、同任务文件锁 | 已实现并测试 |
+| POSIX 脱离终端的有限任务守护模式 | 已实现；Windows 使用前台监督模式 |
+| Windows / macOS / Linux 自动构建测试 | 已配置，结果见 Actions |
+| 持久任务队列、应用重启恢复、取消与暂停 | 待成员 B / A 完成 |
+| 优先级与老化、统计、数据集回放 | 待成员 A 完成 |
+| 图形化进度、故障按钮、报表、安装包 | 待成员 C 完成 |
+
+当前界面关闭会丢失内存队列；输出文件与任务描述仍留在用户数据目录。请勿把当前骨架描述成“完整断电恢复系统”。
+
+## 三个人先看这里
+
+- [三人分工与验收](docs/team.md)：A / B / C 的范围、交付物和接口负责人。
+- [Windows / macOS 开发环境](docs/development.md)：两套可复制命令和常见兼容问题。
+- [架构与演进](docs/architecture.md)：当前进程关系、目标持久化结构与 OS 对应关系。
+- [公共接口](docs/interfaces.md)：Job、状态机、JSONL、退出码，修改前先沟通。
+- [里程碑与演示](docs/milestones.md)：从当前骨架推进到完整验收。
+- [数据集策略](docs/datasets.md)：真实计算作业日志只能作为映射后的模拟打印负载。
+- [协作规则](CONTRIBUTING.md)：分支、提交、PR 与跨平台验收。
+
+## 快速运行
+
+安装 C++17 编译器、CMake >= 3.24、Ninja、Qt 6.10.2 的桌面组件，以及用于集成测试的 Python >= 3.10。
+Windows 使用 **x64 Native Tools Command Prompt for VS 2022** 或 **Developer PowerShell for VS 2022**；Qt 必须匹配 MSVC x64。
+
+```sh
+git clone git@github.com:We1chan/campus-print-scheduler.git
+cd campus-print-scheduler
+# 将下行 Qt 路径替换为你自己机器上的安装目录：
+cmake --preset dev -DCMAKE_PREFIX_PATH="<Qt安装目录>"
+cmake --build --preset dev --parallel 2
+ctest --preset dev
+```
+
+macOS / Linux：`./build/dev/bin/campus-print`
+
+Windows PowerShell：`.\build\dev\bin\campus-print.exe`
+
+只做调度核心时不需要 Qt 或 Python：
+
+```sh
+cmake --preset core
+cmake --build --preset core
+ctest --preset core
+```
+
+命令行模拟打印（Windows 给可执行文件加 `.exe`）：
+
+```sh
+./build/dev/bin/print-supervisor --job examples/demo-job.json --output-dir runtime/demo
+```
+
+输出 `runtime/demo/demo-001.txt` 与监督事件 `demo-001.events.jsonl`。完整的守护模式和故障演示见 [开发文档](docs/development.md)。
+
+## 目录
+
+```text
+include/cps/core/       纯 C++ 公共调度模型与接口（A）
+src/core/              调度实现（A）
+include/cps/runtime/   进程与文件接口（B；接口变更需评审）
+src/runtime/           JSON、路径、后续存储（B）
+src/worker/            模拟打印工作进程（B）
+src/supervisor/        独立监督、重启与超时（B）
+src/platform/          POSIX 与 Windows 平台适配（B）
+src/gui/               Qt Widgets 界面与异步事件适配（C）
+tests/                 核心并发及真实进程集成测试（各自负责模块，C 集成）
+examples/              无真实个人文档的演示数据
+docs/                  设计、协作与验收说明
+.github/               三平台 CI、Issue / PR 模板
+```
+
+## 跨平台约定
+
+- 文件名与源码统一 UTF-8、Git 统一 LF；MSVC 启用 `/utf-8`。
+- 使用 `QDir`、`QFileInfo`、`QStandardPaths`，不写死盘符、用户名或 `/tmp`。
+- 子进程用 `QProcess` 的程序名与参数列表启动，不拼接 shell 命令。
+- 业务核心不包含 `windows.h`、`unistd.h` 或 Qt GUI 头文件。
+- `fork/setsid` 仅在 `src/platform/`，Windows 编译不会接触 POSIX 头文件。
+- 构建目录、Qt 路径和 IDE 用户配置不提交；每台机器独立构建。
+- CI 检查中文及空格路径、文件互斥、真实子进程死亡和重启。
+
+仓库初始化为私有；成员名单确定后再由仓库管理员邀请真实账号。当前未授予外部协作者权限，也未选择开源许可。

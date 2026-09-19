@@ -1,0 +1,66 @@
+cmake_minimum_required(VERSION 3.24)
+project(CampusPrintScheduler VERSION 0.1.0 LANGUAGES CXX)
+
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_CXX_EXTENSIONS OFF)
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+set(CMAKE_RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
+foreach(config DEBUG RELEASE RELWITHDEBINFO MINSIZEREL)
+    set(CMAKE_RUNTIME_OUTPUT_DIRECTORY_${config} "${CMAKE_BINARY_DIR}/bin")
+endforeach()
+
+option(CPS_BUILD_QT_APPS "Build the Qt GUI, worker and supervisor" ON)
+option(CPS_WARNINGS_AS_ERRORS "Treat compiler warnings as errors" OFF)
+include(CTest)
+find_package(Threads REQUIRED)
+
+add_library(cps_options INTERFACE)
+if(MSVC)
+    target_compile_options(cps_options INTERFACE /W4 /permissive- /utf-8)
+    target_compile_definitions(cps_options INTERFACE NOMINMAX WIN32_LEAN_AND_MEAN)
+    if(CPS_WARNINGS_AS_ERRORS)
+        target_compile_options(cps_options INTERFACE /WX)
+    endif()
+else()
+    target_compile_options(cps_options INTERFACE -Wall -Wextra -Wpedantic)
+    if(CPS_WARNINGS_AS_ERRORS)
+        target_compile_options(cps_options INTERFACE -Werror)
+    endif()
+endif()
+
+add_library(cps_core src/core/scheduler.cpp)
+target_include_directories(cps_core PUBLIC include)
+target_link_libraries(cps_core PUBLIC Threads::Threads PRIVATE cps_options)
+
+if(BUILD_TESTING)
+    add_executable(core_tests tests/core_tests.cpp)
+    target_link_libraries(core_tests PRIVATE cps_core cps_options)
+    add_test(NAME scheduler COMMAND core_tests)
+endif()
+
+if(CPS_BUILD_QT_APPS)
+    find_package(Qt6 6.5 REQUIRED COMPONENTS Core Widgets)
+    add_library(cps_runtime src/runtime/job_io.cpp src/platform/daemon.cpp)
+    target_include_directories(cps_runtime PUBLIC include)
+    target_link_libraries(cps_runtime PUBLIC Qt6::Core cps_core PRIVATE cps_options)
+
+    add_executable(print-worker src/worker/main.cpp)
+    target_link_libraries(print-worker PRIVATE cps_runtime cps_options)
+    add_executable(print-supervisor src/supervisor/main.cpp)
+    target_link_libraries(print-supervisor PRIVATE cps_runtime cps_options)
+    # Flat executable layout is intentional in the development scaffold.
+    # GUI and child programs live together in build/<preset>/bin on every OS.
+    add_executable(campus-print src/gui/main.cpp)
+    target_link_libraries(campus-print PRIVATE cps_runtime Qt6::Widgets cps_options)
+
+    if(BUILD_TESTING)
+        find_package(Python3 3.10 REQUIRED COMPONENTS Interpreter)
+        add_test(NAME process_integration COMMAND "${Python3_EXECUTABLE}"
+            "${CMAKE_SOURCE_DIR}/tests/process_integration.py"
+            --worker "$<TARGET_FILE:print-worker>"
+            --supervisor "$<TARGET_FILE:print-supervisor>"
+            --gui "$<TARGET_FILE:campus-print>")
+        set_tests_properties(process_integration PROPERTIES TIMEOUT 90)
+    endif()
+endif()

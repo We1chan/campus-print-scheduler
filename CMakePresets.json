@@ -1,0 +1,35 @@
+{
+  "version": 5,
+  "cmakeMinimumRequired": {"major": 3, "minor": 24, "patch": 0},
+  "configurePresets": [
+    {
+      "name": "base",
+      "hidden": true,
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/${presetName}",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "BUILD_TESTING": "ON",
+        "CPS_WARNINGS_AS_ERRORS": "ON"
+      }
+    },
+    {"name": "dev", "inherits": "base", "displayName": "Qt development (all platforms)"},
+    {
+      "name": "core",
+      "inherits": "base",
+      "displayName": "Core algorithms only (no Qt required)",
+      "cacheVariables": {"CPS_BUILD_QT_APPS": "OFF"}
+    },
+    {"name": "ci", "inherits": "base", "cacheVariables": {"CMAKE_BUILD_TYPE": "Release"}}
+  ],
+  "buildPresets": [
+    {"name": "dev", "configurePreset": "dev"},
+    {"name": "core", "configurePreset": "core"},
+    {"name": "ci", "configurePreset": "ci"}
+  ],
+  "testPresets": [
+    {"name": "dev", "configurePreset": "dev", "output": {"outputOnFailure": true}},
+    {"name": "core", "configurePreset": "core", "output": {"outputOnFailure": true}},
+    {"name": "ci", "configurePreset": "ci", "output": {"outputOnFailure": true}}
+  ]
+}
