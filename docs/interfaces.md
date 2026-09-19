@@ -2,19 +2,41 @@
 
 这是三人协作的起始契约。字段含义、状态转换与退出码的变更必须同 PR 更新此文档。
 
-## 核心 C++ 模型
+## 核心 C++ 模型 v2（worker JSON / IPC 仍为 v1）
 
-定义：`include/cps/core/scheduler.hpp`。
+定义：`include/cps/core/scheduler.hpp`；纯 C++17，不依赖 Qt。每次领取仍为非抢占式。
 
-`Job`：`id`、UTF-8 `title`、`pages`、`copies`、`submittedMs`、`state`。
-`submittedMs` 用于排序；相同时间保持插入顺序。SJF 以 `pages * copies` 排序，假设所有打印机同速。
+`Job` 原字段 `id/title/pages/copies/submittedMs/state` 保留。新增：
 
-- `submit(Job) -> bool`：验证后入队，重复 ID 返回 false。
-- `claim(Policy) -> optional<Job>`：锁内完成选取与 Queued → Running，不存在“选出但未占用”的窗口。
-- `finish(id, success) -> bool`：只允许 Running → Completed / Failed。
-- `snapshot() -> vector<Job>`：返回独立副本，调用者不持有内部锁或引用。
+- `priority`：0–100，越大越优先；`maxAttempts`：1–100，默认 3，包含首次执行。
+- `attempts`：每次 claim 加 1，作为本次执行令牌；所有重试相关回调必须携带原令牌。
+- `queuedSinceMs`：本轮进入队列的时间；`accumulatedWaitMs`：已结束的排队区间总时长。
+- `firstStartedMs/finishedMs`：可空；`lastChangedMs`：最后一次状态变更。
+- `runs`：每次执行的 `startedMs/stoppedMs`，未结束的 stoppedMs 为空。
 
-当前状态机：`Queued → Running → Completed | Failed`。取消、持久恢复、重排队尚未实现；扩展时由 A 与 B 一起明确状态和幂等边界。
+时间为同一时间轴上的整数毫秒，范围 0–2^53−1。默认 `nowMs()` 使用构造时 UTC 毫秒锚点加 steady_clock 的经过时间；GUI 提交和结束使用同一个时钟。回放直接传入模拟时间，不读取真实时钟。注入的 Clock 必须线程安全；显式状态变更不能早于该任务上次变更。B 重启恢复时必须沿用持久时间轴，处理系统时钟倒退，不能把不同进程的原始 steady_clock 值直接持久化比较。
+
+### 排序
+
+- FCFS：本轮入队时间升序。
+- SJF：`pages * copies` 升序，再按本轮入队时间。
+- PriorityAging：`priority + floor((accumulatedWaitMs + now - queuedSinceMs) / agingIntervalMs)` 降序。默认间隔 30,000 ms，可通过 SchedulerOptions 配置；累计等待保留到重试，不包含执行时间。有效分数不封顶。同分按本轮入队时间，再保持初次插入顺序。
+- 所有策略只领取已到达且处于 Queued 的任务；完全并列保持插入顺序。重试进入本轮队尾，首次 submittedMs 不变。
+
+### 操作与状态
+
+- `submit(Job)`：只接收没有运行历史的新任务，校验参数和重复 ID；排队时间初始化为 submittedMs。
+- `claim(policy, now)`：在一个锁内完成选取、Queued → Running、令牌更新和计时；无可领取任务返回空。`claim(policy)` 使用注入时钟。
+- `finish(id, attempt, success, now)`：Running → Completed / Failed；拒绝旧令牌和重复结束。
+- `cancel(id, now)`：Queued → Cancelled（立即生效）；Running → Cancelling（只表达取消意图）。
+- `acknowledgeCancel(id, attempt, now)`：Cancelling → Cancelled。**B 确认执行已停止后**调用。取消与最终输出成功竞争时，B 确认输出已提交可调用 finish(success=true)，让成功生效。
+- `retry(id, attempt, now)`：B 确认本轮失败并停止后调用；Running → Queued，达到 maxAttempts 则直接 Failed。取消中的任务不得重新排队。
+- `snapshot()`：返回独立副本，包括所有历史计时字段；不向 UI 暴露内部引用。
+- `restore(jobs, now)`：仅向空调度器加载完整、无重复 ID、时间与状态一致的快照，失败不修改调度器。恢复顺序保持数组顺序；调用者同时恢复相同的 SchedulerOptions。不会自动认定旧 Running 已停止，也不会自行重跑；由 B 对账后调用上述操作。快照中的事件时间不能晚于 now。
+
+旧 `finish(id, success)` 仅允许首次领取的任务，保留现有 GUI 的兼容性；存在重新领取时必须用显式令牌 API。这里的 attempt 是协调层领取次数，不能和 supervisor 内部 worker 重启次数混用。
+
+B 负责快照序列化、原子持久化、进程停止与输出对账；此版本只提供内存状态与加载接口。跨进程恢复后若只能知道“现在确认进程已死”，run 的结束时间是保守估计，不能宣称精确物理打印时长。C 负责取消按钮、优先级控件及统计展示。
 
 ## Job JSON
 

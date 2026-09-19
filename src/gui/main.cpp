@@ -3,7 +3,6 @@
 
 #include <QApplication>
 #include <QComboBox>
-#include <QDateTime>
 #include <QDir>
 #include <QFormLayout>
 #include <QHeaderView>
@@ -73,7 +72,7 @@ public:
             job.title = title_->text().trimmed().toUtf8().toStdString();
             job.pages = pages_->value();
             job.copies = copies_->value();
-            job.submittedMs = QDateTime::currentMSecsSinceEpoch();
+            job.submittedMs = scheduler_.nowMs();
             if (title_->text().size() > 200 || !scheduler_.submit(job)) {
                 QMessageBox::warning(this, QStringLiteral("提交失败"), QStringLiteral("请检查文档名称和页数。"));
                 return;
@@ -106,6 +105,8 @@ private:
             case cps::JobState::Running: state = QStringLiteral("打印中"); break;
             case cps::JobState::Completed: state = QStringLiteral("已完成"); break;
             case cps::JobState::Failed: state = QStringLiteral("失败"); break;
+            case cps::JobState::Cancelling: state = QStringLiteral("取消中"); break;
+            case cps::JobState::Cancelled: state = QStringLiteral("已取消"); break;
             }
             table_->setItem(row, 0, new QTableWidgetItem(QString::fromUtf8(job.title.data(),
                 static_cast<qsizetype>(job.title.size()))));
