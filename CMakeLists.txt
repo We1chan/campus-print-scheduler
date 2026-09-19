@@ -29,7 +29,7 @@ else()
     endif()
 endif()
 
-add_library(cps_core src/core/scheduler.cpp)
+add_library(cps_core src/core/scheduler.cpp src/core/replay.cpp src/metrics/statistics.cpp)
 target_include_directories(cps_core PUBLIC include)
 target_link_libraries(cps_core PUBLIC Threads::Threads PRIVATE cps_options)
 
@@ -41,6 +41,8 @@ endif()
 
 if(CPS_BUILD_QT_APPS)
     find_package(Qt6 6.5 REQUIRED COMPONENTS Core Widgets)
+    add_executable(scheduler-replay tools/replay_main.cpp)
+    target_link_libraries(scheduler-replay PRIVATE Qt6::Core cps_core cps_options)
     add_library(cps_runtime src/runtime/job_io.cpp src/platform/daemon.cpp src/platform/stdio.cpp)
     target_include_directories(cps_runtime PUBLIC include)
     target_link_libraries(cps_runtime PUBLIC Qt6::Core cps_core PRIVATE cps_options)

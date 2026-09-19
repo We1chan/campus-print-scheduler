@@ -38,6 +38,19 @@
 
 B 负责快照序列化、原子持久化、进程停止与输出对账；此版本只提供内存状态与加载接口。跨进程恢复后若只能知道“现在确认进程已死”，run 的结束时间是保守估计，不能宣称精确物理打印时长。C 负责取消按钮、优先级控件及统计展示。
 
+## 性能统计接口
+
+`statistics(snapshot, windowStart, windowEnd, printers)` 位于 `include/cps/metrics/statistics.hpp`，输入必须是调度器产生的有效快照，描述 windowEnd 时刻。返回纯数据 Statistics，C 可直接转成显示模型。越界窗口或不足以容纳历史并发的打印机数抛出 invalid_argument。
+
+- submitted、firstStarted、completed、failed、cancelled：相应事件发生在闭区间 [start, end] 内的数量；相邻窗口汇总时注意边界事件不能重复相加。
+- averageFirstWaitMs / maxFirstWaitMs：窗口内首次开始的任务，从 submitted 到 firstStarted 的等待，不因后来失败或取消排除它们。
+- averageTotalQueueWaitMs：窗口内成功任务的所有排队区间总和的均值，包含重试等待；averageTurnaroundMs 为其 finished − submitted 的均值。失败和取消不算成功样本。
+- queued / running / cancelling：快照结束时的状态数量；maxCurrentQueueWaitMs 为仍在排队的任务的累计等待最大值。
+- busyPrinterMs：每个 runs 区间与 [start, end) 相交的毫秒总和，未结束 run 截到 end。包括失败尝试和停止确认前的取消中时间，表示执行槽位占用。
+- throughputPerSecond = completed × 1000 / 窗口毫秒；utilization = busyPrinterMs /（打印机数 × 窗口毫秒）。零长度窗口的速率和利用率为 0；空样本的均值为 0，必须结合样本数解读。
+
+`cps::replay(workload, policy, ReplayOptions)` 位于 `include/cps/core/replay.hpp`。输入为新任务，不允许夹带执行历史或重复 ID。默认 2 台、150 ms/页、30,000 ms 老化间隔，按事件推进模拟时间；返回最终 Job 快照、派发记录与全程统计。细节及命令行见 `docs/replay.md`。
+
 ## Job JSON
 
 文件 UTF-8、最大 64 KiB，写入使用原子替换。

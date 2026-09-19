@@ -1,0 +1,13 @@
+{
+  "schema_version": 1,
+  "kind": "campus-print-workload",
+  "source": {"type": "handwritten-synthetic", "description": "Two printers, simultaneous and later arrivals; priorities are demonstration values."},
+  "jobs": [
+    {"job_id": "long-early", "title": "Long document", "pages": 20, "copies": 1, "submitted_ms": 0, "priority": 0},
+    {"job_id": "short-early", "title": "Short document", "pages": 2, "copies": 1, "submitted_ms": 0, "priority": 1},
+    {"job_id": "urgent", "title": "Urgent handout", "pages": 5, "copies": 1, "submitted_ms": 0, "priority": 5},
+    {"job_id": "later", "title": "Later arrival", "pages": 3, "copies": 1, "submitted_ms": 200, "priority": 3},
+    {"job_id": "copies", "title": "Multiple copies", "pages": 2, "copies": 3, "submitted_ms": 400, "priority": 0},
+    {"job_id": "last", "title": "Last arrival", "pages": 1, "copies": 1, "submitted_ms": 1000, "priority": 2}
+  ]
+}

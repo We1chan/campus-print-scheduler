@@ -12,6 +12,8 @@
 
 ## A：调度与性能分析
 
+当前进度：优先级老化、取消/重试状态接口、快照加载、统计和负载回放已实现，详见 `docs/replay.md`。下列交付项中的新增自动化用例、正式实验材料及与 B / C 的联调仍待完成。
+
 拥有 `include/cps/core/`、`src/core/`、`tests/core_tests.cpp`。新增统计放 `src/metrics/`，回放工具放 `tools/`。
 
 在已有 FCFS / SJF 和互斥队列基础上交付：
