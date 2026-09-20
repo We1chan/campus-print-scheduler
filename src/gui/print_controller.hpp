@@ -2,6 +2,7 @@
 #include "cps/core/scheduler.hpp"
 #include "cps/metrics/statistics.hpp"
 #include "event_stream.hpp"
+#include "control_client.hpp"
 
 #include <QHash>
 #include <QObject>
@@ -24,6 +25,7 @@ struct JobView {
     JobState state = JobState::Queued;
     int printed = 0;
     QString detail;
+    bool controlReady = false;
 };
 struct PrinterView {
     QString jobId;
@@ -31,6 +33,7 @@ struct PrinterView {
     QString status = QStringLiteral("空闲");
     int printed = 0;
     int total = 0;
+    QString connection;
 };
 struct ViewState {
     QList<JobView> jobs;
@@ -56,6 +59,8 @@ public slots:
     void checkConnection();
     void exportReport(const QString& path);
     void requestClose();
+    void injectFault(const QString& id);
+    void disconnectControl(const QString& id);
 signals:
     void viewChanged(const cps::gui::ViewState& state);
     void feedback(const QString& text);
@@ -71,6 +76,10 @@ private:
         bool outputCommitted = false;
         bool supervisorCompleted = false;
         QString detail;
+        ControlClient* control = nullptr;
+        QString controlToken;
+        bool cancelRequested = false;
+        bool cancelledConfirmed = false;
     };
     bool addJob(const QString& title, int pages, int copies, int priority);
     void dispatch();

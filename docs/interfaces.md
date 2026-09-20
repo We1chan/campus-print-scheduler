@@ -81,9 +81,17 @@ stdout 为 UTF-8 JSON Lines，一行一个对象，分隔符统一为 LF；Windo
 | worker_restarting | restart、exit_code | 已决定退避后重试 |
 | supervisor_completed | restarts | 整个受监督任务成功 |
 | failed | reason 或 exit_code，可能有 restarts | 整个受监督任务失败 |
+| control_ready | port、claim_attempt | 可选回环控制端点已启动 |
+| cancelling | claim_attempt | 正在等待 worker 停止 |
+| cancelled | claim_attempt、reason | worker 已停止，本次尝试未提交输出 |
+| fault_injected | claim_attempt、worker_attempt | 演示模式结束了实际 worker |
 
 只以正常退出 0 加最终输出为任务成功依据，不因进度到 100% 就先记完成。worker 的 completed 在原子 commit 成功之后发出。
 监督事件另外追加到 `<job_id>.events.jsonl`；当前日志未记录全部 worker 进度。
+
+可选控制协议、断线重连、心跳租约及取消/提交对账见 [control-protocol.md](control-protocol.md)。
+Job JSON 版本仍为 1；新 stdout 事件是可选控制模式的增量扩展，接收方需更新事件类型校验。
+supervisor 启动的 worker 在原子输出首行写入本次 execution_token，允许取消竞争时识别本次已提交结果。
 
 ## 文件与锁
 
@@ -105,5 +113,6 @@ stdout 为 UTF-8 JSON Lines，一行一个对象，分隔符统一为 LF；Windo
 | 74 | 写入或原子提交失败 |
 | 75 | 任务文件锁已被占用 |
 | 78 | 找不到或无法启动 worker |
+| 130 | 已确认取消（正常退出；必须同时有 cancelled 事件） |
 
 Windows 的 TerminateProcess 与 POSIX 信号的退出值不同，测试只依赖成功/失败语义，不硬编码崩溃的原始退出码。

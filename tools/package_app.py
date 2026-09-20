@@ -1,5 +1,7 @@
 """Create a relocatable Qt distribution using the matching Qt deployment tool."""
 import argparse
+import hashlib
+import json
 import os
 from pathlib import Path
 import plistlib
@@ -54,6 +56,12 @@ def main():
     root = Path(__file__).resolve().parents[1]
     shutil.copy2(root / "docs" / "release.md", output / "README-release.md")
     shutil.copytree(root / "examples", output / "examples")
+    commit = subprocess.run(["git", "rev-parse", "HEAD"], cwd=root, capture_output=True, text=True, check=True).stdout.strip()
+    dirty = bool(subprocess.run(["git", "status", "--porcelain"], cwd=root, capture_output=True, text=True, check=True).stdout.strip())
+    files = [{"path": path.relative_to(output).as_posix(), "sha256": hashlib.sha256(path.read_bytes()).hexdigest()}
+             for path in sorted(output.rglob("*")) if path.is_file()]
+    (output / "release-manifest.json").write_text(json.dumps(dict(schema_version=1, source_commit=commit,
+        working_tree_dirty=dirty, platform=sys.platform, files=files), indent=2), encoding="utf-8")
     # A tarball preserves macOS executable permissions and framework symlinks.
     shutil.make_archive(str(output), archive_format, root_dir=output.parent, base_dir=output.name)
     print(output)

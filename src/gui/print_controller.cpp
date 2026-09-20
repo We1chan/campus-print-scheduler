@@ -92,14 +92,39 @@ void PrintController::importFile(const QString& path) {
 }
 
 void PrintController::cancel(const QString& id) {
-    // v1 supervisor has no cancellation/stop acknowledgement command.
-    // Never kill a supervisor and falsely acknowledge that its worker stopped.
-    if (!details_.contains(id) || details_[id].state != JobState::Queued) {
-        emit feedback(QStringLiteral("当前执行器尚不支持运行中取消；等待 B 提供停止确认接口。"));
-        return;
+    if (!details_.contains(id)) return;
+    for (auto& run : runs_) {
+        if (run && QString::fromStdString(run->job.id) == id) {
+            if (run->cancelRequested) return;
+            if (!run->control->isReady()) {
+                emit feedback(QStringLiteral("控制连接正在恢复，请连接成功后重试取消。"));
+                return;
+            }
+            if (scheduler_.cancel(run->job.id, scheduler_.nowMs())) {
+                run->cancelRequested = true;
+                run->control->sendCommand("cancel");
+                emit feedback(QStringLiteral("已请求取消，正在等待工作进程停止确认。"));
+                publish();
+            }
+            return;
+        }
     }
     scheduler_.cancel(id.toStdString(), scheduler_.nowMs());
     publish();
+}
+
+void PrintController::injectFault(const QString& id) {
+    if (!options_.demoMode) return;
+    for (auto& run : runs_) {
+        if (run && QString::fromStdString(run->job.id) == id && run->control->isReady() && !run->cancelRequested)
+            run->control->sendCommand("crash_worker");
+    }
+}
+void PrintController::disconnectControl(const QString& id) {
+    if (!options_.demoMode) return;
+    for (auto& run : runs_) {
+        if (run && QString::fromStdString(run->job.id) == id) run->control->simulateDisconnect();
+    }
 }
 
 void PrintController::setPolicy(int index) {
@@ -133,7 +158,8 @@ void PrintController::dispatch() {
         const QString jobsDirectory = QDir(options_.stateDirectory).filePath("jobs");
         const QString path = QDir(jobsDirectory).filePath(id + ".json");
         QString error;
-        if (!QDir().mkpath(jobsDirectory) || !cps::writeJob(path, *job, error)) {
+        if (!QDir().mkpath(jobsDirectory)) error = QStringLiteral("无法创建任务目录：") + jobsDirectory;
+        if (!error.isEmpty() || !cps::writeJob(path, *job, error)) {
             scheduler_.finish(job->id, job->attempts, false, scheduler_.nowMs());
             details_[id].detail = QStringLiteral("写入任务失败：") + error;
             log(details_[id].detail);
@@ -143,10 +169,31 @@ void PrintController::dispatch() {
         }
         auto* process = new QProcess(this);
         runs_[slot] = std::make_unique<Run>(*job, process);
-        printers_[slot] = {id, details_[id].title, QStringLiteral("正在启动"), 0, job->sheets()};
+        auto* run = runs_[slot].get();
+        run->controlToken = QUuid::createUuid().toString(QUuid::WithoutBraces);
+        run->control = new ControlClient(id, run->controlToken, job->attempts, this);
+        printers_[slot] = {id, details_[id].title, QStringLiteral("正在启动"), 0, job->sheets(), QStringLiteral("等待控制端点")};
+        connect(run->control, &ControlClient::connectionChanged, this, [this, slot, run, id](bool ready, const QString& state) {
+            if (runs_[slot].get() != run) return;
+            details_[id].controlReady = ready;
+            printers_[slot].connection = state;
+            log(id + ": " + state);
+            if (ready && run->cancelRequested) run->control->sendCommand("cancel");
+            publish();
+        });
+        connect(run->control, &ControlClient::messageReceived, this, [this, slot, run, id](const QJsonObject& message) {
+            if (runs_[slot].get() != run) return;
+            if (message.value("type").toString() == "control_ack" && !message.value("accepted").toBool())
+                emit feedback(QStringLiteral("执行器拒绝控制命令：") + message.value("reason").toString());
+            if (message.value("type").toString() == "control_state")
+                log(id + QStringLiteral(": 重连快照已确认，执行次数 %1").arg(message.value("worker_attempt").toInt()));
+        });
         process->setProgram(cps::siblingExecutable("print-supervisor"));
-        process->setArguments({"--job", path, "--output-dir", QDir(options_.stateDirectory).filePath("output"),
-            "--page-ms", QString::number(options_.pageMs)});
+        QStringList arguments{"--job", path, "--output-dir", QDir(options_.stateDirectory).filePath("output"),
+            "--page-ms", QString::number(options_.pageMs), "--control-token", run->controlToken,
+            "--claim-attempt", QString::number(job->attempts)};
+        if (options_.demoMode) arguments.append("--demo-mode");
+        process->setArguments(arguments);
         connect(process, &QProcess::readyReadStandardOutput, this, [this, slot] {
             auto& run = *runs_[slot];
             receive(slot, run.stream.append(run.process->readAllStandardOutput()));
@@ -180,7 +227,19 @@ void PrintController::receive(int slot, const EventBatch& batch) {
     for (const auto& error : batch.errors) log(printer.jobId + ": " + error);
     for (const auto& event : batch.events) {
         const auto type = event.value("type").toString();
-        if (type == "progress") {
+        if (event.contains("claim_attempt") && event.value("claim_attempt").toInt() != run.job.attempts) {
+            log(QStringLiteral("忽略旧执行令牌事件：") + printer.jobId);
+            continue;
+        }
+        if (type == "control_ready") {
+            run.control->start(static_cast<quint16>(event.value("port").toInt()));
+        } else if (type == "cancelling") {
+            scheduler_.cancel(run.job.id, scheduler_.nowMs());
+            printer.status = QStringLiteral("取消中 · 等待进程停止");
+        } else if (type == "cancelled") {
+            run.cancelledConfirmed = true;
+            run.detail = event.value("reason").toString();
+        } else if (type == "progress") {
             if (event.value("total_sheets").toInt() != run.job.sheets()) {
                 log(QStringLiteral("忽略总页数与任务不一致的进度：") + printer.jobId);
                 continue;
@@ -220,11 +279,22 @@ void PrintController::complete(int slot, int exitCode, QProcess::ExitStatus stat
     const QFileInfo output(QDir(options_.stateDirectory).filePath("output/" + id + ".txt"));
     const bool success = status == QProcess::NormalExit && exitCode == 0 &&
         run.outputCommitted && run.supervisorCompleted && output.isFile() && output.size() > 0;
-    scheduler_.finish(run.job.id, run.job.attempts, success, scheduler_.nowMs());
-    details_[id].detail = success ? QStringLiteral("原子输出已确认") :
+    const bool cancelled = status == QProcess::NormalExit && exitCode == 130 && run.cancelledConfirmed;
+    if (cancelled) {
+        scheduler_.cancel(run.job.id, scheduler_.nowMs());
+        scheduler_.acknowledgeCancel(run.job.id, run.job.attempts, scheduler_.nowMs());
+    } else if (!scheduler_.finish(run.job.id, run.job.attempts, success, scheduler_.nowMs())) {
+        run.detail = QStringLiteral("取消未获得停止确认，保留取消中状态；请检查进程日志。");
+    }
+    details_[id].controlReady = false;
+    details_[id].detail = cancelled ? QStringLiteral("已确认工作进程停止") : success ? QStringLiteral("原子输出已确认") :
         (run.detail.isEmpty() ? QStringLiteral("执行未成功确认（退出码 %1）；请查看日志。").arg(exitCode) : run.detail);
     if (success) details_[id].printed = run.job.sheets();
     log(id + ": " + details_[id].detail);
+    emit feedback(details_[id].title + "：" + details_[id].detail);
+    run.control->stop();
+    run.control->disconnect(this);
+    run.control->deleteLater();
     run.process->disconnect(this);
     run.process->deleteLater();
     runs_[slot].reset();

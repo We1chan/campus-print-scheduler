@@ -40,7 +40,7 @@ if(BUILD_TESTING)
 endif()
 
 if(CPS_BUILD_QT_APPS)
-    find_package(Qt6 6.5 REQUIRED COMPONENTS Core Widgets)
+    find_package(Qt6 6.5 REQUIRED COMPONENTS Core Widgets Network)
     add_executable(scheduler-replay tools/replay_main.cpp)
     target_link_libraries(scheduler-replay PRIVATE Qt6::Core cps_core cps_options)
     add_library(cps_runtime src/runtime/job_io.cpp src/platform/daemon.cpp src/platform/stdio.cpp)
@@ -49,14 +49,14 @@ if(CPS_BUILD_QT_APPS)
 
     add_executable(print-worker src/worker/main.cpp)
     target_link_libraries(print-worker PRIVATE cps_runtime cps_options)
-    add_executable(print-supervisor src/supervisor/main.cpp)
-    target_link_libraries(print-supervisor PRIVATE cps_runtime cps_options)
+    add_executable(print-supervisor src/supervisor/main.cpp src/supervisor/control_server.cpp)
+    target_link_libraries(print-supervisor PRIVATE cps_runtime Qt6::Network cps_options)
     # Flat executable layout is intentional in the development scaffold.
     # GUI and child programs live together in build/<preset>/bin on every OS.
-    add_library(cps_gui src/gui/event_stream.cpp src/gui/print_controller.cpp src/gui/print_window.cpp)
+    add_library(cps_gui src/gui/event_stream.cpp src/gui/control_client.cpp src/gui/print_controller.cpp src/gui/print_window.cpp)
     set_target_properties(cps_gui PROPERTIES AUTOMOC ON)
     target_include_directories(cps_gui PUBLIC src/gui)
-    target_link_libraries(cps_gui PUBLIC cps_runtime Qt6::Widgets PRIVATE cps_options)
+    target_link_libraries(cps_gui PUBLIC cps_runtime Qt6::Widgets Qt6::Network PRIVATE cps_options)
     add_executable(campus-print src/gui/main.cpp)
     target_link_libraries(campus-print PRIVATE cps_gui cps_options)
 
@@ -75,5 +75,9 @@ if(CPS_BUILD_QT_APPS)
             --supervisor "$<TARGET_FILE:print-supervisor>"
             --gui "$<TARGET_FILE:campus-print>")
         set_tests_properties(process_integration PROPERTIES TIMEOUT 90)
+        add_test(NAME control_integration COMMAND "${Python3_EXECUTABLE}"
+            "${CMAKE_SOURCE_DIR}/tests/control_integration.py"
+            --supervisor "$<TARGET_FILE:print-supervisor>")
+        set_tests_properties(control_integration PROPERTIES TIMEOUT 90)
     endif()
 endif()

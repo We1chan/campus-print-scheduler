@@ -1,6 +1,6 @@
 # 成员 C 验证记录
 
-日期：2026-09-20。范围为 Issue #3 的当前本地执行器版本。
+日期：2026-09-20。范围为 Issue #3 的本地执行器及可选控制协议。
 
 ## 本机实际执行
 
@@ -25,9 +25,19 @@
 中对应提交查看。工作流会保存 CTest 日志与 QtTest JUnit，Windows/macOS 另保存已部署 Qt 的归档包。
 macOS 包使用 tar.gz 保留可执行权限和 framework 符号链接。
 
+## 本次继续实现的控制与部署验证
+
+- 新增 control_integration 后，本机 Release 的 4 个 CTest 套件通过。
+- 实际 TCP 与子进程用例覆盖运行中取消、旧输出保护、控制重连、worker 故障重启、非演示模式拒绝故障、
+  旧 claim_attempt/错误令牌拒绝、控制租约超时、退避中取消、取消与原子提交竞争及控制命令拆包/粘包。
+- Windows 原生 `runningCancelFaultAndReconnect` 场景通过，保存连接、重连后和取消完成三张真实窗口截图。
+- GUI 新增运行中取消与演示权限测试；结束时检查没有遗留本项目 GUI、supervisor、worker。
+- CI 增加 Windows/macOS 原生界面演示记录，以及全新 runner 下载发布包后进行的文件哈希校验、
+  GUI 启动、打印及控制集成测试。独立 job 不安装 Qt、不构建源代码；实际状态以对应提交的 Actions 为准。
+
 ## 验收边界
 
 - 尚未获得独立无 Qt 开发环境 Windows/macOS 机器上的人工验收记录。
-- B 的运行中取消、后台服务断线重连、受控故障接口尚未提供，不把禁用入口记作功能已完成。
+- 单任务取消、控制连接重连和演示故障已真实执行；B 的持久服务生命周期与应用级恢复仍在 Issue #2 范围。
 - 未实现应用级持久队列、真实打印机、Windows Service 或真实纸张 exactly-once。
 - 原生 Windows 截图来自真实运行；Linux/macOS offscreen 启动和 CI 不等于两平台人工演示。

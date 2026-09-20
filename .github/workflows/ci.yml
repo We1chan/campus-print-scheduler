@@ -46,6 +46,14 @@ jobs:
         run: ctest --preset ci
         env:
           QT_QPA_PLATFORM: offscreen
+      - name: Capture native desktop control scenarios
+        if: runner.os != 'Linux'
+        run: |
+          python -c "from pathlib import Path; Path('runtime').mkdir(exist_ok=True)"
+          ./build/ci/bin/gui_tests${{ runner.os == 'Windows' && '.exe' || '' }} runningCancelFaultAndReconnect -o runtime/native-gui-tests.txt,txt
+        env:
+          QT_QPA_PLATFORM: ${{ runner.os == 'Windows' && 'windows' || 'cocoa' }}
+          CPS_GUI_EVIDENCE_DIR: ${{ github.workspace }}/runtime/native-gui-evidence
       - name: Deploy Qt runtime
         if: runner.os != 'Linux'
         run: python tools/package_app.py --bin-dir build/ci/bin --qt-bin "${{ env.QT_ROOT_DIR }}/bin" --output-dir dist/campus-print
@@ -68,3 +76,30 @@ jobs:
           path: |
             build/ci/Testing/Temporary/
             build/ci/gui-results.xml
+            runtime/native-gui-tests.txt
+            runtime/native-gui-evidence/
+  verify-desktop-package:
+    name: Independent runtime / ${{ matrix.os }}
+    needs: build-and-test
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            artifact: Windows
+          - os: macos-latest
+            artifact: macOS
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      # This job never installs Qt, CMake or a compiler, and never builds the app.
+      - uses: actions/download-artifact@v4
+        with:
+          name: campus-print-${{ matrix.artifact }}
+          path: downloaded-package
+      - name: Verify downloaded archive in independent runtime
+        run: python tools/verify_package.py --archive-dir downloaded-package --output-dir runtime/independent

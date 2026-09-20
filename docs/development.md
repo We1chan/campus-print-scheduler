@@ -94,7 +94,7 @@ macOS / Linux 使用 `kill -TERM <worker_pid>`。不要结束同名的其他项�
 GUI 数据使用 `QStandardPaths::AppLocalDataLocation`。具体绝对路径显示在界面底部。任务 ID 是文件名，文档标题不参与路径拼接。
 
 新增 `--data-dir runtime/gui` 可把运行数据集中在项目目录内，便于课设结束清理；
-`--demo-mode` 显示故障接口接入状态。批量输入和进度说明见 [gui.md](gui.md)，
+`--demo-mode` 启用真实工作进程故障与控制断线演示。批量输入和进度说明见 [gui.md](gui.md)，
 Qt 部署脚本与发布验收见 [release.md](release.md)。新 GUI 自动化用例随 CTest 一起运行。
 
 `CMakeUserPresets.json` 已被忽略，可放个人 Qt 路径；不要把别人的路径写进 `CMakeLists.txt`。换编译器或跨机器时重新生成 build 目录，不能复制 CMakeCache。

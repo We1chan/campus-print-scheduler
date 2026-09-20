@@ -16,8 +16,10 @@ python tests/package_smoke.py --package-dir dist/campus-print
 `macdeployqt` 并创建 `CampusPrint.app`。所有子进程在 GUI 的可执行文件目录，保持现有定位接口。
 Windows 分发整个目录；macOS 分发整个 `.app`。不能单独复制 GUI 可执行文件。
 
-CI 在 Windows/macOS 生成发布目录，清除 Qt SDK 环境变量后运行 GUI 启动和实际打印测试，再上传对应产物。
-这些检查可发现依赖遗漏，但 runner 上仍安装过 Qt，不能等同于“无开发环境机器已验收”。
+CI 在 Windows/macOS 生成发布目录和文件 SHA-256 清单，清除 Qt SDK 环境变量后运行 GUI 启动和实际打印测试，上传对应产物。
+后续独立 job 使用新的 runner，只下载包，不安装 Qt/CMake/编译器、不构建程序；校验提交号和所有文件哈希，
+再执行原生 GUI 启动、中文打印以及完整取消/重连/故障控制测试。测试前确认 PATH 没有 Qt SDK 工具。
+这提供独立 CI 部署验收；课堂现场人工操作和特定版本干净系统兼容性仍应单独记录。
 此课设包未签名、未做 macOS notarization；正式对外分发前另行处理签名和第三方许可材料。
 
 ## 运行与数据位置
@@ -34,7 +36,7 @@ macOS：
 ./CampusPrint.app/Contents/MacOS/campus-print --data-dir ./runtime
 ```
 
-可添加 `--demo-mode` 显示故障控制接口的接入状态。当前 B 未提供控制接口，故障按钮禁用。
+可添加 `--demo-mode` 显示并启用真实 worker 崩溃、控制通道断开演示按钮。默认模式隐藏这些按钮。
 不指定 `--data-dir` 时沿用 Qt 的用户数据目录；具体位置显示在界面底部。
 为了课程结束方便清理，建议总是指定项目目录内的 `runtime/`。
 
@@ -44,6 +46,8 @@ macOS：
 | --- | --- | --- | --- | --- | --- |
 | Windows | 待验证 | 待验证 | 待验证 | 待验证 | 不以 CI 代替 |
 | macOS | 待验证 | 待验证 | 待验证 | 待验证 | 不以 CI 代替 |
+
+自动化证据：三平台 CTest；Windows/macOS 原生 GUI 演示截图；两个 `Independent runtime` job 的包校验与实际执行日志。
 
 验收时保留系统版本、包对应提交、输入与报表、真实截图。仅复制包及示例到新机器，
 不要设置开发机 Qt 的 PATH。两台机器分别操作提交、暂停派发、取消等待任务、错误输入和关闭保护。

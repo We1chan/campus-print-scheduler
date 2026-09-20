@@ -10,6 +10,7 @@
 #include <QLabel>
 #include <QLineEdit>
 #include <QPushButton>
+#include <QPlainTextEdit>
 #include <QSpinBox>
 #include <QTableView>
 #include <QTemporaryDir>
@@ -167,6 +168,55 @@ private slots:
         if (!screenshot.isEmpty()) QVERIFY(window.grab().save(screenshot));
         window.close();
         QTRY_VERIFY(!window.isVisible());
+    }
+
+    void runningCancelFaultAndReconnect() {
+        QTemporaryDir root;
+        PrintWindow window({root.path(), 30, true});
+        window.show();
+        auto* pages = window.findChild<QSpinBox*>("jobPages");
+        pages->setValue(100);
+        auto* submit = window.findChild<QPushButton*>("submitJob");
+        QTest::mouseClick(submit, Qt::LeftButton);
+        QTest::mouseClick(submit, Qt::LeftButton);
+        auto* table = window.findChild<QTableView*>("jobsTable");
+        QTRY_COMPARE(table->model()->rowCount(), 2);
+        table->selectRow(0);
+        auto* fault = window.findChild<QPushButton*>("injectFault");
+        auto* disconnect = window.findChild<QPushButton*>("disconnectControl");
+        auto* cancel = window.findChild<QPushButton*>("cancelJob");
+        auto* log = window.findChild<QPlainTextEdit*>();
+        QVERIFY(fault && disconnect && cancel && log);
+        QTRY_VERIFY(fault->isEnabled());
+        const auto evidence = qEnvironmentVariable("CPS_GUI_EVIDENCE_DIR");
+        auto screenshot = [&](const QString& name) {
+            if (evidence.isEmpty()) return true;
+            return QDir().mkpath(evidence) && window.grab().save(QDir(evidence).filePath(name));
+        };
+        QVERIFY(screenshot("01-connected.png"));
+        QTest::mouseClick(fault, Qt::LeftButton);
+        QTRY_VERIFY(log->toPlainText().contains("worker_restarting"));
+        QTest::mouseClick(disconnect, Qt::LeftButton);
+        QTRY_VERIFY(log->toPlainText().contains(QStringLiteral("控制连接断开")));
+        QTRY_VERIFY(cancel->isEnabled());
+        QVERIFY(screenshot("02-reconnected.png"));
+        QTest::mouseClick(cancel, Qt::LeftButton);
+        QTRY_COMPARE(table->model()->index(0, 3).data().toString(), QStringLiteral("已取消"));
+        table->selectRow(1);
+        QTRY_VERIFY(cancel->isEnabled());
+        QTest::mouseClick(cancel, Qt::LeftButton);
+        QTRY_COMPARE(table->model()->index(1, 3).data().toString(), QStringLiteral("已取消"));
+        QVERIFY(screenshot("03-cancelled.png"));
+        QVERIFY(QDir(root.path() + "/output").entryList({"*.txt"}, QDir::Files).isEmpty());
+        window.close();
+        QTRY_VERIFY(!window.isVisible());
+    }
+
+    void demoControlsAbsentInNormalMode() {
+        QTemporaryDir root;
+        PrintWindow window({root.path(), 10, false});
+        QVERIFY(!window.findChild<QPushButton*>("injectFault"));
+        QVERIFY(!window.findChild<QPushButton*>("disconnectControl"));
     }
 };
 

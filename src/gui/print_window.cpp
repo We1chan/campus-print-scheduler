@@ -40,6 +40,7 @@ QVariant JobTableModel::data(const QModelIndex& index, int role) const {
     const auto& job = jobs_[index.row()];
     if (role == Qt::UserRole) return job.id;
     if (role == Qt::UserRole + 1) return static_cast<int>(job.state);
+    if (role == Qt::UserRole + 2) return job.controlReady;
     if (role == Qt::ToolTipRole) return job.detail.isEmpty() ? job.id : job.detail;
     if (role != Qt::DisplayRole) return {};
     switch (index.column()) {
@@ -68,7 +69,7 @@ void JobTableModel::update(const QList<JobView>& jobs) {
     for (qsizetype row = 0; row < oldSize; ++row) {
         const auto& next = jobs[row];
         auto& current = jobs_[row];
-        if (current.state != next.state || current.printed != next.printed || current.detail != next.detail) {
+        if (current.state != next.state || current.printed != next.printed || current.detail != next.detail || current.controlReady != next.controlReady) {
             current = next;
             emit dataChanged(index(static_cast<int>(row), 3), index(static_cast<int>(row), 5));
         }
@@ -132,6 +133,7 @@ PrintWindow::PrintWindow(WindowOptions options, QWidget* parent) : QMainWindow(p
     form->addRow(numbers);
     auto* policy = new QComboBox;
     policy->addItems({QStringLiteral("先来先服务 FCFS"), QStringLiteral("短作业优先 SJF"), QStringLiteral("优先级 + 等待老化")});
+    policy->setObjectName("schedulingPolicy");
     form->addRow(QStringLiteral("等待任务排序"), policy);
     auto* buttons = new QHBoxLayout;
     auto* submit = new QPushButton(QStringLiteral("提交模拟打印")); submit->setObjectName("submitJob");
@@ -163,14 +165,17 @@ PrintWindow::PrintWindow(WindowOptions options, QWidget* parent) : QMainWindow(p
     auto* pause = new QPushButton(QStringLiteral("暂停派发"));
     pause->setObjectName("pauseDispatch"); pause->setCheckable(true);
     pause->setToolTip(QStringLiteral("只暂停领取新任务；已运行的任务继续打印。")); actions->addWidget(pause);
-    cancel_ = new QPushButton(QStringLiteral("取消选中等待任务"));
+    cancel_ = new QPushButton(QStringLiteral("取消选中任务"));
     cancel_->setObjectName("cancelJob"); cancel_->setEnabled(false); actions->addWidget(cancel_);
     auto* report = new QPushButton(QStringLiteral("导出统计报表")); actions->addWidget(report); actions->addStretch();
     if (options.demoMode) {
-        auto* fault = new QPushButton(QStringLiteral("故障注入（接口待接入）"));
-        fault->setEnabled(false);
-        fault->setToolTip(QStringLiteral("B 尚未提供故障控制命令；目前可按开发文档结束指定 worker PID 演示恢复。"));
-        actions->addWidget(fault);
+        fault_ = new QPushButton(QStringLiteral("演示：工作进程崩溃"));
+        fault_->setObjectName("injectFault"); fault_->setEnabled(false);
+        fault_->setToolTip(QStringLiteral("结束选中任务的真实 worker，观察监督进程有限重试。"));
+        actions->addWidget(fault_);
+        disconnect_ = new QPushButton(QStringLiteral("演示：控制连接断开"));
+        disconnect_->setObjectName("disconnectControl"); disconnect_->setEnabled(false);
+        actions->addWidget(disconnect_);
     }
     layout->addLayout(actions);
     auto* splitter = new QSplitter(Qt::Vertical);
@@ -192,7 +197,8 @@ PrintWindow::PrintWindow(WindowOptions options, QWidget* parent) : QMainWindow(p
     connection_ = new QLabel(QStringLiteral("正在检查本地执行器…")); connectionLayout->addWidget(connection_);
     auto* check = new QPushButton(QStringLiteral("重新检查执行器")); connectionLayout->addWidget(check);
     connectionLayout->addStretch(); layout->addLayout(connectionLayout);
-    layout->addWidget(new QLabel(QStringLiteral("运行中取消、后台服务重连：等待进程模块接口接入。")));
+    layout->addWidget(new QLabel(options.demoMode ? QStringLiteral("演示模式：可注入真实 worker 故障和控制连接断开。") :
+        QStringLiteral("运行中取消会等待进程停止确认；控制连接中断会自动重连。")));
     auto* location = new QLabel(QStringLiteral("运行数据目录：") + options.stateDirectory);
     location->setWordWrap(true); location->setTextInteractionFlags(Qt::TextSelectableByMouse); layout->addWidget(location);
     setCentralWidget(central);
@@ -208,6 +214,14 @@ PrintWindow::PrintWindow(WindowOptions options, QWidget* parent) : QMainWindow(p
     connect(this, &PrintWindow::checkRequested, controller_, &PrintController::checkConnection, Qt::QueuedConnection);
     connect(this, &PrintWindow::exportRequested, controller_, &PrintController::exportReport, Qt::QueuedConnection);
     connect(this, &PrintWindow::closeRequested, controller_, &PrintController::requestClose, Qt::QueuedConnection);
+    connect(this, &PrintWindow::faultRequested, controller_, &PrintController::injectFault, Qt::QueuedConnection);
+    connect(this, &PrintWindow::disconnectRequested, controller_, &PrintController::disconnectControl, Qt::QueuedConnection);
+    if (fault_) connect(fault_, &QPushButton::clicked, this, [this] {
+        emit faultRequested(table_->currentIndex().data(Qt::UserRole).toString());
+    });
+    if (disconnect_) connect(disconnect_, &QPushButton::clicked, this, [this] {
+        emit disconnectRequested(table_->currentIndex().data(Qt::UserRole).toString());
+    });
     connect(controller_, &PrintController::closeReady, this, [this](bool allowed) {
         closePending_ = false; centralWidget()->setEnabled(true);
         if (allowed) { closeApproved_ = true; close(); }
@@ -248,7 +262,7 @@ void PrintWindow::applyView(const ViewState& view) {
     connection_->setText(view.connection + (view.paused ? QStringLiteral(" · 已暂停派发") : QString()));
     for (int i = 0; i < 2; ++i) {
         const auto& printer = view.printers[i];
-        printerLabels_[i]->setText(printer.title.isEmpty() ? printer.status : printer.title.left(65) + "\n" + printer.status);
+        printerLabels_[i]->setText(printer.title.isEmpty() ? printer.status : printer.title.left(55) + "\n" + printer.status + " · " + printer.connection);
         progressBars_[i]->setRange(0, printer.total > 0 ? printer.total : 100);
         progressBars_[i]->setValue(printer.printed);
         progressBars_[i]->setFormat(printer.total > 0 ? QStringLiteral("%v / %m 页（%p%）") : QStringLiteral("空闲"));
@@ -262,8 +276,12 @@ void PrintWindow::applyView(const ViewState& view) {
 void PrintWindow::updateSelection() {
     const auto current = table_->currentIndex();
     const bool queued = current.isValid() && current.data(Qt::UserRole + 1).toInt() == static_cast<int>(JobState::Queued);
-    cancel_->setEnabled(queued);
-    cancel_->setToolTip(queued ? QStringLiteral("立即取消尚未领取的任务") : QStringLiteral("请选择等待任务；运行中取消需执行器提供停止确认接口。"));
+    const bool running = current.isValid() && current.data(Qt::UserRole + 1).toInt() == static_cast<int>(JobState::Running);
+    const bool connected = current.data(Qt::UserRole + 2).toBool();
+    cancel_->setEnabled(queued || (running && connected));
+    cancel_->setToolTip(queued ? QStringLiteral("立即取消尚未领取的任务") : QStringLiteral("请求停止正在执行的任务，收到停止确认后生效。"));
+    if (fault_) fault_->setEnabled(running && connected);
+    if (disconnect_) disconnect_->setEnabled(running && connected);
 }
 void PrintWindow::closeEvent(QCloseEvent* event) {
     if (closeApproved_) { event->accept(); return; }

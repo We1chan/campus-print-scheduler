@@ -47,6 +47,8 @@ signals:
     void checkRequested();
     void exportRequested(const QString& path);
     void closeRequested();
+    void faultRequested(const QString& id);
+    void disconnectRequested(const QString& id);
 protected:
     void closeEvent(QCloseEvent* event) override;
 private:
@@ -63,6 +65,8 @@ private:
     std::array<QLabel*, 2> printerLabels_{};
     std::array<QProgressBar*, 2> progressBars_{};
     QPushButton* cancel_ = nullptr;
+    QPushButton* fault_ = nullptr;
+    QPushButton* disconnect_ = nullptr;
     QPlainTextEdit* log_ = nullptr;
     StatisticsChart* chart_ = nullptr;
     bool closeApproved_ = false;

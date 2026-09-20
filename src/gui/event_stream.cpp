@@ -33,6 +33,10 @@ void EventStream::parse(const QByteArray& line, EventBatch& result) const {
         valid = valid && integer(event.value("restarts"), 0, 10);
     } else if (type == "failed") {
         valid = valid && (event.value("reason").isString() || event.value("exit_code").isDouble());
+    } else if (type == "control_ready") {
+        valid = valid && integer(event.value("port"), 1, 65535) && integer(event.value("claim_attempt"), 1, 100);
+    } else if (type == "cancelling" || type == "cancelled" || type == "fault_injected") {
+        valid = valid && integer(event.value("claim_attempt"), 1, 100);
     } else if (type != "worker_timeout") {
         valid = false;
     }
