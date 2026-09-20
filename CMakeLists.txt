@@ -53,10 +53,20 @@ if(CPS_BUILD_QT_APPS)
     target_link_libraries(print-supervisor PRIVATE cps_runtime cps_options)
     # Flat executable layout is intentional in the development scaffold.
     # GUI and child programs live together in build/<preset>/bin on every OS.
+    add_library(cps_gui src/gui/event_stream.cpp src/gui/print_controller.cpp src/gui/print_window.cpp)
+    set_target_properties(cps_gui PROPERTIES AUTOMOC ON)
+    target_include_directories(cps_gui PUBLIC src/gui)
+    target_link_libraries(cps_gui PUBLIC cps_runtime Qt6::Widgets PRIVATE cps_options)
     add_executable(campus-print src/gui/main.cpp)
-    target_link_libraries(campus-print PRIVATE cps_runtime Qt6::Widgets cps_options)
+    target_link_libraries(campus-print PRIVATE cps_gui cps_options)
 
     if(BUILD_TESTING)
+        find_package(Qt6 6.5 REQUIRED COMPONENTS Test)
+        add_executable(gui_tests tests/gui_tests.cpp)
+        set_target_properties(gui_tests PROPERTIES AUTOMOC ON)
+        target_link_libraries(gui_tests PRIVATE cps_gui Qt6::Test cps_options)
+        add_test(NAME gui COMMAND gui_tests -o "${CMAKE_BINARY_DIR}/gui-results.xml,junitxml" -o -,txt)
+        set_tests_properties(gui PROPERTIES TIMEOUT 60 ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
         set(Python3_FIND_STRATEGY LOCATION)
         find_package(Python3 3.10 REQUIRED COMPONENTS Interpreter)
         add_test(NAME process_integration COMMAND "${Python3_EXECUTABLE}"

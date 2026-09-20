@@ -1,0 +1,6 @@
+[
+  {"title": "操作系统课程报告", "pages": 30, "copies": 1, "priority": 10},
+  {"title": "实验签到表", "pages": 2, "copies": 2, "priority": 80},
+  {"title": "长文档 老化演示", "pages": 80, "copies": 1, "priority": 0},
+  {"title": "课程设计封面", "pages": 1, "copies": 3, "priority": 40}
+]

@@ -46,3 +46,25 @@ jobs:
         run: ctest --preset ci
         env:
           QT_QPA_PLATFORM: offscreen
+      - name: Deploy Qt runtime
+        if: runner.os != 'Linux'
+        run: python tools/package_app.py --bin-dir build/ci/bin --qt-bin "${{ env.QT_ROOT_DIR }}/bin" --output-dir dist/campus-print
+      - name: Test deployed application without SDK paths
+        if: runner.os != 'Linux'
+        run: python tests/package_smoke.py --package-dir dist/campus-print
+      - name: Upload desktop package
+        if: runner.os != 'Linux'
+        uses: actions/upload-artifact@v4
+        with:
+          name: campus-print-${{ runner.os }}
+          path: |
+            dist/*.zip
+            dist/*.tar.gz
+      - name: Upload test evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-evidence-${{ runner.os }}
+          path: |
+            build/ci/Testing/Temporary/
+            build/ci/gui-results.xml
