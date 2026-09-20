@@ -174,8 +174,11 @@ private slots:
         QTemporaryDir root;
         PrintWindow window({root.path(), 30, true});
         window.show();
+        // Cocoa activation/exposure is asynchronous. Don't start short-lived
+        // work before the native window is available for interaction.
+        QVERIFY(QTest::qWaitForWindowExposed(&window));
         auto* pages = window.findChild<QSpinBox*>("jobPages");
-        pages->setValue(100);
+        pages->setValue(1000); // Keep both jobs alive until explicitly cancelled.
         auto* submit = window.findChild<QPushButton*>("submitJob");
         QTest::mouseClick(submit, Qt::LeftButton);
         QTest::mouseClick(submit, Qt::LeftButton);
@@ -187,7 +190,10 @@ private slots:
         auto* cancel = window.findChild<QPushButton*>("cancelJob");
         auto* log = window.findChild<QPlainTextEdit*>();
         QVERIFY(fault && disconnect && cancel && log);
-        QTRY_VERIFY(fault->isEnabled());
+        QTRY_VERIFY2(fault->isEnabled(), qPrintable(QStringLiteral("state=%1 ready=%2 current=%3; %4")
+            .arg(table->model()->index(0, 3).data().toString())
+            .arg(table->model()->index(0, 0).data(Qt::UserRole + 2).toBool())
+            .arg(table->currentIndex().row()).arg(log->toPlainText())));
         const auto evidence = qEnvironmentVariable("CPS_GUI_EVIDENCE_DIR");
         auto screenshot = [&](const QString& name) {
             if (evidence.isEmpty()) return true;
