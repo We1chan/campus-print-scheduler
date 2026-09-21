@@ -34,6 +34,8 @@
 
 拥有 `src/runtime/`、`src/worker/`、`src/supervisor/`、`src/platform/` 及相应头文件；负责进程集成测试的运行逻辑。
 
+当前进度：已实现完整 Scheduler JSON 快照、`print-coordinator` 独立后台协调进程、QLocalServer/QLocalSocket JSONL 控制协议、单实例锁、先持久化再执行、Running/Cancelling 启动恢复对账、attempt 唯一取消 marker、supervisor 取消处理、POSIX coordinator daemon，以及相应状态/协调器集成测试。现有 GUI 尚未切换到该 IPC，因此与 C 的联调仍是下一步。
+
 在已有单任务 supervisor / worker、文件锁、原子输出基础上交付：
 
 1. 建立持久队列与独立后台协调服务，把内存队列从 GUI 生命周期中分离。
@@ -80,5 +82,5 @@ GUI 自动化及 Qt 打包脚本已实现，见 [gui.md](gui.md)。已补充单�
 ## 开始的第一项任务
 
 - A：补优先级老化及固定输入下的算法测试；保持已有 FCFS / SJF 用例通过。
-- B：设计持久化状态与恢复协议，先实现 JSON 快照或 SQLite 事务中的一种，不同时维护两套。
+- B：首轮持久化状态、coordinator、恢复与取消链路已完成；下一步与 C 联调 GUI 本地 IPC，并根据三平台 CI 结果修复兼容问题。
 - C：将日志文本升级为按 job_id 关联的进度展示，并覆盖消息拆包/粘包测试。

@@ -63,6 +63,18 @@ QT_QPA_PLATFORM=offscreen ctest --preset dev
 
 图形界面需要桌面环境或 WSLg；命令行 worker / supervisor 不需要显示服务器。
 
+## B 组持久 coordinator
+
+前台启动示例：
+
+```powershell
+.\build\dev\bin\print-coordinator.exe --state-dir "$PWD\runtime\service" --socket-name campus-print-dev
+```
+
+macOS / Linux 去掉 `.exe`。状态目录包含 `state.json`、`jobs/`、`output/`、`control/` 与 `.coordinator.lock`。服务通过 QLocalServer 提供 JSONL 本地 IPC；协议见 `docs/interfaces.md`。当前 GUI 仍使用旧链路，因此该服务主要用于 B 组集成测试和 C 组后续接入。
+
+Coordinator 每次领取任务先原子保存 Running/attempt，再启动 supervisor。服务异常重启时，不会直接把旧 Running 任务重新打印：先看最终输出，再检查 supervisor/output 两把锁，确认执行停止后才重试。Running 取消用 `<job_id>.<attempt>.cancel` marker 保留意图。
+
 ## 按任务演示监督进程
 
 所有平台支持前台监督。下面用 PowerShell 示例：
@@ -85,7 +97,13 @@ macOS / Linux 使用 `kill -TERM <worker_pid>`。不要结束同名的其他项�
 ```
 
 `--job` 与 `--output-dir` 在 daemon 模式必须是绝对路径。父进程退出只表示已发起脱离，**任务是否成功以 `.events.jsonl` 的 `supervisor_completed` 和最终输出为准**。
-当前 daemon 是有限任务监督示例，任务完成后会退出；持久队列后台服务属于成员 B 的后续工作。
+`print-supervisor --daemon` 仍是有限任务监督示例。持久 coordinator 也支持 POSIX daemon，但 daemon 模式必须显式传绝对 `--state-dir`：
+
+```sh
+./build/dev/bin/print-coordinator --daemon --state-dir "$PWD/runtime/service" --socket-name campus-print-service
+```
+
+Windows 上 coordinator 和 supervisor 的 `--daemon` 都返回明确的不支持错误，使用前台进程模式。
 
 ## 构建目录与运行数据
 
@@ -102,7 +120,8 @@ Qt 部署脚本与发布验收见 [release.md](release.md)。新 GUI 自动化�
 ## 当前测试
 
 - 核心：FCFS/SJF、公平并列顺序、非法参数、状态转换、4 个生产线程 + 4 个消费线程。
-- 集成：实际启动 Qt GUI、worker/supervisor，中文空格路径、文件锁、坏输入、强制终止工作进程及重启、POSIX daemon。
+- 集成：实际启动 Qt GUI、worker/supervisor，中文空格路径、文件锁、坏输入、强制终止工作进程及重启、supervisor 取消 marker、POSIX daemon。
+- B coordinator：持久快照 round-trip/损坏校验、单实例与 socket 名冲突、正常完成、重启后已完成任务不重复执行、Scheduler 尝试次数耗尽、不可用输出目录、Running 取消、coordinator 被杀后的恢复、平台 daemon 语义。
 - Release 构建使用显式断言函数，不依赖被 NDEBUG 关闭的 `assert()`。
 - CI offscreen 测试可证明启动链路，不能替代每个平台的一次人工界面验收。
 

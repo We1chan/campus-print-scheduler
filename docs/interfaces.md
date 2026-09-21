@@ -36,7 +36,7 @@
 
 旧 `finish(id, success)` 仅允许首次领取的任务，保留现有 GUI 的兼容性；存在重新领取时必须用显式令牌 API。这里的 attempt 是协调层领取次数，不能和 supervisor 内部 worker 重启次数混用。
 
-B 负责快照序列化、原子持久化、进程停止与输出对账；此版本只提供内存状态与加载接口。跨进程恢复后若只能知道“现在确认进程已死”，run 的结束时间是保守估计，不能宣称精确物理打印时长。C 负责取消按钮、优先级控件及统计展示。
+B 使用 `state_store` 完成快照序列化与原子持久化，并由 `print-coordinator` 负责进程停止、输出对账和恢复。跨进程恢复后若只能知道“现在确认进程已死”，run 的结束时间是保守估计，不能宣称精确物理打印时长。C 负责取消按钮、优先级控件及统计展示。
 
 ## 性能统计接口
 
@@ -63,11 +63,33 @@ B 负责快照序列化、原子持久化、进程停止与输出对账；此版
 - title：去空白后非空、最多 200 个 Qt UTF-16 code units，用作展示文本，不作文件名。
 - pages：整数 1–1000；copies：整数 1–100；总页数不超过 10,000。
 - schema_version 必须为数值 1。未知字段目前忽略，未来不兼容变更升版本。
-- v1 文件没有 submittedMs；GUI 排队时间保留在内存模型。后续持久队列必须补独立存储 schema，不能假定 worker 文件可恢复完整队列。
+- v1 worker 文件没有 submittedMs，也不包含状态历史；不能用它恢复完整队列。完整 Scheduler 快照由 coordinator 的独立持久状态保存。
+
+## 持久化协调状态 v1
+
+`include/cps/runtime/state_store.hpp` 定义 `PersistentState`。coordinator 将它以 UTF-8 JSON 原子写入 `<state-dir>/state.json`，最大读取 64 MiB。
+
+顶层字段：`schema_version: 1`、`kind: campus-print-state`、`saved_at_ms`、`policy`、`printers`、`aging_interval_ms`、`jobs`。每个 job 保存核心模型的全部恢复字段，包括 state、priority、maxAttempts、attempts、queued/accumulated wait、first/finished/lastChanged 和完整 runs。
+
+读取时先校验 JSON、范围、job_id 和结构，再调用 `Scheduler::restore()` 做状态机一致性校验。服务重启后的时间轴以 `max(当前 UTC, saved_at_ms)` 为新锚点，再叠加本进程 steady_clock 经过时间，避免系统时间倒退造成显式事件时间回退。
+
+## Coordinator 本地 IPC v1
+
+`print-coordinator` 使用 `QLocalServer`；客户端使用 `QLocalSocket`。传输仍为 UTF-8 JSON Lines，每行一个完整 JSON 对象。请求必须含 `schema_version: 1`、非空 `request_id`、`type`；响应回显 `request_id`。单连接缓冲上限当前为 1 MiB。
+
+| 请求 type | 主要字段 | 作用 |
+| --- | --- | --- |
+| submit | `job`：job_id/title/pages/copies，可选 priority/max_attempts | 持久提交新任务 |
+| snapshot | 无 | 返回 policy、printers 与完整 jobs 快照 |
+| cancel | job_id | Queued 立即取消；Running 持久化取消意图并通知 supervisor |
+| set_policy | policy=`fcfs|sjf|priority` | 改变后续领取策略并持久化 |
+| shutdown | 无 | 停止接收新连接，等待活动/恢复中的任务收尾后退出 |
+
+异步广播使用同一连接发送。`job_state` 携带完整 job 快照；supervisor/worker 的 versioned 事件也会原样转发。C 必须按行分帧，并用 `request_id` 区分请求响应与无 request_id 的异步事件。
 
 ## 进程通信
 
-`print-supervisor --job <file> --output-dir <dir>` 启动同目录 `print-worker`。
+`print-supervisor --job <file> --output-dir <dir>` 启动同目录 `print-worker`。coordinator 还会传入 attempt 唯一的 `--cancel-file <file>`；supervisor 轮询该 marker，收到取消后停止 worker 且不再重启。
 stdout 为 UTF-8 JSON Lines，一行一个对象，分隔符统一为 LF；Windows CRT stdout 配置成二进制模式，避免转发时 CRLF 被二次转换。stderr 为诊断文本。接收方应缓存未完成的一行，不能假设一次 readyRead 对应一个对象。
 
 所有事件包含 `schema_version: 1`、`type`、`job_id`。
@@ -79,10 +101,11 @@ stdout 为 UTF-8 JSON Lines，一行一个对象，分隔符统一为 LF；Windo
 | completed | output_path | worker 完成原子输出 |
 | worker_timeout | 无 | 监督者准备结束静默子进程 |
 | worker_restarting | restart、exit_code | 已决定退避后重试 |
+| cancelled | 无 | supervisor 已停止本任务执行链 |
 | supervisor_completed | restarts | 整个受监督任务成功 |
 | failed | reason 或 exit_code，可能有 restarts | 整个受监督任务失败 |
 | control_ready | port、claim_attempt | 可选回环控制端点已启动 |
-| cancelling | claim_attempt | 正在等待 worker 停止 |
+| cancelling | claim_attempt | supervisor 已观察到取消（取消 marker 或 GUI 控制命令），正在停止 worker |
 | cancelled | claim_attempt、reason | worker 已停止，本次尝试未提交输出 |
 | fault_injected | claim_attempt、worker_attempt | 演示模式结束了实际 worker |
 
@@ -98,6 +121,9 @@ supervisor 启动的 worker 在原子输出首行写入本次 execution_token，
 - `<job_id>.txt`：模拟最终结果，失败重试使用同名原子替换，不追加重复页。
 - `.<job_id>.supervisor.lock`：同一输出目录中同一任务只能有一个 supervisor。
 - `.<job_id>.output.lock`：同一任务只能有一个 writer，即使直接运行 worker 也受约束。
+- `<state-dir>/.coordinator.lock`：同一状态目录只允许一个 coordinator。
+- `<state-dir>/state.json`：完整 Scheduler/策略/打印机数快照，使用 QSaveFile 原子替换。
+- `<state-dir>/control/<job_id>.<attempt>.cancel`：Running 取消的持久意图；attempt 防止旧取消误伤后续重试。
 - 使用 QLockFile，禁用按锁年龄自动失效；依靠进程存活判断处理崩溃遗留锁。
 - 当前约定仅针对本机文件系统；不声称网络共享文件系统的锁和原子写保证相同。
 
@@ -111,7 +137,7 @@ supervisor 启动的 worker 在原子输出首行写入本次 execution_token，
 | 70 | supervisor 的重试耗尽 |
 | 73 | 无法创建目录、日志或输出文件 |
 | 74 | 写入或原子提交失败 |
-| 75 | 任务文件锁已被占用 |
+| 75 | 任务文件锁或 coordinator 状态目录锁已被占用 |
 | 78 | 找不到或无法启动 worker |
 | 130 | 已确认取消（正常退出；必须同时有 cancelled 事件） |
 

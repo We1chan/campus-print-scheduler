@@ -43,7 +43,11 @@ if(CPS_BUILD_QT_APPS)
     find_package(Qt6 6.5 REQUIRED COMPONENTS Core Widgets Network)
     add_executable(scheduler-replay tools/replay_main.cpp)
     target_link_libraries(scheduler-replay PRIVATE Qt6::Core cps_core cps_options)
-    add_library(cps_runtime src/runtime/job_io.cpp src/platform/daemon.cpp src/platform/stdio.cpp)
+    add_library(cps_runtime
+        src/runtime/job_io.cpp
+        src/runtime/state_store.cpp
+        src/platform/daemon.cpp
+        src/platform/stdio.cpp)
     target_include_directories(cps_runtime PUBLIC include)
     target_link_libraries(cps_runtime PUBLIC Qt6::Core cps_core PRIVATE cps_options)
 
@@ -51,6 +55,8 @@ if(CPS_BUILD_QT_APPS)
     target_link_libraries(print-worker PRIVATE cps_runtime cps_options)
     add_executable(print-supervisor src/supervisor/main.cpp src/supervisor/control_server.cpp)
     target_link_libraries(print-supervisor PRIVATE cps_runtime Qt6::Network cps_options)
+    add_executable(print-coordinator src/coordinator/main.cpp)
+    target_link_libraries(print-coordinator PRIVATE cps_runtime Qt6::Network cps_options)
     # Flat executable layout is intentional in the development scaffold.
     # GUI and child programs live together in build/<preset>/bin on every OS.
     add_library(cps_gui src/gui/event_stream.cpp src/gui/control_client.cpp src/gui/print_controller.cpp src/gui/print_window.cpp)
@@ -67,6 +73,17 @@ if(CPS_BUILD_QT_APPS)
         target_link_libraries(gui_tests PRIVATE cps_gui Qt6::Test cps_options)
         add_test(NAME gui COMMAND gui_tests -o "${CMAKE_BINARY_DIR}/gui-results.xml,junitxml" -o -,txt)
         set_tests_properties(gui PROPERTIES TIMEOUT 60 ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+
+        add_executable(runtime_state_tests tests/runtime_state_tests.cpp)
+        target_link_libraries(runtime_state_tests PRIVATE cps_runtime Qt6::Core cps_options)
+        add_test(NAME runtime_state COMMAND runtime_state_tests)
+
+        add_executable(coordinator_integration_tests tests/coordinator_integration.cpp)
+        target_link_libraries(coordinator_integration_tests PRIVATE Qt6::Core Qt6::Network cps_options)
+        add_test(NAME coordinator_integration COMMAND coordinator_integration_tests
+            --coordinator "$<TARGET_FILE:print-coordinator>")
+        set_tests_properties(coordinator_integration PROPERTIES TIMEOUT 45)
+
         set(Python3_FIND_STRATEGY LOCATION)
         find_package(Python3 3.10 REQUIRED COMPONENTS Interpreter)
         add_test(NAME process_integration COMMAND "${Python3_EXECUTABLE}"

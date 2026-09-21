@@ -19,13 +19,36 @@ flowchart LR
 
 GUI 是 v0.1 队列的唯一协调者，最多同时启动两个 supervisor；每个 supervisor 监督一个有限打印任务，worker 退出后按有限次数重启。平台进程 API 通过 QProcess 使用，真实 PID 可见。
 
-GUI 当前只把消息流显示为日志。后续 C 负责按行解析、聚合进度；持久队列和与 GUI 脱离的运行由 B 实现。
+GUI 当前只把消息流显示为日志，仍走这条 v0.1 旧链路。C 负责后续将 GUI 改为连接 coordinator、按行解析并聚合进度。
 
-## 目标课设结构（待实现部分）
+## B 组已实现的持久后台结构
 
-独立协调服务持有持久队列、调度器和打印机槽位；GUI 通过本地 IPC 提交和订阅。服务由独立守护进程监督，关闭 GUI 不影响任务。A 负责状态机与调度接口，B 负责服务生命周期与恢复，C 负责连接状态与交互。
+```mermaid
+flowchart LR
+  C[Local IPC Client / future GUI] -->|QLocalSocket JSONL| D[print-coordinator]
+  D --> Q[Scheduler]
+  D --> P[state.json 原子快照]
+  Q --> S1[Supervisor 1]
+  Q --> S2[Supervisor 2]
+  S1 --> W1[Worker 1]
+  S2 --> W2[Worker 2]
+  W1 --> F[原子输出]
+  W2 --> F
+  S1 -. events .-> D
+  S2 -. events .-> D
+```
 
-目标服务优先考虑 Qt LocalSocket / LocalServer（Unix 域套接字与 Windows named pipe 由 Qt 适配），协议沿用 versioned JSONL。当前不依赖 TCP 端口，也不开放远程访问。
+`print-coordinator` 持有 Scheduler、策略和固定打印机槽位。每次 `claim()` 后先用 `QSaveFile` 原子写入完整 `state.json`，持久化 Running 与 attempt，再启动 supervisor。状态目录用 `.coordinator.lock` 保证单实例。
+
+服务重启时先 `restore()` 快照。对旧 Running/Cancelling 任务，先检查最终输出以及 supervisor/output 两把锁；输出已经提交则完成任务，两把锁均释放且连续确认执行已停止后才调用 `retry()` 或 `acknowledgeCancel()`。取消意图使用 attempt 唯一的 marker 文件，防止取消过程中 coordinator 崩溃后丢失意图。
+
+POSIX 可使用 `print-coordinator --daemon` 脱离终端；Windows 明确使用前台协调进程，不伪装成传统 daemon。
+
+## 目标课设结构（仍待 C 集成）
+
+独立协调服务、持久队列、恢复和本地 IPC 已由 B 实现。剩余主链是 C 将 GUI 从旧的内存 Scheduler 切换为本地 IPC 客户端，使关闭 GUI 不再影响后台任务，并补连接状态、重连和结构化进度展示。
+
+服务采用 Qt LocalSocket / LocalServer（Unix 域套接字与 Windows named pipe 由 Qt 适配），协议为 versioned JSONL，不依赖 TCP 端口，也不开放远程访问。
 
 ## OS 内容如何体现在项目中
 
@@ -33,10 +56,10 @@ GUI 当前只把消息流显示为日志。后续 C 负责按行解析、聚合�
 | --- | --- | --- |
 | 调度 | 非抢占 FCFS/SJF | 老化优先级、相同输入下的公平性/等待对比 |
 | 线程同步 | std::mutex 保护入队、领取和结束 | 生产者消费者压力测试；避免持锁做 I/O |
-| 多进程 | supervisor 和 worker 为真实子进程 | 协调服务独立化、进程树正常清理 |
-| IPC | JSONL 标准管道事件流 | 双向控制、分帧、重连 |
-| 守护 | POSIX double-fork + 独立监督 | 服务守护、退避、恢复，区别于普通 daemon thread |
-| 文件 I/O | Job JSON、日志、最终输出 | 持久任务队列与恢复对账 |
+| 多进程 | coordinator / supervisor / worker 为真实进程 | C 接入后做完整 GUI 断开/重连演示 |
+| IPC | worker 管道 JSONL + coordinator 本地双向 JSONL | C 完成客户端重连与状态聚合 |
+| 守护 | supervisor 与 coordinator 支持 POSIX double-fork | Windows 保持前台协调，答辩说明平台差异 |
+| 文件 I/O | Job JSON、日志、最终输出、原子 state.json | 扩展异常场景实验与结果记录 |
 | 文件互斥 | QLockFile | 多实例争用、进程崩溃遗留锁 |
 | 原子更新 | QSaveFile | 进程中途被杀时无半份最终结果 |
 
@@ -50,6 +73,6 @@ GUI 当前只把消息流显示为日志。后续 C 负责按行解析、聚合�
 
 模拟最终输出支持失败后原子替换，因此可以重做同一任务。物理打印是不可撤销的外部副作用，真实设备接入需要额外的任务查询/人工确认设计。
 
-当前不会从磁盘恢复 GUI 队列；输入 JSON 只包含 worker 所需信息。QSaveFile 提供原子可见性，不在没有文件系统保证时声称电源故障后的严格持久性。
+worker 输入 JSON 仍只包含执行所需字段，不能用于恢复完整 Scheduler。完整快照由 coordinator 的 `state.json` 单独保存；当前 GUI 尚未接 coordinator，因此 GUI 自己的旧内存队列仍不会恢复。QSaveFile 提供原子可见性，不在没有文件系统保证时声称电源故障后的严格持久性。
 
 参考课程文件《操作系统原理课程设计》：第 3 页基本内容、第 7–12 页守护进程、第 13–16 页进度与考核。本文按当前用户要求采用三人分工，原始 PDF 不上传仓库。

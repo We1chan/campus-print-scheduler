@@ -136,6 +136,46 @@ class Processes(unittest.TestCase):
         self.assertEqual(sum(event["type"] == "worker_restarting" for event in events), 2)
         self.assertEqual(events[-1]["type"], "failed")
 
+    def test_supervisor_cancel_marker_stops_worker_without_output(self):
+        self.write_job(pages=100, copies=1)
+        cancel = self.root / "cancel.marker"
+        command = self.command(ARGS.supervisor, "--cancel-file", str(cancel))
+        process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                   text=True, encoding="utf-8")
+        received = queue.Queue()
+        def reader():
+            for line in process.stdout:
+                received.put(json.loads(line))
+        thread = threading.Thread(target=reader, daemon=True)
+        thread.start()
+        events = []
+        try:
+            deadline = time.monotonic() + 10
+            while time.monotonic() < deadline:
+                try:
+                    event = received.get(timeout=0.2)
+                except queue.Empty:
+                    if process.poll() is not None:
+                        break
+                    continue
+                events.append(event)
+                if event["type"] == "progress":
+                    cancel.write_bytes(b"")
+                if event["type"] == "cancelled":
+                    break
+            # Exit 130 is the documented cancellation code (docs/interfaces.md).
+            self.assertEqual(process.wait(timeout=5), 130)
+            self.assertTrue(any(event["type"] == "cancelling" for event in events))
+            self.assertEqual(events[-1]["type"], "cancelled")
+            self.assertFalse((self.output / "test-job.txt").exists())
+        finally:
+            if process.poll() is None:
+                process.kill()
+                process.wait(timeout=5)
+            thread.join(timeout=2)
+            process.stdout.close()
+            process.stderr.close()
+
     @unittest.skipUnless(os.name == "nt", "Windows-only explicit unsupported-mode check")
     def test_windows_daemon_rejected(self):
         result = self.run_command(self.command(ARGS.supervisor, "--daemon"))

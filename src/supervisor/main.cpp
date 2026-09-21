@@ -67,6 +67,7 @@ int main(int argc, char* argv[]) {
         {"page-ms", "Milliseconds per sheet (10..10000)", "ms", "100"},
         {"max-restarts", "Restart limit (0..10)", "count", "3"},
         {"timeout-ms", "Maximum silence from worker (>=20000)", "ms", "30000"},
+        {"cancel-file", "Cancellation marker watched while the job is active", "file"},
         {"daemon", "Detach from terminal on POSIX; unsupported on Windows"},
         {"control-token", "Enable authenticated loopback control using this token", "token"},
         {"claim-attempt", "Scheduler claim token, independent of worker restarts", "attempt", "1"},
@@ -247,6 +248,19 @@ int main(int argc, char* argv[]) {
             finish(70);
         }
     });
+    // The coordinator cancels by persisting an attempt-scoped marker file; the
+    // control protocol stays the GUI's interactive path.
+    const QString cancelFile = parser.value("cancel-file");
+    if (!cancelFile.isEmpty()) {
+        auto* cancelPoll = new QTimer(&app);
+        cancelPoll->setInterval(100);
+        QObject::connect(cancelPoll, &QTimer::timeout, &app, [&] {
+            if (QFile::exists(cancelFile)) {
+                requestCancel("cancel marker observed");
+            }
+        });
+        cancelPoll->start();
+    }
     startWorker();
     return app.exec();
 }
