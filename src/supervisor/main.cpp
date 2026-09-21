@@ -66,7 +66,7 @@ int main(int argc, char* argv[]) {
         {"output-dir", "Output and event log directory", "directory"},
         {"page-ms", "Milliseconds per sheet (10..10000)", "ms", "100"},
         {"max-restarts", "Restart limit (0..10)", "count", "3"},
-        {"timeout-ms", "Maximum silence from worker (>=20000)", "ms", "30000"},
+        {"timeout-ms", "Maximum silence from worker (>=20000; >=500 with --demo-mode)", "ms", "30000"},
         {"cancel-file", "Cancellation marker watched while the job is active", "file"},
         {"daemon", "Detach from terminal on POSIX; unsupported on Windows"},
         {"control-token", "Enable authenticated loopback control using this token", "token"},
@@ -90,8 +90,11 @@ int main(int argc, char* argv[]) {
     const auto controlToken = parser.value("control-token");
     bool validCompletionDelay = false;
     const int completionDelay = parser.value("demo-completion-delay-ms").toInt(&validCompletionDelay);
+    // Demo mode may shorten the watchdog so integration tests exercise the
+    // silence-timeout path without waiting 20 seconds.
+    const int minimumTimeout = parser.isSet("demo-mode") ? 500 : 20000;
     if (!validRestarts || maxRestarts < 0 || maxRestarts > 10 ||
-        !validTimeout || timeout < 20000 || !validDelay || pageMs < 10 || pageMs > 10000 ||
+        !validTimeout || timeout < minimumTimeout || !validDelay || pageMs < 10 || pageMs > 10000 ||
         !validClaim || claimAttempt < 1 || claimAttempt > 100 || !validLease || leaseMs < 500 || leaseMs > 60000 ||
         !validCompletionDelay || completionDelay < 0 || completionDelay > 2000 || (completionDelay > 0 && !parser.isSet("demo-mode")) ||
         (!controlToken.isEmpty() && !QRegularExpression("^[A-Za-z0-9_-]{32,80}$").match(controlToken).hasMatch()) ||

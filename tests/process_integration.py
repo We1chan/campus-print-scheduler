@@ -58,6 +58,23 @@ class Processes(unittest.TestCase):
             self.assertEqual(result.returncode, 64, result.stderr)
             self.assertFalse((self.output / "test-job.txt").exists())
 
+    def test_supervisor_silence_watchdog_times_out_and_gives_up(self):
+        # Demo mode may shorten the watchdog below the production 20 s floor.
+        # A worker printing one sheet every 10 s stays silent for the whole
+        # 1.5 s window, so every attempt must end in worker_timeout.
+        command = [str(ARGS.supervisor), "--job", str(self.job), "--output-dir", str(self.output),
+                   "--page-ms", "10000", "--max-restarts", "1", "--timeout-ms", "1500",
+                   "--demo-mode"]
+        result = subprocess.run(command, capture_output=True, text=True, encoding="utf-8", timeout=25)
+        self.assertEqual(result.returncode, 70, result.stderr)
+        events = [json.loads(line) for line in result.stdout.splitlines()]
+        self.assertEqual(sum(event["type"] == "worker_started" for event in events), 2)
+        self.assertEqual(sum(event["type"] == "worker_timeout" for event in events), 2)
+        self.assertEqual(sum(event["type"] == "worker_restarting" for event in events), 1)
+        self.assertEqual(events[-1]["type"], "failed")
+        self.assertEqual(events[-1]["restarts"], 1)
+        self.assertFalse((self.output / "test-job.txt").exists())
+
     def test_supervisor_normal_completion(self):
         result = subprocess.run(self.command(ARGS.supervisor), capture_output=True, timeout=20)
         self.assertEqual(result.returncode, 0, result.stderr)

@@ -122,6 +122,7 @@ public:
                 recoveryMisses_.insert(QString::fromStdString(job.id), 0);
             }
         }
+        garbageCollectLeftovers();
 
         if (!server_.listen(socketName_)) {
             QLocalSocket endpointProbe;
@@ -196,6 +197,38 @@ private:
     QString cancelPath(const QString& id, int attempt) const {
         return QDir(controlDirectory_).filePath(
             QStringLiteral("%1.%2.cancel").arg(id).arg(attempt));
+    }
+
+    QString jobFilePath(const QString& id) const {
+        return QDir(jobsDirectory_).filePath(id + QStringLiteral(".json"));
+    }
+
+    static bool attemptIsLive(cps::JobState state) {
+        return state == cps::JobState::Running || state == cps::JobState::Cancelling;
+    }
+
+    // Crash leftovers must not accumulate: drop job descriptors that no live
+    // attempt reads and cancel markers that match no current Running/Cancelling
+    // attempt. Dispatch rewrites the descriptor before every supervisor start,
+    // so anything outside a live attempt is garbage.
+    void garbageCollectLeftovers() {
+        QSet<QString> liveMarkers;
+        QHash<QString, cps::JobState> states;
+        for (const auto& job : scheduler_->snapshot()) {
+            const QString id = QString::fromStdString(job.id);
+            states.insert(id, job.state);
+            if (attemptIsLive(job.state)) liveMarkers.insert(cancelPath(id, job.attempts));
+        }
+        for (const auto& entry : QDir(controlDirectory_).entryList(QDir::Files)) {
+            const QString path = QDir(controlDirectory_).filePath(entry);
+            if (!liveMarkers.contains(path)) QFile::remove(path);
+        }
+        for (const auto& entry : QDir(jobsDirectory_).entryList(QStringList() << QStringLiteral("*.json"), QDir::Files)) {
+            const QString id = entry.left(entry.size() - 5);
+            if (!attemptIsLive(states.value(id, cps::JobState::Cancelled))) {
+                QFile::remove(jobFilePath(id));
+            }
+        }
     }
 
     bool createCancelMarker(const QString& id, int attempt) {
@@ -402,8 +435,14 @@ private:
                 scheduler_->retry(job->id, job->attempts, scheduler_->nowMs());
                 if (!persistOrStop()) return;
                 broadcastState(id);
-                continue;
+                // Disk failures can persist; back off across dispatch passes
+                // instead of spinning the claim/write loop in one call.
+                dispatchBackoffMs_ = dispatchBackoffMs_ == 0
+                    ? 200 : std::min(dispatchBackoffMs_ * 2, 5000);
+                QTimer::singleShot(dispatchBackoffMs_, this, [this] { dispatch(); });
+                return;
             }
+            dispatchBackoffMs_ = 0;
 
             const QString cancellation = cancelPath(id, job->attempts);
             QFile::remove(cancellation);
@@ -476,6 +515,7 @@ private:
             }
         }
         QFile::remove(active.cancelFile);
+        QFile::remove(jobFilePath(id));
         active.process->deleteLater();
         if (!persistOrStop()) return;
         broadcastState(id);
@@ -510,6 +550,7 @@ private:
                 recovering_.remove(id);
                 recoveryMisses_.remove(id);
                 QFile::remove(cancellation);
+                QFile::remove(jobFilePath(id));
                 if (!persistOrStop()) return;
                 broadcastState(id);
                 continue;
@@ -534,6 +575,7 @@ private:
             recovering_.remove(id);
             recoveryMisses_.remove(id);
             QFile::remove(cancellation);
+            QFile::remove(jobFilePath(id));
             if (!persistOrStop()) return;
             broadcastState(id);
         }
@@ -566,6 +608,7 @@ private:
     QHash<QLocalSocket*, QByteArray> clientBuffers_;
     QLocalServer server_;
     QHash<QString, ActiveJob> active_;
+    int dispatchBackoffMs_ = 0;
     QSet<QString> recovering_;
     QHash<QString, int> recoveryMisses_;
     QTimer recoveryTimer_;

@@ -199,6 +199,16 @@ int main(int argc, char* argv[]) {
         shutdown(client, coordinator);
 
         socket = socketName();
+        // Leftovers from a crashed generation must be swept at startup.
+        {
+            QFile ghostDescriptor(QDir(root).filePath("jobs/ghost.json"));
+            require(ghostDescriptor.open(QIODevice::WriteOnly), "cannot plant ghost descriptor");
+            ghostDescriptor.write("{}");
+            ghostDescriptor.close();
+            QFile ghostMarker(QDir(root).filePath("control/ghost.1.cancel"));
+            require(ghostMarker.open(QIODevice::WriteOnly), "cannot plant ghost marker");
+            ghostMarker.close();
+        }
         startCoordinator(coordinator, executable, root, socket);
         Client restarted;
         restarted.connectTo(socket);
@@ -208,6 +218,10 @@ int main(int argc, char* argv[]) {
         QThread::msleep(250);
         require(QFileInfo(normalEvents).size() == completedEventBytes,
                 "completed job was executed again after restart");
+        require(!QFileInfo::exists(QDir(root).filePath("jobs/ghost.json")),
+                "stale job descriptor survived startup garbage collection");
+        require(!QFileInfo::exists(QDir(root).filePath("control/ghost.1.cancel")),
+                "stale cancel marker survived startup garbage collection");
 
         require(QDir().mkpath(QDir(root).filePath("output/exhaust-job.txt")),
                 "cannot create retry failure fixture");
@@ -240,6 +254,13 @@ int main(int argc, char* argv[]) {
         require(QFileInfo(QDir(root).filePath("output/recovery-job.txt")).isFile(),
                 "recovered job output missing");
         shutdown(recovered, recoveredCoordinator);
+
+        // Every job above reached a terminal state, so no descriptor or
+        // cancellation marker may remain behind.
+        require(QDir(QDir(root).filePath("jobs")).entryList(QDir::Files).isEmpty(),
+                "terminal jobs left descriptor files behind");
+        require(QDir(QDir(root).filePath("control")).entryList(QDir::Files).isEmpty(),
+                "terminal jobs left cancellation markers behind");
 
         QTemporaryDir blockedTemporary;
         require(blockedTemporary.isValid(), "blocked-output temporary directory unavailable");
