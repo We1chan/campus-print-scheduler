@@ -10,6 +10,7 @@ class QProgressBar;
 class QTableView;
 class QSortFilterProxyModel;
 class QPlainTextEdit;
+class QToolButton;
 
 namespace cps::gui {
 class JobTableModel : public QAbstractTableModel {
@@ -61,9 +62,16 @@ private:
     QTableView* table_ = nullptr;
     QLabel* feedback_ = nullptr;
     QLabel* connection_ = nullptr;
-    QLabel* metrics_ = nullptr;
+    std::array<QLabel*, 4> metricValues_{};
+    std::array<QLabel*, 4> metricHints_{};
     std::array<QLabel*, 2> printerLabels_{};
+    std::array<QLabel*, 2> printerStates_{};
+    std::array<QLabel*, 2> printerDetails_{};
+    std::array<QLabel*, 2> printerProgress_{};
     std::array<QProgressBar*, 2> progressBars_{};
+    QLabel* queueSummary_ = nullptr;
+    QWidget* emptyState_ = nullptr;
+    QToolButton* logToggle_ = nullptr;
     QPushButton* cancel_ = nullptr;
     QPushButton* fault_ = nullptr;
     QPushButton* disconnect_ = nullptr;
