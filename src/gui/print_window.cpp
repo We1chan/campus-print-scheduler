@@ -327,7 +327,17 @@ PrintWindow::PrintWindow(WindowOptions options, QWidget* parent) : QMainWindow(p
 
     auto* content = new QHBoxLayout;
     content->setSpacing(18);
-    auto* working = new QVBoxLayout;
+    // Keep the queue controls reachable when the window is short or logs are open.
+    auto* queueArea = new QScrollArea;
+    queueArea->setObjectName("queueScrollArea");
+    queueArea->setWidgetResizable(true);
+    queueArea->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    queueArea->viewport()->setAutoFillBackground(false);
+    auto* queueContent = new QWidget;
+    queueContent->setObjectName("queueContent");
+    auto* working = new QVBoxLayout(queueContent);
+    working->setContentsMargins(0, 0, 0, 0);
+    working->setSizeConstraint(QLayout::SetMinimumSize);
     working->setSpacing(16);
     auto* printerHeading = new QHBoxLayout;
     printerHeading->addWidget(label(QStringLiteral("打印设备"), "section"));
@@ -419,7 +429,8 @@ PrintWindow::PrintWindow(WindowOptions options, QWidget* parent) : QMainWindow(p
         queueLayout->addLayout(demo);
     }
     working->addWidget(queue, 1);
-    content->addLayout(working, 1);
+    queueArea->setWidget(queueContent);
+    content->addWidget(queueArea, 1);
 
     auto* side = new QScrollArea;
     side->setWidgetResizable(true); side->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
@@ -483,6 +494,7 @@ PrintWindow::PrintWindow(WindowOptions options, QWidget* parent) : QMainWindow(p
     feedback_->setObjectName("feedback"); feedback_->setWordWrap(true);
     footer->addWidget(feedback_, 1);
     logToggle_ = new QToolButton;
+    logToggle_->setObjectName("logToggle");
     logToggle_->setProperty("role", "quiet"); logToggle_->setCheckable(true);
     logToggle_->setIcon(ui::icon(ui::Icon::Activity)); logToggle_->setText(QStringLiteral("运行日志"));
     logToggle_->setToolButtonStyle(Qt::ToolButtonTextBesideIcon); footer->addWidget(logToggle_);

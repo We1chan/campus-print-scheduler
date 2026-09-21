@@ -13,6 +13,8 @@
 #include <QPlainTextEdit>
 #include <QSpinBox>
 #include <QTableView>
+#include <QToolButton>
+#include <QScrollArea>
 #include <QTemporaryDir>
 #include <QTest>
 #include <QElapsedTimer>
@@ -223,6 +225,38 @@ private slots:
         PrintWindow window({root.path(), 10, false});
         QVERIFY(!window.findChild<QPushButton*>("injectFault"));
         QVERIFY(!window.findChild<QPushButton*>("disconnectControl"));
+    }
+
+    void compactWindowKeepsControlsReachable() {
+        QTemporaryDir root;
+        PrintWindow window({root.path(), 30, true});
+        window.resize(1060, 720);
+        window.show();
+        QVERIFY(QTest::qWaitForWindowExposed(&window));
+        auto* table = window.findChild<QTableView*>("jobsTable");
+        auto* fault = window.findChild<QPushButton*>("injectFault");
+        auto* area = window.findChild<QScrollArea*>("queueScrollArea");
+        auto* toggle = window.findChild<QToolButton*>("logToggle");
+        auto* log = window.findChild<QPlainTextEdit*>();
+        QVERIFY(table && fault && area && toggle && log);
+        QVERIFY(!log->isVisible());
+        for (bool showLog : {false, true}) {
+            if (showLog) QTest::mouseClick(toggle, Qt::LeftButton);
+            QCOMPARE(log->isVisible(), showLog);
+            // Regression: at 720 px, the old fixed layout drew buttons over task rows.
+            QTRY_VERIFY(table->mapTo(&window, QPoint(0, table->height())).y()
+                        <= fault->mapTo(&window, QPoint(0, 0)).y());
+            area->ensureWidgetVisible(fault, 0, 0);
+            QTRY_VERIFY(area->viewport()->rect().contains(
+                QRect(fault->mapTo(area->viewport(), QPoint(0, 0)), fault->size())));
+        }
+        const auto evidence = qEnvironmentVariable("CPS_GUI_EVIDENCE_DIR");
+        if (!evidence.isEmpty()) {
+            QVERIFY(QDir().mkpath(evidence));
+            QVERIFY(window.grab().save(QDir(evidence).filePath("04-compact-with-logs.png")));
+        }
+        window.close();
+        QTRY_VERIFY(!window.isVisible());
     }
 };
 
