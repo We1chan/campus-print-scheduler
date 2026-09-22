@@ -55,4 +55,4 @@ python3 tools/convert_swf.py --input runtime/data/sdsc_sp2.swf --source-url http
 
 时间从最早任务到达起，推进到下一次到达或完成事件。同一时刻先处理全部完成，再提交全部到达任务，然后按打印机编号依次派发；不会提前提交未来任务。打印耗时 = 总页数 × page-ms。相同时间的任务保留输入顺序。
 
-统计口径见 `docs/interfaces.md`。比较算法时固定输入、打印机数、速度与老化间隔，报告中同时查看平均/最长等待、周转和利用率。当前只交付运行工具与样例；新增自动化用例、正式实验报告和答辩材料按后续安排补充。
+统计口径见 `docs/interfaces.md`。比较算法时固定输入、打印机数、速度与老化间隔，报告中同时查看平均/最长等待、周转和利用率。2026-09-23 已完成 [专项验证](validation-a.md)、[33 组策略实验报告](experiments-a.md) 和 [答辩提纲](defense-a.md)。可复现配置、核算脚本、图表入口见 [experiments/README.md](../experiments/README.md)。
