@@ -32,7 +32,7 @@
 - `acknowledgeCancel(id, attempt, now)`：Cancelling → Cancelled。**B 确认执行已停止后**调用。取消与最终输出成功竞争时，B 确认输出已提交可调用 finish(success=true)，让成功生效。
 - `retry(id, attempt, now)`：B 确认本轮失败并停止后调用；Running → Queued，达到 maxAttempts 则直接 Failed。取消中的任务不得重新排队。
 - `snapshot()`：返回独立副本，包括所有历史计时字段；不向 UI 暴露内部引用。
-- `restore(jobs, now)`：仅向空调度器加载完整、无重复 ID、时间与状态一致的快照，失败不修改调度器。恢复顺序保持数组顺序；调用者同时恢复相同的 SchedulerOptions。不会自动认定旧 Running 已停止，也不会自行重跑；由 B 对账后调用上述操作。快照中的事件时间不能晚于 now。
+- `restore(jobs, now)`：仅向空调度器加载完整、无重复 ID、时间与状态一致的快照，失败不修改调度器。本轮入队时间必须与运行历史吻合，Running 的最后变更时间必须等于本轮开始时间，损坏值直接拒绝。恢复顺序保持数组顺序；调用者同时恢复相同的 SchedulerOptions。不会自动认定旧 Running 已停止，也不会自行重跑；由 B 对账后调用上述操作。快照中的事件时间不能晚于 now。
 
 旧 `finish(id, success)` 仅允许首次领取的任务，保留现有 GUI 的兼容性；存在重新领取时必须用显式令牌 API。这里的 attempt 是协调层领取次数，不能和 supervisor 内部 worker 重启次数混用。
 

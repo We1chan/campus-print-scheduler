@@ -25,10 +25,12 @@ bool validSnapshot(const Job& job, TimeMs now) {
         static_cast<std::size_t>(job.attempts) != job.runs.size()) return false;
     TimeMs previous = job.submittedMs;
     TimeMs wait = 0;
+    TimeMs lastQueueEntry = job.submittedMs;
     bool open = false;
     for (std::size_t i = 0; i < job.runs.size(); ++i) {
         const auto& run = job.runs[i];
         if (open || run.startedMs < previous || run.startedMs > job.lastChangedMs) return false;
+        lastQueueEntry = previous;
         wait += run.startedMs - previous;
         if (run.stoppedMs) {
             if (*run.stoppedMs < run.startedMs || *run.stoppedMs > job.lastChangedMs) return false;
@@ -47,17 +49,22 @@ bool validSnapshot(const Job& job, TimeMs now) {
             job.queuedSinceMs != previous || job.lastChangedMs != previous) return false;
         break;
     case JobState::Running:
+        if (job.lastChangedMs != previous) return false;
+        [[fallthrough]];
     case JobState::Cancelling:
-        if (!open || job.finishedMs) return false;
+        if (!open || job.finishedMs || job.queuedSinceMs != lastQueueEntry) return false;
         break;
     case JobState::Completed:
     case JobState::Failed:
         if (job.runs.empty() || open || !job.finishedMs || *job.finishedMs != previous ||
-            job.lastChangedMs != previous) return false;
+            job.lastChangedMs != previous || job.queuedSinceMs != lastQueueEntry) return false;
         break;
     case JobState::Cancelled:
         if (open || !job.finishedMs || *job.finishedMs < previous ||
             *job.finishedMs != job.lastChangedMs) return false;
+        // A cancelled job either left the waiting queue, or stopped its last run.
+        if (job.queuedSinceMs != previous &&
+            (job.queuedSinceMs != lastQueueEntry || *job.finishedMs != previous)) return false;
         wait += *job.finishedMs - previous;
         break;
     default: return false;

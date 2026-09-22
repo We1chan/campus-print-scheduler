@@ -37,6 +37,13 @@ if(BUILD_TESTING)
     add_executable(core_tests tests/core_tests.cpp)
     target_link_libraries(core_tests PRIVATE cps_core cps_options)
     add_test(NAME scheduler COMMAND core_tests)
+    add_executable(scheduler_advanced_tests tests/scheduler_advanced_tests.cpp)
+    target_link_libraries(scheduler_advanced_tests PRIVATE cps_core cps_options)
+    add_test(NAME scheduler_advanced COMMAND scheduler_advanced_tests)
+    set_tests_properties(scheduler_advanced PROPERTIES TIMEOUT 30)
+    add_executable(metrics_replay_tests tests/metrics_replay_tests.cpp)
+    target_link_libraries(metrics_replay_tests PRIVATE cps_core cps_options)
+    add_test(NAME metrics_replay COMMAND metrics_replay_tests)
 endif()
 
 if(CPS_BUILD_QT_APPS)
@@ -86,6 +93,11 @@ if(CPS_BUILD_QT_APPS)
 
         set(Python3_FIND_STRATEGY LOCATION)
         find_package(Python3 3.10 REQUIRED COMPONENTS Interpreter)
+        add_test(NAME workload_tools COMMAND "${Python3_EXECUTABLE}"
+            "${CMAKE_SOURCE_DIR}/tests/workload_tools_test.py"
+            --replay "$<TARGET_FILE:scheduler-replay>"
+            --converter "${CMAKE_SOURCE_DIR}/tools/convert_swf.py")
+        set_tests_properties(workload_tools PROPERTIES TIMEOUT 60)
         add_test(NAME process_integration COMMAND "${Python3_EXECUTABLE}"
             "${CMAKE_SOURCE_DIR}/tests/process_integration.py"
             --worker "$<TARGET_FILE:print-worker>"
