@@ -1,0 +1,17 @@
+{
+  "schema_version": 1,
+  "printers": 2,
+  "page_ms": 150,
+  "aging_ms": 30000,
+  "count": 1000,
+  "offsets": [0, 1000, 2000],
+  "priority_modes": ["uniform", "job-id-modulo"],
+  "priority_levels": 5,
+  "time_scale": "0.01",
+  "seconds_per_page": "60",
+  "max_pages": 1000,
+  "sensitivity_time_scales": ["0.002", "0.05"],
+  "pressure_aging_ms": [1000, 30000, 120000],
+  "source_url": "https://raw.githubusercontent.com/wrench-project/task_clustering_batch_datasets/master/workloads/sdsc_sp2.swf",
+  "source_sha256": "2bb635f4b5793f52bd49ccb8fd913d95f9c5be6346925162cadcaf0117e28cf2"
+}
