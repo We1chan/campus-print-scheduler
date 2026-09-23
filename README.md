@@ -28,6 +28,7 @@
 
 ## 三个人先看这里
 
+- [第三周汇报材料](docs/week3/README.md)：16 页 PPT、投影 PDF、UML、思维导图、离线交互原型和逐页讲稿。
 - [三人分工与验收](docs/team.md)：A（@We1chan）负责调度与统计，B（@YI1990442038）负责进程与存储，C（@korwave）负责界面与跨平台集成。
 - [Windows / macOS 开发环境](docs/development.md)：两套可复制命令和常见兼容问题。
 - [架构与演进](docs/architecture.md)：当前进程关系、目标持久化结构与 OS 对应关系。
