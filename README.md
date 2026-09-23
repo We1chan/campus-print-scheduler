@@ -20,7 +20,7 @@
 | 内存任务取消、带令牌重试、快照校验加载 | A 核心 API 已实现；B 已接入持久执行与取消，C 界面已接控制协议 |
 | 持久任务队列、独立 coordinator、应用重启恢复 | B 后端已实现；GUI 尚未切换到 coordinator |
 | 优先级与老化、统计、数据集回放 | A 已实现；26 个新增测试场景、33 组策略实验与答辩材料已完成 |
-| 双打印机进度、JSONL 分帧、异步批量导入、统计图/报表 | C 已实现，见 [界面说明](docs/gui.md) |
+| 纸张工作台、双打印机进度、JSONL 分帧、批量导入、统计图/报表 | C 已实现，见 [界面说明](docs/gui.md) 和 [演示入口](docs/paper-demo.md) |
 | 等待/运行任务取消、暂停派发、控制重连、演示故障 | 已实现；通过可选单任务监督控制协议集成 |
 | Windows/macOS Qt 部署与包测试 | 已提供打包、校验和独立 runner 测试；人工现场验收另行记录 |
 
@@ -37,7 +37,7 @@
 - [A 实验报告](docs/experiments-a.md)、[专项验证](docs/validation-a.md)、[个人答辩提纲](docs/defense-a.md)：实际结果、图表、测试覆盖与代码讲解。
 - [数据集策略](docs/datasets.md)：真实计算作业日志只能作为映射后的模拟打印负载。
 - [协作规则](CONTRIBUTING.md)：主分支同步、提交推送与跨平台验收。
-- [界面与验收](docs/gui.md)、[Qt 发布包](docs/release.md)、[项目结束清理](docs/clean-up.md)。
+- [界面与验收](docs/gui.md)、[纸张工作台 Demo](docs/paper-demo.md)、[Qt 发布包](docs/release.md)、[项目结束清理](docs/clean-up.md)。
 
 ## 快速运行
 

@@ -11,6 +11,7 @@
 #include <QDesktopServices>
 #include <QDir>
 #include <QFontDatabase>
+#include <QFontMetrics>
 #include <QFrame>
 #include <QHeaderView>
 #include <QLabel>
@@ -265,10 +266,26 @@ PrintWindow::PrintWindow(WindowOptions options, QWidget* parent) : QMainWindow(p
     resize(std::min(1420, available.width() - 40), std::min(900, available.height() - 60));
     QFont interfaceFont = font();
     const auto families = QFontDatabase::families();
-    for (const auto& family : {QStringLiteral("Microsoft YaHei UI"), QStringLiteral("PingFang SC"), QStringLiteral("Noto Sans CJK SC")}) {
-        if (families.contains(family)) { interfaceFont.setFamily(family); break; }
+    const QStringList candidates{
+        QStringLiteral("Microsoft YaHei UI"),
+        QStringLiteral("Microsoft YaHei"),
+        QStringLiteral("Noto Sans SC"),
+        QStringLiteral("Noto Sans CJK SC"),
+        QStringLiteral("PingFang SC"),
+        QStringLiteral("Source Han Sans SC"),
+        QStringLiteral("WenQuanYi Micro Hei")
+    };
+    for (const auto& family : candidates) {
+        if (!families.contains(family)) continue;
+        QFont candidate = interfaceFont;
+        candidate.setFamily(family);
+        if (!QFontMetrics(candidate).inFontUcs4(0x6821)) continue;
+        interfaceFont = candidate;
+        break;
     }
-    interfaceFont.setPixelSize(13); setFont(interfaceFont);
+    interfaceFont.setPixelSize(13);
+    QApplication::setFont(interfaceFont);
+    setFont(interfaceFont);
     QPalette light = palette();
     light.setColor(QPalette::Window, QColor("#F7F8FB"));
     light.setColor(QPalette::WindowText, QColor("#202737"));
@@ -276,7 +293,7 @@ PrintWindow::PrintWindow(WindowOptions options, QWidget* parent) : QMainWindow(p
     light.setColor(QPalette::Button, Qt::white); light.setColor(QPalette::ButtonText, QColor("#59667C"));
     light.setColor(QPalette::Highlight, QColor("#DCE7FE")); light.setColor(QPalette::HighlightedText, QColor("#234B9D"));
     setPalette(light);
-    setStyleSheet(ui::styleSheet() + QStringLiteral("\nQWidget {font-family: \"%1\";}").arg(interfaceFont.family()));
+    setStyleSheet(ui::styleSheet());
     auto* central = new QWidget(this); central->setObjectName("workspace");
     auto* layout = new QVBoxLayout(central); layout->setContentsMargins(24, 10, 24, 12); layout->setSpacing(12);
     auto* header = new QHBoxLayout; header->setSpacing(10);

@@ -200,7 +200,7 @@ class Processes(unittest.TestCase):
 
     def test_gui_offscreen_startup(self):
         env = dict(os.environ, QT_QPA_PLATFORM="offscreen")
-        result = subprocess.run([str(ARGS.gui), "--smoke-test"], env=env,
+        result = subprocess.run([str(ARGS.gui), "--smoke-test", "--data-dir", str(self.root / "gui-smoke")], env=env,
                                 capture_output=True, timeout=15)
         self.assertEqual(result.returncode, 0, result.stderr.decode("utf-8", errors="replace"))
 
