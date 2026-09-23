@@ -9,6 +9,8 @@
 
 #include <QApplication>
 #include <QComboBox>
+#include <QCheckBox>
+#include <QTableWidget>
 #include <QFile>
 #include <QDir>
 #include <QJsonArray>
@@ -37,6 +39,47 @@ class GuiTests : public QObject {
         QVERIFY(dialog && dialog->isVisible());
     }
 private slots:
+    void shopWorkflow() {
+        BackendDirectory root;
+        PrintWindow window({root.path(), 10, true, true}); window.resize(1200, 800); window.show();
+        QVERIFY(QTest::qWaitForWindowExposed(&window));
+        auto* fleet = window.findChild<QTableWidget*>("fleetTable");
+        QTRY_COMPARE(fleet->rowCount(), 6);
+        auto* summary = window.findChild<QLabel*>("shopSummary");
+        QVERIFY(summary->text().contains(QStringLiteral("实收营业额")));
+        openForm(window);
+        window.findChild<QSpinBox*>("jobPages")->setValue(3);
+        window.findChild<QSpinBox*>("jobCopies")->setValue(2);
+        window.findChild<QComboBox*>("orderPaper")->setCurrentIndex(1);
+        window.findChild<QCheckBox*>("orderColor")->setChecked(true);
+        window.findChild<QCheckBox*>("orderDuplex")->setChecked(true);
+        window.findChild<QComboBox*>("orderService")->setCurrentIndex(2);
+        QTRY_VERIFY(window.findChild<QPushButton*>("submitJob")->isEnabled());
+        window.findChild<QPushButton*>("submitJob")->click();
+        auto* table = window.findChild<QTableView*>("jobsTable");
+        QTRY_COMPARE(table->model()->rowCount(), 1);
+        QTRY_COMPARE(table->model()->index(0, 3).data().toString(), QStringLiteral("已完成"));
+        QCOMPARE(table->model()->index(0, 8).data().toString(), QStringLiteral("¥15.30"));
+        QTRY_VERIFY(summary->text().contains("15.30"));
+        auto* policies = window.findChild<QComboBox*>("schedulingPolicy");
+        policies->setCurrentIndex(4); QTRY_COMPARE(policies->currentIndex(), 4);
+        window.experimentRequested(root.path() + "/experiments.json", 30);
+        auto* experiment = window.findChild<QTableWidget*>("experimentTable");
+        QTRY_COMPARE_WITH_TIMEOUT(experiment->rowCount(), 21, 15000);
+        const auto evidence = qEnvironmentVariable("CPS_GUI_EVIDENCE_DIR");
+        if (!evidence.isEmpty()) {
+            QVERIFY(QDir().mkpath(evidence));
+            for (const auto& name : QStringList{"navShop", "navDevices", "navHistory"}) {
+                window.findChild<QPushButton*>(name)->click(); QTest::qWait(80);
+                QVERIFY(window.grab().save(QDir(evidence).filePath("shop-" + name + ".png")));
+            }
+            openForm(window); QTest::qWait(80);
+            QVERIFY(window.findChild<QDialog*>("submissionDialog")->grab().save(QDir(evidence).filePath("shop-order.png")));
+            window.findChild<QDialog*>("submissionDialog")->reject();
+        }
+        window.close(); QTRY_VERIFY(!window.isVisible());
+    }
+
     void framing() {
         const QByteArray line = QJsonDocument(QJsonObject{{"schema_version", 1},
             {"type", "failed"}, {"job_id", "job-1"}, {"reason", QStringLiteral("中文错误")}})

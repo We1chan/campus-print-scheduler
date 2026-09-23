@@ -1,4 +1,5 @@
 #include "cps/runtime/state_store.hpp"
+#include "cps/runtime/shop_io.hpp"
 
 #include <QFile>
 #include <QDir>
@@ -10,6 +11,7 @@
 #include <QSaveFile>
 #include <cmath>
 #include <limits>
+#include <set>
 
 namespace cps {
 namespace {
@@ -96,6 +98,8 @@ QString policyName(Policy policy) {
     case Policy::Fcfs: return QStringLiteral("fcfs");
     case Policy::ShortestJobFirst: return QStringLiteral("sjf");
     case Policy::PriorityAging: return QStringLiteral("priority");
+    case Policy::Deadline: return QStringLiteral("deadline");
+    case Policy::Revenue: return QStringLiteral("revenue");
     }
     return {};
 }
@@ -104,6 +108,8 @@ std::optional<Policy> policyFromName(const QString& name) {
     if (name == QLatin1String("fcfs")) return Policy::Fcfs;
     if (name == QLatin1String("sjf")) return Policy::ShortestJobFirst;
     if (name == QLatin1String("priority")) return Policy::PriorityAging;
+    if (name == "deadline") return Policy::Deadline;
+    if (name == "revenue") return Policy::Revenue;
     return std::nullopt;
 }
 
@@ -115,7 +121,7 @@ QJsonObject jobSnapshotToJson(const Job& job) {
             {"stopped_ms", optionalTime(run.stoppedMs)}
         });
     }
-    return {
+    QJsonObject object{
         {"job_id", QString::fromStdString(job.id)},
         {"title", QString::fromUtf8(job.title.data(), static_cast<qsizetype>(job.title.size()))},
         {"pages", job.pages},
@@ -132,6 +138,9 @@ QJsonObject jobSnapshotToJson(const Job& job) {
         {"finished_ms", optionalTime(job.finishedMs)},
         {"runs", runs}
     };
+    const auto terms = orderTermsToJson(job);
+    for (auto it = terms.begin(); it != terms.end(); ++it) object.insert(it.key(), it.value());
+    return object;
 }
 
 bool jobSnapshotFromJson(const QJsonObject& object, Job& job, QString& error) {
@@ -183,6 +192,7 @@ bool jobSnapshotFromJson(const QJsonObject& object, Job& job, QString& error) {
         }
         parsed.runs.push_back(run);
     }
+    if (!orderTermsFromJson(object, parsed, true)) { error = "Invalid commercial order terms"; return false; }
     job = std::move(parsed);
     return true;
 }
@@ -190,8 +200,8 @@ bool jobSnapshotFromJson(const QJsonObject& object, Job& job, QString& error) {
 bool writePersistentState(const QString& path, const PersistentState& state, QString& error) {
     QJsonArray jobs;
     for (const auto& job : state.jobs) jobs.append(jobSnapshotToJson(job));
-    const QJsonObject object{
-        {"schema_version", 1},
+    QJsonObject object{
+        {"schema_version", state.fleet.empty() ? 1 : 2},
         {"kind", QStringLiteral("campus-print-state")},
         {"saved_at_ms", static_cast<double>(state.savedAtMs)},
         {"policy", policyName(state.policy)},
@@ -200,6 +210,11 @@ bool writePersistentState(const QString& path, const PersistentState& state, QSt
         {"aging_interval_ms", static_cast<double>(state.schedulerOptions.agingIntervalMs)},
         {"jobs", jobs}
     };
+    if (!state.fleet.empty()) {
+        QJsonArray fleet;
+        for (const auto& p : state.fleet) fleet.append(printerToJson(p));
+        object.insert("shop", QJsonObject{{"version", 1}, {"fleet", fleet}, {"supplied_a4", state.supplied.a4}, {"supplied_a3", state.supplied.a3}});
+    }
     QSaveFile file(path);
     const auto data = QJsonDocument(object).toJson(QJsonDocument::Indented);
     if (!file.open(QIODevice::WriteOnly) || file.write(data) != data.size() || !file.commit()) {
@@ -227,7 +242,7 @@ bool readPersistentState(const QString& path, PersistentState& state, QString& e
     qint64 aging = 0;
     int printers = 0;
     const auto policy = policyFromName(object.value("policy").toString());
-    if (!integerValue(object.value("schema_version"), 1, 1, schema) ||
+    if (!integerValue(object.value("schema_version"), 1, 2, schema) ||
         object.value("kind").toString() != QLatin1String("campus-print-state") ||
         !integerValue(object.value("saved_at_ms"), 0, MaxTimeMs, saved) ||
         !integerValue(object.value("aging_interval_ms"), 1, MaxTimeMs, aging) ||
@@ -254,6 +269,29 @@ bool readPersistentState(const QString& path, PersistentState& state, QString& e
         parsed.jobs.push_back(std::move(job));
     }
 
+    if ((schema == 2) != object.contains("shop")) { error = "Shop state version mismatch"; return false; }
+    if (object.contains("shop")) {
+        const auto shop = object.value("shop").toObject();
+        if (shop.value("version").toDouble() != 1 || !shop.value("fleet").isArray() ||
+            shop.value("fleet").toArray().size() != printers ||
+            !intValue(shop, "supplied_a4", 0, 1000000000, parsed.supplied.a4) ||
+            !intValue(shop, "supplied_a3", 0, 1000000000, parsed.supplied.a3)) {
+            error = "Invalid shop state"; return false;
+        }
+        for (const auto& value : shop.value("fleet").toArray()) {
+            Printer p;
+            if (!value.isObject() || !printerFromJson(value.toObject(), p)) { error = "Invalid printer"; return false; }
+            parsed.fleet.push_back(p);
+        }
+        const auto available = availablePaper(parsed.jobs, parsed.supplied);
+        if (available.a4 < 0 || available.a3 < 0) { error = "Paper over-reserved"; return false; }
+        std::set<int> occupied;
+        for (const auto& j : parsed.jobs) {
+            if (j.assignedPrinter >= printers || (j.attempts > 0 && j.assignedPrinter < 0)) { error = "Invalid assigned printer"; return false; }
+            if ((j.state == JobState::Running || j.state == JobState::Cancelling) &&
+                !occupied.insert(j.assignedPrinter).second) { error = "Printer assigned twice"; return false; }
+        }
+    }
     Scheduler validator(parsed.schedulerOptions, [now = parsed.savedAtMs] { return now; });
     if (!validator.restore(parsed.jobs, parsed.savedAtMs)) {
         error = QStringLiteral("Persistent scheduler snapshot is inconsistent");

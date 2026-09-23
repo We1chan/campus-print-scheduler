@@ -11,7 +11,20 @@ namespace cps {
 using TimeMs = std::int64_t;
 constexpr TimeMs MaxTimeMs = 9007199254740991LL; // exactly representable in JSON doubles
 // Larger base priority is more urgent; every aging interval adds one point.
-enum class Policy { Fcfs, ShortestJobFirst, PriorityAging };
+enum class Policy { Fcfs, ShortestJobFirst, PriorityAging, Deadline, Revenue };
+enum class PaperSize { A4, A3 };
+enum class ServiceTier { Express, Standard, Flexible };
+using Money = std::int64_t; // integer cents, never floating point currency
+struct Printer {
+    std::string name;
+    bool a3 = false;
+    bool color = false;
+    bool duplex = true;
+    bool online = true;
+    TimeMs monoPageMs = 1500;
+    TimeMs colorPageMs = 3000;
+};
+struct Inventory { int a4 = 10000; int a3 = 3000; };
 enum class JobState { Queued, Running, Completed, Failed, Cancelling, Cancelled };
 struct RunInterval {
     TimeMs startedMs = 0;
@@ -33,7 +46,18 @@ struct Job {
     std::optional<TimeMs> firstStartedMs = std::nullopt;
     std::optional<TimeMs> finishedMs = std::nullopt;
     std::vector<RunInterval> runs = {};
+    PaperSize paper = PaperSize::A4;
+    bool color = false;
+    bool duplex = false;
+    ServiceTier service = ServiceTier::Standard;
+    TimeMs deadlineMs = 0; // 0 means legacy order without a delivery promise
+    Money baseCents = 0;
+    Money quotedCents = 0;
+    Money costCents = 0;
+    Money refundCents = 0;
+    int assignedPrinter = -1;
     int sheets() const { return pages * copies; }
+    int paperSheets() const { return ((pages + (duplex ? 1 : 0)) / (duplex ? 2 : 1)) * copies; }
 };
 struct SchedulerOptions { TimeMs agingIntervalMs = 30000; };
 
@@ -49,6 +73,10 @@ public:
     std::vector<std::string> waitingOrder(Policy policy, TimeMs now) const;
     std::optional<Job> claim(Policy policy);
     std::optional<Job> claim(Policy policy, TimeMs now);
+    // Matching, device ownership and paper reservation share the queue mutex.
+    std::optional<Job> claimFor(Policy policy, TimeMs now, const std::vector<Printer>& fleet,
+                               const std::vector<int>& idle, Inventory supplied);
+    bool refund(const std::string& id, Money cumulativeCents);
     // Compatibility entry point for the original, single-claim GUI.
     bool finish(const std::string& id, bool success);
     bool finish(const std::string& id, int attempt, bool success, TimeMs now);
@@ -64,6 +92,7 @@ private:
     bool precedes(const Job& a, const Job& b, Policy policy, TimeMs now) const;
     Job* find(const std::string& id);
     bool finishLocked(Job& job, int attempt, bool success, TimeMs now);
+    Job startLocked(Job& job, TimeMs now);
     SchedulerOptions options_;
     Clock clock_;
     mutable std::mutex mutex_;

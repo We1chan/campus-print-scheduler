@@ -1,4 +1,5 @@
 #include "cps/runtime/job_io.hpp"
+#include "cps/runtime/shop_io.hpp"
 
 #include <QCoreApplication>
 #include <QDir>
@@ -45,6 +46,7 @@ bool readJob(const QString& path, Job& job, QString& error) {
     job.pages = object.value("pages").toInt();
     job.copies = object.value("copies").toInt();
     job.state = JobState::Queued;
+    if (!orderTermsFromJson(object, job)) { error = "Invalid order specifications"; return false; }
     return true;
 }
 
@@ -52,7 +54,8 @@ bool writeJob(const QString& path, const Job& job, QString& error) {
     const QJsonObject object{{"schema_version", 1},
         {"job_id", QString::fromStdString(job.id)},
         {"title", QString::fromUtf8(job.title.data(), static_cast<qsizetype>(job.title.size()))},
-        {"pages", job.pages}, {"copies", job.copies}};
+        {"pages", job.pages}, {"copies", job.copies}, {"paper", job.paper == PaperSize::A3 ? "a3" : "a4"},
+        {"color", job.color}, {"duplex", job.duplex}};
     const auto data = QJsonDocument(object).toJson();
     QSaveFile file(path);
     if (!file.open(QIODevice::WriteOnly) || file.write(data) != data.size() || !file.commit()) {

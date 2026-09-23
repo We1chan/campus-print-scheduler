@@ -173,3 +173,50 @@ state.json 新增可选 `paused` 布尔字段，旧文件缺省 false，仍使�
 
 诊断和测试可调用 `print-coordinator --state-dir <目录> --request '{"type":"snapshot"}'`，向已有服务发送一条命令并打印回复。
 GUI 自动创建的是独立本地协调进程，不是 Windows Service；POSIX 传统 daemon 演示仍使用 --daemon。
+
+
+## 经营扩展 v0.2（2026-09-23）
+
+当前工作重点为经营调度。既有任务状态、取消与恢复协议保留。完整规则与假设见 [shop.md](shop.md)。
+
+### 核心模型
+
+`Job` 新增 `paper`（A4/A3）、`color`、`duplex`、`service`（Express/Standard/Flexible）、`deadlineMs`、`baseCents`、`quotedCents`、`costCents`、`refundCents`、`assignedPrinter`。金额为整数分；`sheets()` 保留原打印面语义，`paperSheets()` 为实际张数，双面按每一份分别向上取整。旧任务缺省 A4 黑白单面、无期限、金额 0、未分配设备。
+
+`Printer` 包含名称、A3/彩色/双面能力、接单开关、黑白/彩色每面毫秒数。`Inventory` 是累计供应张数（A4/A3），不是可用库存；可用数从供应与完整订单快照推导。
+
+`Scheduler::claimFor(policy, now, fleet, idle, supplied)` 在同一 mutex 内检查设备占用、兼容性、库存并领取订单。调用方先持久化再启动进程；assignedPrinter 和成本随领取持久保存。`refund(id, cumulativeCents)` 只允许完成订单，累计退款不递减且不超过报价，重复同额请求幂等。
+
+新增 `Policy::Deadline` / `Policy::Revenue`，IPC 名称为 `deadline` / `revenue`。原回放工具保留三种历史同构策略；经营回放使用 `replayShop` / `shop-experiments`。
+
+### 持久格式
+
+经营目录顶层 `schema_version: 2`，旧同构目录仍为 1；读取器支持二者。v2 必须包含 `shop`：
+
+```json
+{"version":1,"fleet":[{"name":"黑白快印 01","a3":false,"color":false,"duplex":true,"online":true,"mono_page_ms":150,"color_page_ms":150}],"supplied_a4":10000,"supplied_a3":3000}
+```
+
+示例省略其余设备。fleet 长度必须等于顶层 printers（1–64）；每面延时 10–5000 ms，A3 执行时加倍。读取时校验库存未透支、设备索引与活动订单独占，校验失败不覆盖文件。每条订单保存完整经营字段，报价不会在读取时重算。新订单总页数仍不超过 10000。
+
+### IPC 增量
+
+IPC 信封继续 schema_version 1，与持久文件版本分别管理。
+
+| 请求 | 输入 | 行为 |
+| --- | --- | --- |
+| quote | job（与 submit 同规格） | 返回基础价、报价、承诺期限、物理用纸和当前库存是否足够；不入队、不预留库存 |
+| submit / submit_batch | 原字段，加 paper=`a4/a3`、color/duplex 布尔、service=`express/standard/flexible` | 后台计算价格与相对期限，客户端金额字段无权改价；整批校验后持久入队 |
+| set_printer | index，online 布尔 | 改变接新单开关；当前执行不中断 |
+| set_printer | index，完整 printer 对象 | 仅设备空闲时修改名称、能力与速度 |
+| restock | paper，quantity（1–1000000） | 增加累计供应，单纸型累计上限 1000000000 |
+| refund | job_id，cumulative_cents | 设置完成订单的累计退款额；界面提供全额退款 |
+| set_policy | policy 增加 deadline/revenue | 改变后续匹配，不抢占当前订单 |
+
+每次经营变更先持久化再回复 accepted。客户端丢失确认后不自动重发。quote 的库存只是预览，提交与预览之间可变化；实际库存以领取时的原子检查为准。系统不保证所有接受订单能按时交付，逾期单独统计。
+
+snapshot 新增 shop_enabled、fleet、stock_a4/stock_a3、supplied_a4/supplied_a3、shop_metrics。订单新增 JSON 字段 paper/color/duplex/service/deadline_ms/base_cents/quoted_cents/cost_cents/refund_cents/assigned_printer。`slot` 仅活动时展示，assigned_printer 保留上次派发设备供审计。
+
+shop_metrics 包含 gross_cents/refund_cents/revenue_cents/cost_cents/contribution_cents/pending_cents、completed/on_time/late/overdue。金额是完成订单口径，退款按观察时点累计归属原订单，不是会计期间现金流水。
+
+worker Job JSON 仍为 1，新增可选 paper/color/duplex 字段；输出增加 paper/color/duplex/physical_sheets，原有 sheet 与进度字段继续表示打印面，保持原解析器兼容。

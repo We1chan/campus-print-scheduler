@@ -53,6 +53,9 @@ int main(int argc, char* argv[]) {
         .arg(id, QString::fromUtf8(job.title.data(), static_cast<qsizetype>(job.title.size())))
         .arg(job.sheets()).toUtf8();
     if (result.write(header) != header.size()) return 74;
+    const auto specifications = QString("paper=%1\ncolor=%2\nduplex=%3\nphysical_sheets=%4\n")
+        .arg(job.paper == cps::PaperSize::A3 ? "a3" : "a4").arg(job.color).arg(job.duplex).arg(job.paperSheets()).toUtf8();
+    if (result.write(specifications) != specifications.size()) return 74;
     int printed = 0;
     QTimer timer;
     QObject::connect(&timer, &QTimer::timeout, &app, [&] {

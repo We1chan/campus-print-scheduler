@@ -28,7 +28,7 @@ def main():
     qt_bin = args.qt_bin.resolve()
     windows = sys.platform == "win32"
     suffix = ".exe" if windows else ""
-    names = ["campus-print", "print-coordinator", "print-supervisor", "print-worker", "scheduler-replay"]
+    names = ["campus-print", "print-coordinator", "print-supervisor", "print-worker", "scheduler-replay", "shop-experiments"]
     deploy = qt_bin / ("windeployqt.exe" if windows else "macdeployqt")
     for path in [deploy, *(source / (name + suffix) for name in names)]:
         if not path.is_file():
@@ -50,7 +50,7 @@ def main():
         with (bundle / "Contents" / "Info.plist").open("wb") as file:
             plistlib.dump({"CFBundleExecutable": "campus-print", "CFBundleIdentifier": "edu.campusprint.scheduler",
                           "CFBundleName": "CampusPrint", "CFBundlePackageType": "APPL",
-                          "CFBundleShortVersionString": "0.1.0", "NSHighResolutionCapable": True}, file)
+                          "CFBundleShortVersionString": "0.2.0", "NSHighResolutionCapable": True}, file)
         # Relocating dylib load commands invalidates the linker signature on arm64.
         # Sign the deployed binaries locally; this is not a Developer ID signature.
         subprocess.run([str(deploy), str(bundle), "-always-overwrite", "-codesign=-",

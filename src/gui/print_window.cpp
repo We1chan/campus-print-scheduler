@@ -1,6 +1,12 @@
 #include "print_window.hpp"
 #include "ui_theme.hpp"
 #include "paper_workspace.hpp"
+#include "cps/runtime/shop_io.hpp"
+#include <QCheckBox>
+#include <QTableWidget>
+#include <QInputDialog>
+#include <QJsonArray>
+#include <QUuid>
 #include <QStackedWidget>
 #include <QButtonGroup>
 #include <QSignalBlocker>
@@ -173,7 +179,7 @@ public:
 };
 }
 int JobTableModel::rowCount(const QModelIndex& parent) const { return parent.isValid() ? 0 : static_cast<int>(jobs_.size()); }
-int JobTableModel::columnCount(const QModelIndex& parent) const { return parent.isValid() ? 0 : 7; }
+int JobTableModel::columnCount(const QModelIndex& parent) const { return parent.isValid() ? 0 : 10; }
 QVariant JobTableModel::data(const QModelIndex& index, int role) const {
     if (!index.isValid() || index.row() < 0 || index.row() >= jobs_.size()) return {};
     const auto& job = jobs_[index.row()];
@@ -182,6 +188,7 @@ QVariant JobTableModel::data(const QModelIndex& index, int role) const {
     if (role == Qt::UserRole + 2) return job.controlReady;
     if (role == Qt::UserRole + 3) return job.printed;
     if (role == Qt::UserRole + 4) return job.sheets;
+    if (role == Qt::UserRole + 5) return double(job.quotedCents);
     if (role == Qt::ToolTipRole) return job.title + "\n" + job.id + (job.detail.isEmpty() ? QString() : "\n" + job.detail);
     if (role != Qt::DisplayRole) return {};
     switch (index.column()) {
@@ -192,13 +199,16 @@ QVariant JobTableModel::data(const QModelIndex& index, int role) const {
     case 4: return QStringLiteral("%1 / %2").arg(job.printed).arg(job.sheets);
     case 5: return job.detail;
     case 6: return job.id;
+    case 7: return job.specification;
+    case 8: return QStringLiteral("¥%1").arg(job.quotedCents / 100.0, 0, 'f', 2);
+    case 9: return job.deadline;
     default: return {};
     }
 }
 QVariant JobTableModel::headerData(int section, Qt::Orientation orientation, int role) const {
     if (orientation != Qt::Horizontal || role != Qt::DisplayRole) return {};
     const QStringList headings{QStringLiteral("文档"), QStringLiteral("总页数"), QStringLiteral("优先级"),
-        QStringLiteral("状态"), QStringLiteral("已打印 / 总页数"), QStringLiteral("结果 / 错误"), QStringLiteral("任务 ID")};
+        QStringLiteral("状态"), QStringLiteral("已打印 / 总页数"), QStringLiteral("结果 / 错误"), QStringLiteral("任务 ID"), QStringLiteral("规格"), QStringLiteral("锁定报价"), QStringLiteral("交付期限")};
     return headings.value(section);
 }
 void JobTableModel::update(const QList<JobView>& jobs) {
@@ -260,7 +270,7 @@ void StatisticsChart::paintEvent(QPaintEvent*) {
 }
 
 PrintWindow::PrintWindow(WindowOptions options, QWidget* parent) : QMainWindow(parent) {
-    setWindowTitle(QStringLiteral("校园打印 · Paper"));
+    setWindowTitle(QStringLiteral("打印店经营与协同调度 · Paper"));
     setMinimumSize(1000, 680);
     const auto available = screen()->availableGeometry();
     resize(std::min(1420, available.width() - 40), std::min(900, available.height() - 60));
@@ -298,12 +308,12 @@ PrintWindow::PrintWindow(WindowOptions options, QWidget* parent) : QMainWindow(p
     auto* layout = new QVBoxLayout(central); layout->setContentsMargins(24, 10, 24, 12); layout->setSpacing(12);
     auto* header = new QHBoxLayout; header->setSpacing(10);
     auto* mark = new QLabel; mark->setPixmap(ui::icon(ui::Icon::Document, QColor("#26354D")).pixmap(30, 30)); header->addWidget(mark);
-    auto* brand = label(QStringLiteral("校园打印")); brand->setObjectName("pageTitle"); header->addWidget(brand); header->addSpacing(24);
+    auto* brand = label(QStringLiteral("打印店")); brand->setObjectName("pageTitle"); header->addWidget(brand); header->addSpacing(24);
     auto* navigation = new QButtonGroup(this); navigation->setExclusive(true);
     auto* stack = new QStackedWidget; stack->setObjectName("workspacePages");
-    const QStringList names{QStringLiteral("工作台"), QStringLiteral("记录"), QStringLiteral("设备")};
-    const QStringList navIds{"navWorkspace", "navHistory", "navDevices"};
-    for (int i = 0; i < 3; ++i) {
+    const QStringList names{QStringLiteral("工作台"), QStringLiteral("记录"), QStringLiteral("设备"), QStringLiteral("经营")};
+    const QStringList navIds{"navWorkspace", "navHistory", "navDevices", "navShop"};
+    for (int i = 0; i < 4; ++i) {
         auto* button = new QPushButton(names[i]); button->setObjectName(navIds[i]); button->setProperty("role", "nav");
         button->setCheckable(true); button->setChecked(i == 0); navigation->addButton(button, i); header->addWidget(button);
         connect(button, &QPushButton::clicked, this, [stack, i] { stack->setCurrentIndex(i); });
@@ -330,7 +340,7 @@ PrintWindow::PrintWindow(WindowOptions options, QWidget* parent) : QMainWindow(p
     auto* controlRow = new QHBoxLayout(controls); controlRow->setContentsMargins(28, 17, 28, 10);
     controlRow->addWidget(label(QStringLiteral("设备与调度"), "section")); controlRow->addStretch();
     auto* policy = new SelectInput; policy->setObjectName("schedulingPolicy");
-    policy->addItems({QStringLiteral("FCFS · 先来先服务"), QStringLiteral("SJF · 短作业优先"), QStringLiteral("优先级 + 等待老化")});
+    policy->addItems({QStringLiteral("FCFS · 先来先服务"), QStringLiteral("SJF · 短作业优先"), QStringLiteral("优先级 + 等待老化"), QStringLiteral("交付期限优先"), QStringLiteral("营业收入导向")});
     policy->setMinimumWidth(190); controlRow->addWidget(policy); controlRow->addStretch();
     auto* motion = new QPushButton(QStringLiteral("减少动效")); motion->setObjectName("reduceMotion"); motion->setCheckable(true); motion->setProperty("role", "quiet");
     controlRow->addWidget(motion);
@@ -374,7 +384,7 @@ PrintWindow::PrintWindow(WindowOptions options, QWidget* parent) : QMainWindow(p
     table_->horizontalHeader()->setDefaultAlignment(Qt::AlignLeft | Qt::AlignVCenter);
     table_->horizontalHeader()->setSectionResizeMode(QHeaderView::Fixed); table_->horizontalHeader()->setSectionResizeMode(0, QHeaderView::Stretch);
     table_->setColumnWidth(1, 65); table_->setColumnWidth(2, 65); table_->setColumnWidth(3, 90);
-    table_->setColumnWidth(4, 130); table_->setColumnWidth(5, 220); table_->hideColumn(6); queueLayout->addWidget(table_, 1);
+    table_->setColumnWidth(4, 130); table_->setColumnWidth(5, 140); table_->hideColumn(6); if (options.shopMode) table_->hideColumn(2); table_->setColumnWidth(7, 125); table_->setColumnWidth(8, 95); table_->setColumnWidth(9, 130); queueLayout->addWidget(table_, 1);
     auto* overlay = new QVBoxLayout(table_->viewport()); overlay->setContentsMargins(0, 0, 0, 0);
     emptyState_ = new QWidget; emptyState_->setAttribute(Qt::WA_TransparentForMouseEvents);
     auto* emptyLayout = new QVBoxLayout(emptyState_); emptyLayout->addStretch();
@@ -398,25 +408,92 @@ PrintWindow::PrintWindow(WindowOptions options, QWidget* parent) : QMainWindow(p
         const auto output = QDir(options.stateDirectory).filePath("output");
         if (!QDir().mkpath(output) || !QDesktopServices::openUrl(QUrl::fromLocalFile(output))) feedback_->setText(QStringLiteral("无法打开输出目录。"));
     });
-    auto* printers = new QHBoxLayout;
-    for (int i = 0; i < 2; ++i) {
-        auto* box = card(); auto* d = new QVBoxLayout(box); d->setContentsMargins(25, 24, 25, 24); d->setSpacing(15);
-        auto* top = new QHBoxLayout; top->addWidget(label(QStringLiteral("打印机 0%1").arg(i + 1), "section")); top->addStretch();
-        printerStates_[i] = label(QStringLiteral("就绪"), "badge"); top->addWidget(printerStates_[i]); d->addLayout(top);
-        printerLabels_[i] = label(QStringLiteral("等待下一个任务")); printerLabels_[i]->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred); d->addWidget(printerLabels_[i]);
-        printerDetails_[i] = label({}, "muted"); printerDetails_[i]->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred); d->addWidget(printerDetails_[i]);
-        progressBars_[i] = new QProgressBar; progressBars_[i]->setTextVisible(false); progressBars_[i]->setValue(0); d->addWidget(progressBars_[i]);
-        printerProgress_[i] = label({}, "muted"); d->addWidget(printerProgress_[i]); printers->addWidget(box);
-    }
-    deviceLayout->addLayout(printers);
+    fleetTable_ = new QTableWidget(0, 6); fleetTable_->setObjectName("fleetTable");
+    fleetTable_->setHorizontalHeaderLabels({QStringLiteral("设备"), QStringLiteral("能力"), QStringLiteral("模拟秒/页"), QStringLiteral("接单状态"), QStringLiteral("当前订单"), QStringLiteral("进度")});
+    fleetTable_->horizontalHeader()->setSectionResizeMode(QHeaderView::Stretch);
+    fleetTable_->setSelectionBehavior(QAbstractItemView::SelectRows); fleetTable_->setSelectionMode(QAbstractItemView::SingleSelection);
+    fleetTable_->setEditTriggers(QAbstractItemView::NoEditTriggers); fleetTable_->verticalHeader()->hide();
+    deviceLayout->addWidget(fleetTable_, 1);
+    auto* deviceActions = new QHBoxLayout;
+    auto* toggleDevice = new QPushButton(QStringLiteral("切换所选设备接单状态")); toggleDevice->setObjectName("togglePrinter");
+    auto* editDevice = new QPushButton(QStringLiteral("编辑空闲设备")); editDevice->setObjectName("editPrinter");
+    deviceActions->addWidget(toggleDevice); deviceActions->addWidget(editDevice); deviceActions->addStretch(); deviceLayout->addLayout(deviceActions);
+    connect(toggleDevice, &QPushButton::clicked, this, [this] {
+        const int i = fleetTable_->currentRow(); const auto fleet = shopSnapshot_.value("fleet").toArray();
+        if (i < 0 || i >= fleet.size()) return;
+        emit shopRequested("set_printer", {{"index", i}, {"online", !fleet[i].toObject().value("online").toBool()}});
+    });
+    connect(editDevice, &QPushButton::clicked, this, [this] {
+        const int i = fleetTable_->currentRow(); const auto fleet = shopSnapshot_.value("fleet").toArray();
+        if (i < 0 || i >= fleet.size()) return;
+        auto object = fleet[i].toObject(); QDialog dialog(this); dialog.setWindowTitle(QStringLiteral("编辑设备 · 仅空闲时生效"));
+        auto* fields = new QVBoxLayout(&dialog);
+        auto* name = new QLineEdit(object.value("name").toString()); fields->addWidget(label(QStringLiteral("设备名称"))); fields->addWidget(name);
+        auto* a3 = new QCheckBox("A3"); a3->setChecked(object.value("a3").toBool()); fields->addWidget(a3);
+        auto* color = new QCheckBox(QStringLiteral("彩色")); color->setChecked(object.value("color").toBool()); fields->addWidget(color);
+        auto* duplex = new QCheckBox(QStringLiteral("双面")); duplex->setChecked(object.value("duplex").toBool()); fields->addWidget(duplex);
+        auto* monoMs = new QSpinBox; monoMs->setRange(10, 5000); monoMs->setValue(object.value("mono_page_ms").toInt());
+        auto* colorMs = new QSpinBox; colorMs->setRange(10, 5000); colorMs->setValue(object.value("color_page_ms").toInt());
+        fields->addWidget(label(QStringLiteral("黑白 / 彩色毫秒每面（A3 加倍）"))); fields->addWidget(monoMs); fields->addWidget(colorMs);
+        auto* save = new QPushButton(QStringLiteral("保存设备")); fields->addWidget(save); connect(save, &QPushButton::clicked, &dialog, &QDialog::accept);
+        if (dialog.exec() != QDialog::Accepted) return;
+        object.insert("name", name->text()); object.insert("a3", a3->isChecked()); object.insert("color", color->isChecked()); object.insert("duplex", duplex->isChecked());
+        object.insert("mono_page_ms", monoMs->value()); object.insert("color_page_ms", colorMs->value());
+        emit shopRequested("set_printer", {{"index", i}, {"printer", object}});
+    });
     auto* distribution = card(); auto* dist = new QVBoxLayout(distribution); dist->setContentsMargins(25, 20, 25, 14);
     dist->addWidget(label(QStringLiteral("本次任务分布"), "section")); chart_ = new StatisticsChart; dist->addWidget(chart_); deviceLayout->addWidget(distribution);
-    auto* note = label(QStringLiteral("当前使用本地模拟打印，两台独立工作进程向文本文件输出。\n队列由独立后台保存；关闭窗口后任务继续执行，重开可查看最新结果。"), "muted");
+    auto* note = label(QStringLiteral("本地模拟打印。暂停设备接单后，当前订单会继续完成。\n队列由独立后台保存；关闭窗口后任务继续执行，重开可查看最新结果。"), "muted");
     note->setWordWrap(true); deviceLayout->addWidget(note); deviceLayout->addStretch(); stack->addWidget(devices);
+    auto* shopPage = new QWidget; auto* shopLayout = new QVBoxLayout(shopPage); shopLayout->setSpacing(14);
+    shopLayout->setSizeConstraint(QLayout::SetMinimumSize);
+    shopLayout->addWidget(label(QStringLiteral("经营概览"), "section"));
+    auto* accountingNote = label(QStringLiteral("模拟经营 · 完成后结算 · 金额单位：元。报价与期限在下单时锁定。"), "muted"); accountingNote->setWordWrap(true); shopLayout->addWidget(accountingNote);
+    shopSummary_ = label(QStringLiteral("等待后台经营数据")); shopSummary_->setObjectName("shopSummary"); shopSummary_->setWordWrap(true);
+    shopSummary_->setStyleSheet("font-size: 20px;"); shopSummary_->setMinimumHeight(116); shopLayout->addWidget(shopSummary_);
+    stockSummary_ = label({}); stockSummary_->setObjectName("stockSummary"); stockSummary_->setWordWrap(true); shopLayout->addWidget(stockSummary_);
+    auto* stockActions = new QHBoxLayout;
+    for (const auto& paper : QStringList{"a4", "a3"}) {
+        auto* restock = new QPushButton(QStringLiteral("补充 %1 纸张").arg(paper.toUpper())); restock->setObjectName("restock_" + paper); stockActions->addWidget(restock);
+        connect(restock, &QPushButton::clicked, this, [this, paper] {
+            bool ok = false; const int n = QInputDialog::getInt(this, QStringLiteral("补充库存"), QStringLiteral("增加张数"), 500, 1, 1000000, 1, &ok);
+            if (ok) emit shopRequested("restock", {{"paper", paper}, {"quantity", n}});
+        });
+    }
+    stockActions->addStretch(); shopLayout->addLayout(stockActions);
+    auto* tierNote = label(QStringLiteral("服务档位\n快速：30 分钟内，原价；普通：2 小时内，95 折；灵活：8 小时内，85 折。\nA4 黑白 0.20 元/面，彩色 1.50 元/面；A3 加倍。所有价格和成本均为演示参数。\n交付时间为承诺期限，超时会单独统计；设备暂停或缺纸可能影响履约。"), "muted");
+    tierNote->setWordWrap(true); shopLayout->addWidget(tierNote);
+    auto* refund = new QPushButton(QStringLiteral("为记录页选中的已完成订单全额退款（模拟）")); refund->setObjectName("refundOrder"); shopLayout->addWidget(refund);
+    connect(refund, &QPushButton::clicked, this, [this] {
+        const auto index = table_->currentIndex();
+        if (!index.isValid() || index.data(Qt::UserRole + 1).toInt() != int(JobState::Completed)) {
+            feedback_->setText(QStringLiteral("请先在记录页选中已完成的订单。")); return;
+        }
+        emit shopRequested("refund", {{"job_id", index.data(Qt::UserRole).toString()}, {"cumulative_cents", index.data(Qt::UserRole + 5).toDouble()}});
+    });
+    auto* experimentActions = new QHBoxLayout;
+    experimentActions->addWidget(label(QStringLiteral("模拟客户数")));
+    auto* experimentCount = new QSpinBox; experimentCount->setRange(1, 2000); experimentCount->setValue(600); experimentCount->setObjectName("experimentCustomers");
+    experimentActions->addWidget(experimentCount);
+    auto* runExperiment = new QPushButton(QStringLiteral("运行策略对比")); runExperiment->setObjectName("runShopExperiments"); experimentActions->addWidget(runExperiment); experimentActions->addStretch();
+    shopLayout->addLayout(experimentActions);
+    auto* experimentTable = new QTableWidget(0, 8); experimentTable->setObjectName("experimentTable");
+    experimentTable->setHorizontalHeaderLabels({QStringLiteral("实验场景"), QStringLiteral("策略"), QStringLiteral("优惠"), QStringLiteral("接单/流失"), QStringLiteral("营业额"), QStringLiteral("贡献利润"), QStringLiteral("完成/超时"), QStringLiteral("期末未完成")});
+    experimentTable->setEditTriggers(QAbstractItemView::NoEditTriggers); experimentTable->horizontalHeader()->setSectionResizeMode(QHeaderView::Stretch);
+    experimentTable->setMinimumHeight(240); shopLayout->addWidget(experimentTable, 1);
+    auto* experimentNote = label(QStringLiteral("固定随机种子与 8 小时营业窗口。预算敏感客户占比 0%、30%、60%；完整报表含假设、客户输入与派发记录。"), "muted");
+    experimentNote->setWordWrap(true); shopLayout->addWidget(experimentNote);
+    auto* shopScroll = new QScrollArea; shopScroll->setObjectName("shopScroll"); shopScroll->setWidgetResizable(true);
+    shopScroll->setWidget(shopPage); stack->addWidget(shopScroll);
+    connect(runExperiment, &QPushButton::clicked, this, [this, options, experimentCount] {
+        const auto path = QFileDialog::getSaveFileName(this, QStringLiteral("保存策略实验"), options.stateDirectory + "/shop-experiments.json", "JSON (*.json)");
+        if (!path.isEmpty()) emit experimentRequested(path, experimentCount->value());
+    });
+    if (options.shopMode) stack->setCurrentIndex(3);
     layout->addWidget(stack, 1);
     auto* footer = new QHBoxLayout; footer->setSpacing(12);
     connection_ = label(QStringLiteral("检查执行器…"), "badge"); footer->addWidget(connection_);
-    feedback_ = label(QStringLiteral("新建一份任务，或加载演示任务体验双设备调度。"), "muted");
+    feedback_ = label(QStringLiteral("新建一份任务，或加载演示任务体验经营调度。"), "muted");
     feedback_->setObjectName("feedback"); feedback_->setWordWrap(true); footer->addWidget(feedback_, 1);
     logToggle_ = new QToolButton; logToggle_->setObjectName("logToggle"); logToggle_->setCheckable(true); logToggle_->setProperty("role", "quiet");
     logToggle_->setText(QStringLiteral("运行日志")); footer->addWidget(logToggle_); layout->addLayout(footer);
@@ -439,16 +516,49 @@ PrintWindow::PrintWindow(WindowOptions options, QWidget* parent) : QMainWindow(p
         field->addWidget(inputs[i]); numbers->addLayout(field);
     }
     form->addLayout(numbers);
+    auto* paper = new SelectInput; paper->setObjectName("orderPaper"); paper->addItems({"A4", "A3"});
+    auto* color = new QCheckBox(QStringLiteral("彩色打印")); color->setObjectName("orderColor");
+    auto* duplex = new QCheckBox(QStringLiteral("双面打印")); duplex->setObjectName("orderDuplex");
+    auto* service = new SelectInput; service->setObjectName("orderService");
+    service->addItems({QStringLiteral("快速 · 30 分钟 · 原价"), QStringLiteral("普通 · 2 小时 · 95 折"), QStringLiteral("灵活 · 8 小时 · 85 折")}); service->setCurrentIndex(1);
+    form->addWidget(label(QStringLiteral("纸张与打印规格"), "muted")); form->addWidget(paper); form->addWidget(color); form->addWidget(duplex);
+    form->addWidget(label(QStringLiteral("取件期限与优惠"), "muted")); form->addWidget(service);
+    paper->setEnabled(options.shopMode); color->setEnabled(options.shopMode); duplex->setEnabled(options.shopMode); service->setEnabled(options.shopMode);
     auto* sheets = label(QStringLiteral("本次打印共 8 页"), "muted"); sheets->setWordWrap(true); form->addWidget(sheets);
-    auto sheetSummary = [=] { sheets->setText(QStringLiteral("本次打印共 %1 页 · 优先级越大越优先").arg(pages->value() * copies->value())); };
+    auto sheetSummary = [=] {
+        if (pages->value() * copies->value() > 10000) { sheets->setText(QStringLiteral("总页数不得超过 10000")); return; }
+        Job job; job.pages = pages->value(); job.copies = copies->value(); job.paper = paper->currentIndex() == 1 ? PaperSize::A3 : PaperSize::A4;
+        job.color = color->isChecked(); job.duplex = duplex->isChecked(); job.service = static_cast<ServiceTier>(service->currentIndex()); cps::quote(job);
+        sheets->setText(paper->isEnabled() ? QStringLiteral("%1 面 · %2 张纸 · 锁定报价 ¥%3（模拟）").arg(job.sheets()).arg(job.paperSheets()).arg(job.quotedCents / 100.0, 0, 'f', 2)
+                                        : QStringLiteral("本次打印共 %1 页").arg(job.sheets()));
+    };
     connect(pages, &QSpinBox::valueChanged, this, sheetSummary); connect(copies, &QSpinBox::valueChanged, this, sheetSummary);
+    connect(paper, &QComboBox::currentIndexChanged, this, sheetSummary); connect(service, &QComboBox::currentIndexChanged, this, sheetSummary);
+    connect(color, &QCheckBox::toggled, this, sheetSummary); connect(duplex, &QCheckBox::toggled, this, sheetSummary); sheetSummary();
     auto* submit = new QPushButton(QStringLiteral("加入打印队列")); submit->setObjectName("submitJob"); submit->setProperty("role", "primary"); submit->setDefault(true); form->addWidget(submit);
     auto* import = new QPushButton(QStringLiteral("从 JSON 文件批量导入")); import->setObjectName("importJobs"); form->addWidget(import);
-    connect(newTask, &QPushButton::clicked, this, [=] { submission->show(); submission->raise(); title->setFocus(); title->selectAll(); });
+    connect(newTask, &QPushButton::clicked, this, [=] { sheetSummary(); submission->show(); submission->raise(); title->setFocus(); title->selectAll(); });
     qRegisterMetaType<ViewState>();
     controller_ = new PrintController(options); controller_->moveToThread(&backendThread_);
     connect(&backendThread_, &QThread::started, controller_, &PrintController::initialize);
     connect(&backendThread_, &QThread::finished, controller_, &QObject::deleteLater);
+    connect(this, &PrintWindow::experimentRequested, controller_, &PrintController::runExperiments, Qt::QueuedConnection);
+    connect(controller_, &PrintController::experimentReady, this, [experimentTable](const QJsonObject& report) {
+        const auto runs = report.value("runs").toArray(); experimentTable->setRowCount(runs.size());
+        for (int i = 0; i < runs.size(); ++i) {
+            const auto r = runs[i].toObject();
+            const auto policy = r.value("policy").toString();
+            const QStringList cells{r.value("mode") == "fixed_orders" ? QStringLiteral("固定订单") : QStringLiteral("预算敏感 %1%").arg(r.value("budget_sensitive_percent").toInt()),
+                policy == "revenue" ? QStringLiteral("收入导向") : policy == "deadline" ? QStringLiteral("期限优先") : QStringLiteral("先来先服务"),
+                r.value("discounts").toBool() ? QStringLiteral("开启") : QStringLiteral("关闭"),
+                QStringLiteral("%1 / %2").arg(r.value("accepted").toInt()).arg(r.value("lost_before_order").toInt()),
+                QString::number(r.value("revenue_cents").toDouble()/100, 'f', 2), QString::number(r.value("contribution_cents").toDouble()/100, 'f', 2),
+                QStringLiteral("%1 / %2").arg(r.value("completed").toInt()).arg(r.value("late").toInt()), QString::number(r.value("unfinished_at_close").toInt())};
+            for (int c = 0; c < cells.size(); ++c) experimentTable->setItem(i, c, new QTableWidgetItem(cells[c]));
+        }
+    }, Qt::QueuedConnection);
+    connect(this, &PrintWindow::orderRequested, controller_, &PrintController::submitOrder, Qt::QueuedConnection);
+    connect(this, &PrintWindow::shopRequested, controller_, &PrintController::shopCommand, Qt::QueuedConnection);
     connect(this, &PrintWindow::submitRequested, controller_, &PrintController::submit, Qt::QueuedConnection);
     connect(this, &PrintWindow::importRequested, controller_, &PrintController::importFile, Qt::QueuedConnection);
     connect(this, &PrintWindow::cancelRequested, controller_, &PrintController::cancel, Qt::QueuedConnection);
@@ -479,7 +589,10 @@ PrintWindow::PrintWindow(WindowOptions options, QWidget* parent) : QMainWindow(p
             const auto error = QStringLiteral("请输入有效名称，总页数不得超过 10000。");
             sheets->setText(error); feedback_->setText(error); return;
         }
-        emit submitRequested(title->text(), pages->value(), copies->value(), priority->value());
+        if (options.shopMode) emit orderRequested({{"title", title->text()}, {"pages", pages->value()}, {"copies", copies->value()}, {"priority", priority->value()},
+            {"paper", paper->currentIndex() == 1 ? "a3" : "a4"}, {"color", color->isChecked()}, {"duplex", duplex->isChecked()},
+            {"service", QStringList{"express", "standard", "flexible"}[service->currentIndex()]}});
+        else emit submitRequested(title->text(), pages->value(), copies->value(), priority->value());
         submission->accept();
     });
     connect(import, &QPushButton::clicked, this, [this, options] {
@@ -549,6 +662,16 @@ PrintWindow::PrintWindow(WindowOptions options, QWidget* parent) : QMainWindow(p
 }
 PrintWindow::~PrintWindow() { backendThread_.quit(); backendThread_.wait(); }
 void PrintWindow::loadDemo() {
+    if (findChild<QComboBox*>("orderPaper")->isEnabled()) {
+        QJsonArray jobs;
+        for (int i = 0; i < 24; ++i) jobs.append(QJsonObject{
+            {"job_id", QUuid::createUuid().toString(QUuid::WithoutBraces)},
+            {"title", QStringList{QStringLiteral("毕业论文"), QStringLiteral("社团彩页"), QStringLiteral("A3 海报"), QStringLiteral("课堂讲义")}[i % 4] + QString::number(i + 1)},
+            {"pages", 8 + (i * 17) % 80}, {"copies", 1 + i % 2}, {"paper", i % 4 == 2 ? "a3" : "a4"},
+            {"color", i % 4 == 1 || i % 4 == 2}, {"duplex", i % 4 == 0},
+            {"service", QStringList{"express", "standard", "flexible"}[i % 3]}});
+        emit shopRequested("submit_batch", {{"jobs", jobs}}); return;
+    }
     const QStringList names{QStringLiteral("操作系统实验报告"), QStringLiteral("课程设计说明书"),
         QStringLiteral("复习笔记"), QStringLiteral("实验数据"), QStringLiteral("阅读材料")};
     const int pages[]{80, 60, 32, 18, 12};
@@ -563,6 +686,7 @@ void PrintWindow::applyView(const ViewState& view) {
     emptyState_->setVisible(filter_->rowCount() == 0);
     queueSummary_->setText(QStringLiteral("%1 个任务").arg(view.jobs.size()));
     const bool available = view.connected;
+    if (available) emit backendReady();
     demoAvailable_ = view.demoAvailable;
     auto* policy = findChild<QComboBox*>("schedulingPolicy");
     auto* pause = findChild<QPushButton*>("pauseDispatch");
@@ -577,24 +701,38 @@ void PrintWindow::applyView(const ViewState& view) {
     connection_->setText(available ? (view.paused ? QStringLiteral("派发已暂停") : QStringLiteral("执行器就绪")) : QStringLiteral("执行器不可用"));
     connection_->setToolTip(view.connection);
     tone(connection_, !available ? "error" : view.paused ? "waiting" : "ready");
-    for (int i = 0; i < 2; ++i) {
+    shopSnapshot_ = view.shop;
+    for (const auto* field : {"orderPaper", "orderColor", "orderDuplex", "orderService"})
+        findChild<QWidget*>(field)->setEnabled(available && view.shop.value("shop_enabled").toBool());
+    const auto fleet = view.shop.value("fleet").toArray();
+    const int count = int(view.printers.size());
+    fleetTable_->setRowCount(count);
+    for (int i = 0; i < count; ++i) {
+        const auto object = i < fleet.size() ? fleet[i].toObject() : QJsonObject{};
         const auto& printer = view.printers[i];
-        const bool active = !printer.jobId.isEmpty();
-        const QString name = active ? printer.title : QStringLiteral("等待下一个任务");
-        printerLabels_[i]->setText(printerLabels_[i]->fontMetrics().elidedText(name, Qt::ElideRight, printerLabels_[i]->width()));
-        printerLabels_[i]->setToolTip(printer.title);
-        const QString detail = active ? printer.status + (printer.connection.isEmpty() ? QString() : " · " + printer.connection)
-                                      : QStringLiteral("提交后将自动分配任务");
-        printerDetails_[i]->setText(printerDetails_[i]->fontMetrics().elidedText(detail, Qt::ElideRight, printerDetails_[i]->width()));
-        printerDetails_[i]->setToolTip(detail);
-        printerStates_[i]->setText(active ? QStringLiteral("工作中") : QStringLiteral("就绪"));
-        tone(printerStates_[i], active ? "active" : "ready");
-        progressBars_[i]->setRange(0, printer.total > 0 ? printer.total : 100);
-        progressBars_[i]->setValue(printer.printed);
-        printerProgress_[i]->setText(active ? QStringLiteral("%1 / %2 页 · %3% 已完成")
-            .arg(printer.printed).arg(printer.total).arg(printer.total > 0 ? printer.printed * 100 / printer.total : 0)
-            : QStringLiteral("当前没有运行任务"));
+        const QString capability = object.isEmpty() ? QStringLiteral("A4 黑白") :
+            QString(object.value("a3").toBool() ? "A3/A4" : "A4") + (object.value("color").toBool() ? QStringLiteral(" 彩色/黑白") : QStringLiteral(" 黑白")) +
+            (object.value("duplex").toBool() ? QStringLiteral(" 双面") : QStringLiteral(" 单面"));
+        const QStringList values{object.value("name").toString(QStringLiteral("打印机 %1").arg(i + 1)), capability,
+            QStringLiteral("%1 / %2").arg(object.value("mono_page_ms").toDouble() / 1000, 0, 'f', 2).arg(object.value("color_page_ms").toDouble() / 1000, 0, 'f', 2),
+            object.value("online").toBool(true) ? QStringLiteral("接单中") : QStringLiteral("暂停接单"),
+            printer.jobId.isEmpty() ? QStringLiteral("空闲") : printer.title, QStringLiteral("%1 / %2 面").arg(printer.printed).arg(printer.total)};
+        for (int c = 0; c < values.size(); ++c) {
+            if (!fleetTable_->item(i, c)) fleetTable_->setItem(i, c, new QTableWidgetItem);
+            fleetTable_->item(i, c)->setText(values[c]); fleetTable_->item(i, c)->setToolTip(values[c]);
+        }
     }
+    const auto business = view.shop.value("shop_metrics").toObject();
+    shopSummary_->setText(view.shop.value("shop_enabled").toBool() ?
+        QStringLiteral("实收营业额  ¥%1\n直接成本  ¥%2      贡献利润  ¥%3\n累计退款  ¥%4      待完成订单金额  ¥%5\n完成 %6 单 · 按时 %7 单 · 超时完成 %8 单 · 当前逾期 %9 单")
+            .arg(business.value("revenue_cents").toDouble()/100, 0, 'f', 2).arg(business.value("cost_cents").toDouble()/100, 0, 'f', 2)
+            .arg(business.value("contribution_cents").toDouble()/100, 0, 'f', 2).arg(business.value("refund_cents").toDouble()/100, 0, 'f', 2)
+            .arg(business.value("pending_cents").toDouble()/100, 0, 'f', 2).arg(business.value("completed").toInt())
+            .arg(business.value("on_time").toInt()).arg(business.value("late").toInt()).arg(business.value("overdue").toInt())
+        : QStringLiteral("此目录是旧版队列。使用新的数据目录启动经营模式即可启用六台设备与订单计价。"));
+    stockSummary_->setText(QStringLiteral("可用库存：A4 %1 张 / A3 %2 张。运行与重试订单已预留纸张。\n直接成本包括成功订单的纸张与墨粉估算，未计租金、人工或故障废页。").arg(view.shop.value("stock_a4").toInt()).arg(view.shop.value("stock_a3").toInt()));
+    for (const auto* name : {"togglePrinter", "editPrinter", "restock_a4", "restock_a3", "refundOrder"})
+        findChild<QPushButton*>(name)->setEnabled(available && view.shop.value("shop_enabled").toBool());
     const auto& m = view.metrics;
     metricValues_[0]->setText(QString::number(static_cast<qulonglong>(m.completed)));
     metricValues_[1]->setText(QString::number(static_cast<qulonglong>(m.queued)));

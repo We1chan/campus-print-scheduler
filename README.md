@@ -1,17 +1,36 @@
-# 校园共享打印任务调度与故障恢复系统
+# 打印店经营管理与多设备协同调度系统
 
 [![Cross-platform CI](https://github.com/We1chan/campus-print-scheduler/actions/workflows/ci.yml/badge.svg)](https://github.com/We1chan/campus-print-scheduler/actions/workflows/ci.yml)
 
 操作系统课程设计，三人协作。使用 **C++17 + Qt 6 Widgets + CMake**，Windows 和 macOS 原生开发，Linux 用于 POSIX 守护进程验收。
 
-## 当前交付：可运行的协作起点
+## 当前交付：v0.2 经营调度
 
-这是 v0.1 开发骨架，**尚未完成全部课设功能**。真实打印机接入不在第一版范围内，以独立工作进程向文本文件输出模拟打印。
+根据教师反馈，项目重点调整为打印店老板视角的订单、价格、交付时间、设备产能与营业额。故障恢复保留为后台基础能力，降低展示优先级。真实打印与支付使用模拟实现。
+
+新增可运行功能：
+
+- A4/A3、黑白/彩色、单双面、页数和份数；区分打印面与物理纸张。
+- 六台能力、速度不同的设备，空闲时编辑能力，随时暂停或恢复接单。
+- 快速、普通、灵活三种服务档位；等待换优惠，后台锁定报价与交付期限。
+- 五种策略：FCFS、SJF、优先级老化、交付期限优先、营业收入导向。
+- 库存预留和补货、完成结算、模拟退款、实收/成本/贡献利润/超时统计。
+- 经营页一键运行 21 组可复现实验，区分固定订单的调度比较与潜在客户的优惠选择。
+
+[经营规则与演示说明](docs/shop.md) · [实验结果](docs/shop-results.md) · [协议契约](docs/interfaces.md)
+
+```sh
+cmake --preset dev
+cmake --build --preset dev --parallel 4
+./build/dev/bin/campus-print --demo-mode --demo-workload --data-dir runtime/shop-demo
+```
+
+使用新的经营数据目录；原有目录不会被自动覆盖。新快照为 schema 2，支持读取原版 schema 1。以下是继续沿用的后台与课程基础：
 
 | 功能 | 状态 |
 | --- | --- |
 | FCFS / SJF、线程安全队列、原子领取任务 | 已实现并测试 |
-| Qt 任务提交界面、两台模拟打印机 | 已实现 |
+| Qt 订单提交界面、六台异构模拟打印机 | 已实现，旧版双设备模式保留 |
 | 独立 supervisor / worker、JSONL 进程通信 | 已实现 |
 | worker 崩溃后有限重试、静默超时检测 | 已实现并有真实进程测试 |
 | JSON 任务文件、原子提交输出、同任务文件锁 | 已实现并测试 |
@@ -20,7 +39,7 @@
 | 内存任务取消、带令牌重试、快照校验加载 | A 核心 API 已实现；B 已接入持久执行与取消，C 界面已接控制协议 |
 | 持久任务队列、独立 coordinator、应用重启恢复 | GUI 已接入持久后台，关窗继续执行，重开同步队列 |
 | 优先级与老化、统计、数据集回放 | A 已实现；26 个新增测试场景、33 组策略实验与答辩材料已完成 |
-| 纸张工作台、双打印机进度、JSONL 分帧、批量导入、统计图/报表 | C 已实现，见 [界面说明](docs/gui.md) 和 [演示入口](docs/paper-demo.md) |
+| 纸张工作台、多打印机进度、JSONL 分帧、批量导入、统计图/报表 | C 已实现，见 [界面说明](docs/gui.md) 和 [演示入口](docs/paper-demo.md) |
 | 等待/运行任务取消、暂停派发、控制重连、演示故障 | 已通过 coordinator 本地 IPC 集成 |
 | Windows/macOS Qt 部署与包测试 | 已提供打包、校验和独立 runner 测试；人工现场验收另行记录 |
 

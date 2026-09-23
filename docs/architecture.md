@@ -1,5 +1,9 @@
 # 架构与操作系统原理
 
+v0.2 的主要业务为打印店经营与异构设备调度，规则见 [经营设计](shop.md)。故障恢复沿用现有结构，优先级低于报价、分配和经营分析。
+
+Qt 经营/订单/设备界面 → 本地 IPC → coordinator → 同一 Scheduler 的设备匹配与库存预留 → 多个执行进程 → 完成结算与经营统计。商业状态与任务状态一起原子持久化；实验工具调用同一匹配函数，按事件时间比较固定营业窗口。
+
 ## 当前统一执行结构
 
 ```mermaid
@@ -21,7 +25,7 @@ flowchart LR
 GUI 仅持有快照，提交、批量导入、策略切换、暂停、取消全部交给 coordinator。
 首次使用时自动启动独立后台；关窗只断开连接，重开同一数据目录后获取持久队列。后台异常退出时客户端尝试重启并重新同步。
 
-`print-coordinator` 持有 Scheduler、策略和固定打印机槽位。每次 `claim()` 后先用 `QSaveFile` 原子写入完整 `state.json`，持久化 Running 与 attempt，再启动 supervisor。状态目录用 `.coordinator.lock` 保证单实例。
+`print-coordinator` 持有 Scheduler、策略和可配置能力和速度的打印机（旧目录保留同构槽位）。每次 `claim()` 后先用 `QSaveFile` 原子写入完整 `state.json`，持久化 Running 与 attempt，再启动 supervisor。状态目录用 `.coordinator.lock` 保证单实例。
 
 服务重启时先 `restore()` 快照。对旧 Running/Cancelling 任务，先检查最终输出以及 supervisor/output 两把锁；输出已经提交则完成任务，两把锁均释放且连续确认执行已停止后才调用 `retry()` 或 `acknowledgeCancel()`。取消意图使用 attempt 唯一的 marker 文件，防止取消过程中 coordinator 崩溃后丢失意图。
 

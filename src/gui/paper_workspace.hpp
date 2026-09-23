@@ -165,7 +165,7 @@ protected:
         paper::text(p, {30, 87, copyWidth, 46}, job.id.isEmpty() ? QStringLiteral("让文档，有序抵达。") : job.title,
                     width() < 1180 ? 22 : 27, paper::ink, true);
         QString device;
-        for (int i = 0; i < 2; ++i) if (!job.id.isEmpty() && view_.printers[i].jobId == job.id)
+        for (int i = 0; i < static_cast<int>(view_.printers.size()); ++i) if (!job.id.isEmpty() && view_.printers[i].jobId == job.id)
             device = QStringLiteral(" · 打印机 0%1").arg(i + 1);
         paper::text(p, {30, 139, copyWidth, 27}, job.id.isEmpty() ? QStringLiteral("新建任务，开始一次轻盈的打印")
             : QStringLiteral("%1 页 · 优先级 %2").arg(job.sheets).arg(job.priority) + device, 12, paper::muted);
@@ -176,7 +176,7 @@ protected:
         p.setPen(Qt::NoPen); p.setBrush(QColor("#DDE3F0"));
         p.drawRoundedRect(QRectF(30, bottom + 54, copyWidth - 10, 5), 2.5, 2.5);
         if (percent > 0) { p.setBrush(paper::blue); p.drawRoundedRect(QRectF(30, bottom + 54, (copyWidth - 10) * percent / 100., 5), 2.5, 2.5); }
-        paper::text(p, {30, bottom + 66, copyWidth, 23}, job.id.isEmpty() ? QStringLiteral("支持批量导入与双设备调度")
+        paper::text(p, {30, bottom + 66, copyWidth, 23}, job.id.isEmpty() ? QStringLiteral("支持批量导入与多设备调度")
             : QStringLiteral("已输出 %1 / %2 页").arg(job.printed).arg(job.sheets), 11, paper::muted);
         const double paperHeight = std::min(double(height() - 56), (split * .51 - 25) * 302 / 230.);
         QRectF sheet(split * .49, (height() - paperHeight) / 2., paperHeight * 230 / 302., paperHeight);
@@ -240,9 +240,9 @@ class PrinterTimeline : public QWidget {
 public:
     explicit PrinterTimeline(QWidget* parent = nullptr) : QWidget(parent) {
         setMinimumHeight(188); setObjectName("printerTimeline");
-        setAccessibleName(QStringLiteral("两台打印机的实时进度与待调度顺序"));
+        setAccessibleName(QStringLiteral("多台打印机的实时进度与待调度顺序"));
     }
-    void setView(const ViewState& view) { view_ = view; update(); }
+    void setView(const ViewState& view) { view_ = view; setMinimumHeight(36 + int(view.printers.size()) * 76); update(); }
 protected:
     void paintEvent(QPaintEvent*) override {
         QPainter p(this); p.setRenderHint(QPainter::Antialiasing); p.fillRect(rect(), Qt::white);
@@ -250,7 +250,7 @@ protected:
         paper::text(p, {left, 0, activeWidth, 24}, QStringLiteral("当前执行 · 实时页数"), 11, paper::muted);
         paper::text(p, {left + activeWidth + 25, 0, right - left - activeWidth - 25, 24},
                     QStringLiteral("待派发顺序 · 完成后分配空闲设备"), 10, paper::muted);
-        for (int i = 0; i < 2; ++i) {
+        for (int i = 0; i < static_cast<int>(view_.printers.size()); ++i) {
             const auto& device = view_.printers[i]; const double y = 34 + i * 76;
             p.setPen(QColor("#E8ECF3")); p.drawLine(QPointF(24, y), QPointF(right, y));
             paper::printer(p, {30, y + 15, 62, 47});

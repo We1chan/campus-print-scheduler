@@ -16,6 +16,8 @@ struct PersistentState {
     TimeMs savedAtMs = 0;
     std::vector<Job> jobs;
     bool paused = false;
+    std::vector<Printer> fleet; // empty: legacy homogeneous executor
+    Inventory supplied;
 };
 
 QString coordinatorSocketName(const QString& stateDirectory);

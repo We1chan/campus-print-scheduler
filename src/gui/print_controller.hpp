@@ -17,6 +17,7 @@ struct WindowOptions {
     QString stateDirectory;
     int pageMs = 150;
     bool demoMode = false;
+    bool shopMode = false;
 };
 struct JobView {
     QString id;
@@ -27,6 +28,9 @@ struct JobView {
     int printed = 0;
     QString detail;
     bool controlReady = false;
+    QString specification = {};
+    Money quotedCents = 0;
+    QString deadline = {};
 };
 struct PrinterView {
     QString jobId;
@@ -40,7 +44,8 @@ struct ViewState {
     QList<JobView> jobs;
     QStringList waitingOrder; // Snapshot order under the active policy, including aging.
     int policyIndex = 0;
-    std::array<PrinterView, 2> printers;
+    std::vector<PrinterView> printers = std::vector<PrinterView>(2);
+    QJsonObject shop;
     Statistics metrics;
     QString connection;
     bool paused = false;
@@ -57,6 +62,9 @@ public slots:
     void initialize();
     void submit(const QString& title, int pages, int copies, int priority);
     void importFile(const QString& path);
+    void submitOrder(QJsonObject order);
+    void runExperiments(const QString& path, int customers);
+    void shopCommand(const QString& type, QJsonObject payload);
     void cancel(const QString& id);
     void setPolicy(int index);
     void setPaused(bool paused);
@@ -66,6 +74,7 @@ public slots:
     void injectFault(const QString& id);
     void disconnectControl(const QString& id);
 signals:
+    void experimentReady(const QJsonObject& report);
     void viewChanged(const cps::gui::ViewState& state);
     void feedback(const QString& text);
     void logsReady(const QStringList& lines);
@@ -81,6 +90,7 @@ private:
     bool applySnapshot(const QJsonObject& snapshot);
     WindowOptions options_;
     QLocalSocket* socket_ = nullptr;
+    QProcess* experiments_ = nullptr;
     QTimer* refresh_ = nullptr;
     qint64 lastLaunchMs_ = 0;
     bool available_ = false;

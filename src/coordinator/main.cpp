@@ -3,6 +3,7 @@
 #include "cps/platform/daemon.hpp"
 #include "cps/runtime/job_io.hpp"
 #include "cps/runtime/state_store.hpp"
+#include "cps/runtime/shop_io.hpp"
 
 #include <QCommandLineParser>
 #include <QCoreApplication>
@@ -147,7 +148,7 @@ public:
             if (job.state == cps::JobState::Running || job.state == cps::JobState::Cancelling) {
                 recovering_.insert(QString::fromStdString(job.id));
                 recoveryMisses_.insert(QString::fromStdString(job.id), 0);
-                slots_.insert(QString::fromStdString(job.id), static_cast<int>(slots_.size()));
+                slots_.insert(QString::fromStdString(job.id), job.assignedPrinter >= 0 ? job.assignedPrinter : static_cast<int>(slots_.size()));
             }
         }
         garbageCollectLeftovers();
@@ -336,6 +337,13 @@ private:
             (object.contains("max_attempts") && !strictInt(object.value("max_attempts"), 1, 100, job.maxAttempts)) ||
             QFileInfo(outputPath(id)).isFile()) return false;
         job.id = id.toStdString(); job.title = title.toUtf8().toStdString(); job.submittedMs = submitted;
+        if (!cps::orderTermsFromJson(object, job)) return false;
+        if (!state_.fleet.empty()) {
+            bool supported = false;
+            for (auto p : state_.fleet) { p.online = true; supported |= cps::compatible(job, p); }
+            if (!supported) return false;
+            cps::quote(job);
+        } else if (job.paper != cps::PaperSize::A4 || job.color || job.duplex) return false;
         return true;
     }
 
@@ -356,7 +364,14 @@ private:
         }
         for (const auto& id : scheduler_->waitingOrder(state_.policy, now)) order.append(QString::fromStdString(id));
         const auto metrics = statisticsToJson(cps::statistics(jobs, start, now, state_.printers));
-        return {{"type", "snapshot"}, {"policy", cps::policyName(state_.policy)}, {"paused", state_.paused},
+        QJsonArray fleet;
+        for (const auto& p : state_.fleet) fleet.append(cps::printerToJson(p));
+        const auto available = cps::availablePaper(jobs, state_.supplied);
+        return {{"shop_enabled", !state_.fleet.empty()}, {"fleet", fleet},
+            {"stock_a4", available.a4}, {"stock_a3", available.a3},
+            {"supplied_a4", state_.supplied.a4}, {"supplied_a3", state_.supplied.a3},
+            {"shop_metrics", cps::shopMetricsToJson(cps::shopMetrics(jobs, start, now))},
+            {"type", "snapshot"}, {"policy", cps::policyName(state_.policy)}, {"paused", state_.paused},
             {"printers", state_.printers}, {"page_ms", pageMs_}, {"demo_mode", demoMode_},
             {"coordinator_pid", static_cast<double>(QCoreApplication::applicationPid())},
             {"aging_interval_ms", static_cast<double>(state_.schedulerOptions.agingIntervalMs)},
@@ -384,6 +399,56 @@ private:
         if (type == QLatin1String("snapshot")) {
             reply(socket, requestId, snapshot());
             return;
+        }
+
+        if (type == "quote") {
+            cps::Job job;
+            if (state_.fleet.empty() || !command.value("job").isObject() ||
+                !parseSubmission(command.value("job").toObject(), scheduler_->nowMs(), job)) {
+                commandError(socket, requestId, "invalid order or no compatible device"); return;
+            }
+            auto result = cps::orderTermsToJson(job);
+            result.insert("type", "quote"); result.insert("paper_sheets", job.paperSheets());
+            const auto stock = cps::availablePaper(scheduler_->snapshot(), state_.supplied);
+            result.insert("stock_sufficient", job.paperSheets() <= (job.paper == cps::PaperSize::A3 ? stock.a3 : stock.a4));
+            reply(socket, requestId, result); return;
+        }
+        if (type == "set_printer" || type == "restock" || type == "refund") {
+            if (state_.fleet.empty() || stopping_) { commandError(socket, requestId, "shop unavailable"); return; }
+            if (type == "set_printer") {
+                int index = -1;
+                if (!strictInt(command.value("index"), 0, state_.printers - 1, index)) {
+                    commandError(socket, requestId, "invalid printer index"); return;
+                }
+                if (command.contains("printer")) {
+                    cps::Printer printer;
+                    if (slots_.values().contains(index) || !command.value("printer").isObject() ||
+                        !cps::printerFromJson(command.value("printer").toObject(), printer)) {
+                        commandError(socket, requestId, "device must be idle and fields valid"); return;
+                    }
+                    state_.fleet[index] = printer;
+                } else {
+                    if (!command.value("online").isBool()) { commandError(socket, requestId, "online must be boolean"); return; }
+                    state_.fleet[index].online = command.value("online").toBool();
+                }
+            } else if (type == "restock") {
+                int count = 0;
+                const auto paper = command.value("paper").toString();
+                if ((paper != "a4" && paper != "a3") || !strictInt(command.value("quantity"), 1, 1000000, count)) {
+                    commandError(socket, requestId, "invalid paper or quantity"); return;
+                }
+                auto& total = paper == "a3" ? state_.supplied.a3 : state_.supplied.a4;
+                if (total > 1000000000 - count) { commandError(socket, requestId, "stock limit reached"); return; }
+                total += count;
+            } else {
+                int amount = 0;
+                if (!strictInt(command.value("cumulative_cents"), 0, 3000000, amount) ||
+                    !scheduler_->refund(command.value("job_id").toString().toStdString(), amount)) {
+                    commandError(socket, requestId, "refund requires completed order and nondecreasing total within price"); return;
+                }
+            }
+            if (!persistOrStop()) return;
+            reply(socket, requestId, {{"type", "accepted"}}); dispatch(); return;
         }
 
         if (type == QLatin1String("submit") || type == QLatin1String("submit_batch")) {
@@ -465,6 +530,7 @@ private:
             if (!persistOrStop()) return;
             reply(socket, requestId, {{"type", "accepted"}, {"job_id", id}});
             broadcastState(id);
+            dispatch();
             return;
         }
 
@@ -499,7 +565,8 @@ private:
                     {"type", "stats"},
                     {"window_start_ms", static_cast<double>(start)},
                     {"window_end_ms", static_cast<double>(end)},
-                    {"statistics", statisticsToJson(stats)}
+                    {"statistics", statisticsToJson(stats)},
+                    {"shop_metrics", cps::shopMetricsToJson(cps::shopMetrics(scheduler_->snapshot(), start, end))}
                 });
             } catch (const std::invalid_argument&) {
                 commandError(socket, requestId, QStringLiteral("invalid statistics window"));
@@ -521,7 +588,10 @@ private:
     void dispatch() {
         if (stopping_ || state_.paused) return;
         while (active_.size() + recovering_.size() < state_.printers) {
-            const auto job = scheduler_->claim(state_.policy);
+            std::vector<int> idle;
+            for (int i = 0; i < state_.printers; ++i) if (!slots_.values().contains(i)) idle.push_back(i);
+            const auto job = state_.fleet.empty() ? scheduler_->claim(state_.policy) :
+                scheduler_->claimFor(state_.policy, scheduler_->nowMs(), state_.fleet, idle, state_.supplied);
             if (!job) break;
             const QString id = QString::fromStdString(job->id);
             if (!persistOrStop()) return;
@@ -548,7 +618,8 @@ private:
             QStringList arguments{
                 "--job", jobPath,
                 "--output-dir", outputDirectory_,
-                "--page-ms", QString::number(pageMs_),
+                "--page-ms", QString::number(state_.fleet.empty() ? pageMs_ :
+                    cps::processingMs(*job, state_.fleet[job->assignedPrinter]) / job->sheets()),
                 "--max-restarts", QString::number(maxRestarts_),
                 "--timeout-ms", QString::number(timeoutMs_),
                 "--cancel-file", cancellation,
@@ -556,7 +627,7 @@ private:
             };
             if (demoMode_) arguments << "--demo-mode" << "--fault-file" << cancellation + ".fault";
             process->setArguments(arguments);
-            int slot = 0;
+            int slot = job->assignedPrinter >= 0 ? job->assignedPrinter : 0;
             while (slots_.values().contains(slot)) ++slot;
             slots_.insert(id, slot);
             active_.insert(id, ActiveJob{process, job->attempts, {}, cancellation});
@@ -780,6 +851,7 @@ int main(int argc, char* argv[]) {
         {"state-dir", "Persistent state directory", "directory", cps::defaultStateDirectory()},
         {"socket-name", "QLocalServer name (default derives from state directory)", "name"},
         {"policy", "Initial policy: fcfs|sjf|priority", "policy", "fcfs"},
+        {"shop-mode", "Start a new six-device print shop (existing saved state is preserved)"},
         {"printers", "Initial printer slots (1..64)", "count", "2"},
         {"aging-ms", "Initial priority aging interval", "ms", "30000"},
         {"page-ms", "Milliseconds per simulated sheet", "ms", "100"},
@@ -840,6 +912,10 @@ int main(int argc, char* argv[]) {
     initial.schedulerOptions.agingIntervalMs = aging;
     initial.policy = *policy;
     initial.printers = printers;
+    if (parser.isSet("shop-mode")) {
+        initial.fleet = cps::defaultFleet(pageMs);
+        initial.printers = static_cast<int>(initial.fleet.size());
+    }
 
     Coordinator coordinator(stateDirectory, socketName, initial, pageMs, maxRestarts, timeoutMs, parser.isSet("demo-mode"));
     QString error;

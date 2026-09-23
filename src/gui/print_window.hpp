@@ -11,6 +11,7 @@ class QTableView;
 class QSortFilterProxyModel;
 class QPlainTextEdit;
 class QToolButton;
+class QTableWidget;
 
 namespace cps::gui {
 class PaperWorkspace;
@@ -43,7 +44,11 @@ public:
     void importFile(const QString& path);
     void loadDemo();
 signals:
+    void backendReady();
     void submitRequested(const QString& title, int pages, int copies, int priority);
+    void orderRequested(QJsonObject order);
+    void experimentRequested(const QString& path, int customers);
+    void shopRequested(const QString& type, QJsonObject payload);
     void importRequested(const QString& path);
     void cancelRequested(const QString& id);
     void policyRequested(int index);
@@ -69,11 +74,10 @@ private:
     PrinterTimeline* timeline_ = nullptr;
     std::array<QLabel*, 4> metricValues_{};
     std::array<QLabel*, 4> metricHints_{};
-    std::array<QLabel*, 2> printerLabels_{};
-    std::array<QLabel*, 2> printerStates_{};
-    std::array<QLabel*, 2> printerDetails_{};
-    std::array<QLabel*, 2> printerProgress_{};
-    std::array<QProgressBar*, 2> progressBars_{};
+    QTableWidget* fleetTable_ = nullptr;
+    QLabel* shopSummary_ = nullptr;
+    QLabel* stockSummary_ = nullptr;
+    QJsonObject shopSnapshot_;
     QLabel* queueSummary_ = nullptr;
     QWidget* emptyState_ = nullptr;
     QToolButton* logToggle_ = nullptr;

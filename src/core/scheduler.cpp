@@ -1,4 +1,5 @@
 #include "cps/core/scheduler.hpp"
+#include "cps/core/shop.hpp"
 
 #include <algorithm>
 #include <chrono>
@@ -13,7 +14,7 @@ bool validJob(const Job& job) {
     return !job.id.empty() && !job.title.empty() && job.pages >= 1 && job.pages <= 1000 &&
         job.copies >= 1 && job.copies <= 100 && job.pages * job.copies <= 10000 &&
         validTime(job.submittedMs) && job.priority >= 0 && job.priority <= 100 &&
-        job.maxAttempts >= 1 && job.maxAttempts <= 100;
+        job.maxAttempts >= 1 && job.maxAttempts <= 100 && validTerms(job);
 }
 bool active(const Job& job, int attempt, TimeMs now) {
     return validTime(now) && now >= job.lastChangedMs && attempt > 0 &&
@@ -23,6 +24,7 @@ bool validSnapshot(const Job& job, TimeMs now) {
     if (!validJob(job) || job.submittedMs > now || job.lastChangedMs < job.submittedMs ||
         job.lastChangedMs > now || job.attempts < 0 || job.attempts > job.maxAttempts ||
         static_cast<std::size_t>(job.attempts) != job.runs.size()) return false;
+    if (job.attempts == 0 && (job.assignedPrinter != -1 || job.costCents != 0)) return false;
     TimeMs previous = job.submittedMs;
     TimeMs wait = 0;
     TimeMs lastQueueEntry = job.submittedMs;
@@ -92,7 +94,7 @@ Job* Scheduler::find(const std::string& id) {
     return it == jobs_.end() ? nullptr : &*it;
 }
 bool Scheduler::submit(Job job) {
-    if (!validJob(job) || job.state != JobState::Queued || job.attempts != 0 ||
+    if (!validJob(job) || job.state != JobState::Queued || job.attempts != 0 || job.costCents != 0 || job.assignedPrinter != -1 ||
         !job.runs.empty() || job.firstStartedMs || job.finishedMs || job.accumulatedWaitMs != 0) return false;
     std::lock_guard<std::mutex> lock(mutex_);
     if (find(job.id)) return false;
@@ -106,7 +108,7 @@ bool Scheduler::submitBatch(std::vector<Job> jobs) {
     std::set<std::string> ids;
     for (const auto& existing : jobs_) ids.insert(existing.id);
     for (const auto& job : jobs) {
-        if (!validJob(job) || job.state != JobState::Queued || job.attempts != 0 ||
+        if (!validJob(job) || job.state != JobState::Queued || job.attempts != 0 || job.costCents != 0 || job.assignedPrinter != -1 ||
             !job.runs.empty() || job.firstStartedMs || job.finishedMs || job.accumulatedWaitMs != 0 ||
             !ids.insert(job.id).second) return false;
     }
@@ -118,6 +120,15 @@ bool Scheduler::submitBatch(std::vector<Job> jobs) {
     return true;
 }
 bool Scheduler::precedes(const Job& a, const Job& b, Policy policy, TimeMs now) const {
+    if (policy == Policy::Deadline || policy == Policy::Revenue) {
+        const auto deadline = [](const Job& j) { return j.deadlineMs == 0 ? MaxTimeMs : j.deadlineMs; };
+        if (policy == Policy::Deadline && deadline(a) != deadline(b)) return deadline(a) < deadline(b);
+        if (policy == Policy::Revenue) {
+            const auto score = [&](const Job& j) { return double(j.quotedCents) / j.sheets() +
+                double(j.accumulatedWaitMs + now - j.queuedSinceMs) / options_.agingIntervalMs; };
+            if (score(a) != score(b)) return score(a) > score(b);
+        }
+    }
     if (policy == Policy::ShortestJobFirst && a.sheets() != b.sheets()) return a.sheets() < b.sheets();
     if (policy == Policy::PriorityAging) {
         const auto score = [&](const Job& job) {
@@ -128,8 +139,7 @@ bool Scheduler::precedes(const Job& a, const Job& b, Policy policy, TimeMs now) 
     return a.queuedSinceMs < b.queuedSinceMs;
 }
 std::vector<std::string> Scheduler::waitingOrder(Policy policy, TimeMs now) const {
-    if (!validTime(now) || (policy != Policy::Fcfs && policy != Policy::ShortestJobFirst &&
-                          policy != Policy::PriorityAging)) return {};
+    if (!validTime(now) || !validPolicy(policy)) return {};
     std::lock_guard<std::mutex> lock(mutex_);
     std::vector<const Job*> waiting;
     for (const auto& job : jobs_)
@@ -143,8 +153,7 @@ std::vector<std::string> Scheduler::waitingOrder(Policy policy, TimeMs now) cons
 }
 std::optional<Job> Scheduler::claim(Policy policy) { return claim(policy, nowMs()); }
 std::optional<Job> Scheduler::claim(Policy policy, TimeMs now) {
-    if (!validTime(now) || (policy != Policy::Fcfs && policy != Policy::ShortestJobFirst &&
-                          policy != Policy::PriorityAging)) return std::nullopt;
+    if (!validTime(now) || !validPolicy(policy)) return std::nullopt;
     std::lock_guard<std::mutex> lock(mutex_);
     Job* best = nullptr;
     for (auto& job : jobs_) {
@@ -152,6 +161,10 @@ std::optional<Job> Scheduler::claim(Policy policy, TimeMs now) {
         if (!best || precedes(job, *best, policy, now)) best = &job;
     }
     if (!best) return std::nullopt;
+    return startLocked(*best, now);
+}
+Job Scheduler::startLocked(Job& value, TimeMs now) {
+    auto* best = &value;
     best->accumulatedWaitMs += now - best->queuedSinceMs;
     best->runs.push_back({now, std::nullopt});
     ++best->attempts;
@@ -159,6 +172,59 @@ std::optional<Job> Scheduler::claim(Policy policy, TimeMs now) {
     best->state = JobState::Running;
     best->lastChangedMs = now;
     return *best;
+}
+std::optional<Job> Scheduler::claimFor(Policy policy, TimeMs now, const std::vector<Printer>& fleet,
+                                      const std::vector<int>& idle, Inventory supplied) {
+    if (!validTime(now) || !validPolicy(policy) || fleet.empty() || fleet.size() > 64 ||
+        supplied.a4 < 0 || supplied.a3 < 0) return std::nullopt;
+    for (const auto& p : fleet) if (!validPrinter(p)) return std::nullopt;
+    std::lock_guard<std::mutex> lock(mutex_);
+    const auto stock = availablePaper(jobs_, supplied);
+    std::vector<bool> occupied(fleet.size(), false);
+    for (const auto& other : jobs_) if (other.assignedPrinter >= 0 && other.assignedPrinter < static_cast<int>(fleet.size()) &&
+        (other.state == JobState::Running || other.state == JobState::Cancelling)) occupied[other.assignedPrinter] = true;
+    Job* best = nullptr;
+    int device = -1;
+    TimeMs duration = 0;
+    const auto score = [&](const Job& j, TimeMs time) {
+        const auto slack = j.deadlineMs - now - time;
+        const double urgency = j.deadlineMs > 0 && slack >= 0 && slack <= options_.agingIntervalMs ? 1.5 : 1.0;
+        return double(j.quotedCents) * 1000.0 / double(time) * urgency *
+            (1.0 + double(j.accumulatedWaitMs + now - j.queuedSinceMs) / options_.agingIntervalMs);
+    };
+    for (auto& j : jobs_) {
+        if (j.state != JobState::Queued || j.queuedSinceMs > now ||
+            (j.attempts == 0 && j.paperSheets() > (j.paper == PaperSize::A3 ? stock.a3 : stock.a4))) continue;
+        int candidate = -1;
+        TimeMs time = 0;
+        for (int i : idle) {
+            if (i < 0 || i >= static_cast<int>(fleet.size()) || occupied[i] || !compatible(j, fleet[i])) continue;
+            const auto t = processingMs(j, fleet[i]);
+            if (t > MaxTimeMs - now) continue;
+            if (candidate < 0 || t < time || (t == time && directCost(j, fleet[i]) < directCost(j, fleet[candidate]))) {
+                candidate = i; time = t;
+            }
+        }
+        if (candidate < 0) continue;
+        bool better = !best;
+        if (best && policy == Policy::Revenue) {
+            const auto lhs = score(j, time), rhs = score(*best, duration);
+            better = lhs > rhs || (lhs == rhs && j.queuedSinceMs < best->queuedSinceMs);
+        } else if (best) better = precedes(j, *best, policy, now);
+        if (better) { best = &j; device = candidate; duration = time; }
+    }
+    if (!best) return std::nullopt;
+    best->assignedPrinter = device;
+    best->costCents = directCost(*best, fleet[device]);
+    return startLocked(*best, now);
+}
+bool Scheduler::refund(const std::string& id, Money cumulativeCents) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    auto* job = find(id);
+    if (!job || job->state != JobState::Completed || cumulativeCents < job->refundCents ||
+        cumulativeCents > job->quotedCents) return false;
+    job->refundCents = cumulativeCents;
+    return true;
 }
 bool Scheduler::finishLocked(Job& job, int attempt, bool success, TimeMs now) {
     if ((job.state != JobState::Running && job.state != JobState::Cancelling) ||

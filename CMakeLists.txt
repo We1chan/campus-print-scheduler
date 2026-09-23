@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.24)
-project(CampusPrintScheduler VERSION 0.1.0 LANGUAGES CXX)
+project(CampusPrintScheduler VERSION 0.2.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -29,11 +29,14 @@ else()
     endif()
 endif()
 
-add_library(cps_core src/core/scheduler.cpp src/core/replay.cpp src/metrics/statistics.cpp)
+add_library(cps_core src/core/scheduler.cpp src/core/shop.cpp src/core/shop_replay.cpp src/core/replay.cpp src/metrics/statistics.cpp)
 target_include_directories(cps_core PUBLIC include)
 target_link_libraries(cps_core PUBLIC Threads::Threads PRIVATE cps_options)
 
 if(BUILD_TESTING)
+    add_executable(shop_tests tests/shop_tests.cpp)
+    target_link_libraries(shop_tests PRIVATE cps_core cps_options)
+    add_test(NAME shop COMMAND shop_tests)
     add_executable(core_tests tests/core_tests.cpp)
     target_link_libraries(core_tests PRIVATE cps_core cps_options)
     add_test(NAME scheduler COMMAND core_tests)
@@ -53,10 +56,13 @@ if(CPS_BUILD_QT_APPS)
     add_library(cps_runtime
         src/runtime/job_io.cpp
         src/runtime/state_store.cpp
+        src/runtime/shop_io.cpp
         src/platform/daemon.cpp
         src/platform/stdio.cpp)
     target_include_directories(cps_runtime PUBLIC include)
     target_link_libraries(cps_runtime PUBLIC Qt6::Core cps_core PRIVATE cps_options)
+    add_executable(shop-experiments tools/shop_experiments.cpp)
+    target_link_libraries(shop-experiments PRIVATE cps_runtime cps_options)
 
     add_executable(print-worker src/worker/main.cpp)
     target_link_libraries(print-worker PRIVATE cps_runtime cps_options)
@@ -82,6 +88,10 @@ if(CPS_BUILD_QT_APPS)
         set_tests_properties(gui PROPERTIES TIMEOUT 120 ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
 
         add_executable(runtime_state_tests tests/runtime_state_tests.cpp)
+        add_executable(shop_integration_tests tests/shop_integration.cpp)
+        target_link_libraries(shop_integration_tests PRIVATE cps_runtime Qt6::Network cps_options)
+        add_test(NAME shop_integration COMMAND shop_integration_tests)
+        set_tests_properties(shop_integration PROPERTIES TIMEOUT 40)
         target_link_libraries(runtime_state_tests PRIVATE cps_runtime Qt6::Core cps_options)
         add_test(NAME runtime_state COMMAND runtime_state_tests)
 
@@ -93,6 +103,9 @@ if(CPS_BUILD_QT_APPS)
 
         set(Python3_FIND_STRATEGY LOCATION)
         find_package(Python3 3.10 REQUIRED COMPONENTS Interpreter)
+        add_test(NAME shop_experiments COMMAND "${Python3_EXECUTABLE}"
+            "${CMAKE_SOURCE_DIR}/tests/shop_experiments_test.py" --experiment "$<TARGET_FILE:shop-experiments>")
+        set_tests_properties(shop_experiments PROPERTIES TIMEOUT 45)
         add_test(NAME workload_tools COMMAND "${Python3_EXECUTABLE}"
             "${CMAKE_SOURCE_DIR}/tests/workload_tools_test.py"
             --replay "$<TARGET_FILE:scheduler-replay>"
