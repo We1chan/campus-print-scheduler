@@ -85,7 +85,7 @@ QString coordinatorSocketName(const QString& stateDirectory) {
     QString path = info.canonicalFilePath();
     if (path.isEmpty()) path = QDir(stateDirectory).absolutePath();
 #ifdef Q_OS_WIN
-    path = path.toCaseFold();
+    path = path.toCaseFolded();
 #endif
     const auto digest = QCryptographicHash::hash(path.toUtf8(), QCryptographicHash::Sha256).toHex().left(16);
     return QStringLiteral("campus-print-%1").arg(QString::fromLatin1(digest));
