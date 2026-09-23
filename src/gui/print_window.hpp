@@ -13,6 +13,8 @@ class QPlainTextEdit;
 class QToolButton;
 
 namespace cps::gui {
+class PaperWorkspace;
+class PrinterTimeline;
 class JobTableModel : public QAbstractTableModel {
 public:
     using QAbstractTableModel::QAbstractTableModel;
@@ -39,6 +41,7 @@ public:
     explicit PrintWindow(WindowOptions options, QWidget* parent = nullptr);
     ~PrintWindow() override;
     void importFile(const QString& path);
+    void loadDemo();
 signals:
     void submitRequested(const QString& title, int pages, int copies, int priority);
     void importRequested(const QString& path);
@@ -62,6 +65,8 @@ private:
     QTableView* table_ = nullptr;
     QLabel* feedback_ = nullptr;
     QLabel* connection_ = nullptr;
+    PaperWorkspace* scene_ = nullptr;
+    PrinterTimeline* timeline_ = nullptr;
     std::array<QLabel*, 4> metricValues_{};
     std::array<QLabel*, 4> metricHints_{};
     std::array<QLabel*, 2> printerLabels_{};

@@ -1,5 +1,9 @@
 #include "print_window.hpp"
 #include "ui_theme.hpp"
+#include "paper_workspace.hpp"
+#include <QStackedWidget>
+#include <QButtonGroup>
+#include <QSignalBlocker>
 #include <QApplication>
 #include <QCloseEvent>
 #include <QComboBox>
@@ -25,6 +29,10 @@
 #include <QVBoxLayout>
 #include <QToolButton>
 #include <QUrl>
+#include <QDialog>
+#include <QListWidget>
+#include <QShortcut>
+#include <QRegularExpression>
 #include <algorithm>
 
 namespace cps::gui {
@@ -54,7 +62,7 @@ QLabel* label(const QString& text, const char* role = nullptr) {
 
 void chevron(QPainter& p, const QPointF& center, bool up = false) {
     p.setRenderHint(QPainter::Antialiasing);
-    p.setPen(QPen(QColor("#93A0B8"), 1.25, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
+    p.setPen(QPen(QColor("#718095"), 1.25, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
     const double direction = up ? -1 : 1;
     QPainterPath path;
     path.moveTo(center.x() - 3, center.y() - direction * 1.5);
@@ -109,8 +117,8 @@ public:
         painter->setClipRect(option.rect);
         const bool selected = option.state.testFlag(QStyle::State_Selected);
         const bool hovered = option.state.testFlag(QStyle::State_MouseOver);
-        painter->fillRect(option.rect, QColor(selected ? "#EFF4FF" : hovered ? "#F8FAFD" : "#FFFFFF"));
-        painter->setPen(QColor("#EFF2F7"));
+        painter->fillRect(option.rect, QColor(selected ? "#EAF0FC" : hovered ? "#F6F8FC" : "#FFFFFF"));
+        painter->setPen(QColor("#E7ECF3"));
         painter->drawLine(option.rect.bottomLeft(), option.rect.bottomRight());
         painter->setRenderHint(QPainter::Antialiasing);
         const QRect area = option.rect.adjusted(10, 0, -10, 0);
@@ -118,15 +126,15 @@ public:
         font.setPixelSize(12);
         painter->setFont(font);
         if (index.column() == 0) {
-            ui::icon(ui::Icon::Document, QColor("#8291AF")).paint(painter, QRect(area.left(), area.center().y() - 11, 22, 22));
+            ui::icon(ui::Icon::Document, QColor("#7A8FAE")).paint(painter, QRect(area.left(), area.center().y() - 11, 22, 22));
             font.setPixelSize(13);
             font.setWeight(QFont::Medium);
             painter->setFont(font);
-            painter->setPen(QColor("#37425A"));
+            painter->setPen(QColor("#293449"));
             const QRect name(area.left() + 32, area.top() + 9, std::max(0, area.width() - 32), 21);
             painter->drawText(name, Qt::AlignVCenter, painter->fontMetrics().elidedText(index.data().toString(), Qt::ElideRight, name.width()));
             font.setPixelSize(10); font.setWeight(QFont::Normal); painter->setFont(font);
-            painter->setPen(QColor("#A0A9B9"));
+            painter->setPen(QColor("#8A96A9"));
             painter->drawText(name.translated(0, 20), Qt::AlignVCenter, "# " + index.data(Qt::UserRole).toString().left(8));
         } else if (index.column() == 3) {
             const auto state = static_cast<JobState>(index.data(Qt::UserRole + 1).toInt());
@@ -134,8 +142,8 @@ public:
             const bool failed = state == JobState::Failed;
             const bool running = state == JobState::Running;
             const bool cancelling = state == JobState::Cancelling;
-            const QColor ink(success ? "#27865D" : failed ? "#BB545A" : running ? "#4E6DD7" : cancelling ? "#A47B35" : "#8D96A7");
-            const QColor fill(success ? "#EAF6F0" : failed ? "#FDEEEF" : running ? "#EDF1FF" : cancelling ? "#FFF5E4" : "#F0F3F7");
+            const QColor ink(success ? "#3F8D7E" : failed ? "#BF655C" : running ? "#3569ED" : cancelling ? "#A77D43" : "#78869B");
+            const QColor fill(success ? "#EAF5F1" : failed ? "#FBEDEA" : running ? "#EAF0FE" : cancelling ? "#FAF2E4" : "#F0F3F8");
             const QString text = index.data().toString();
             const int width = std::min(area.width(), painter->fontMetrics().horizontalAdvance(text) + 18);
             painter->setPen(Qt::NoPen); painter->setBrush(fill);
@@ -145,17 +153,17 @@ public:
         } else if (index.column() == 4) {
             const int printed = index.data(Qt::UserRole + 3).toInt();
             const int sheets = index.data(Qt::UserRole + 4).toInt();
-            painter->setPen(QColor("#8D98AB"));
+            painter->setPen(QColor("#718095"));
             painter->drawText(QRect(area.left(), area.top() + 10, area.width(), 18), Qt::AlignLeft | Qt::AlignVCenter,
                               QStringLiteral("%1 / %2 页").arg(printed).arg(sheets));
             const QRectF track(area.left(), area.bottom() - 15, area.width(), 4);
-            painter->setPen(Qt::NoPen); painter->setBrush(QColor("#EDF1F7")); painter->drawRoundedRect(track, 2, 2);
+            painter->setPen(Qt::NoPen); painter->setBrush(QColor("#E4E9F2")); painter->drawRoundedRect(track, 2, 2);
             if (sheets > 0 && printed > 0) {
-                painter->setBrush(QColor("#8BA1EB"));
+                painter->setBrush(QColor("#3569ED"));
                 painter->drawRoundedRect(QRectF(track.left(), track.top(), track.width() * printed / sheets, 4), 2, 2);
             }
         } else {
-            painter->setPen(QColor(index.column() == 5 ? "#8D98AB" : "#526079"));
+            painter->setPen(QColor(index.column() == 5 ? "#718095" : "#59667C"));
             const auto value = painter->fontMetrics().elidedText(index.data().toString(), Qt::ElideRight, area.width());
             painter->drawText(area, Qt::AlignLeft | Qt::AlignVCenter, value);
         }
@@ -223,11 +231,11 @@ void StatisticsChart::paintEvent(QPaintEvent*) {
     const std::array<std::size_t, 5> values{metrics_.queued, metrics_.running + metrics_.cancelling,
         metrics_.completed, metrics_.failed, metrics_.cancelled};
     const QStringList labels{QStringLiteral("等待"), QStringLiteral("运行"), QStringLiteral("完成"), QStringLiteral("失败"), QStringLiteral("取消")};
-    const std::array<QColor, 5> colors{QColor("#CED6E6"), QColor("#6481E8"), QColor("#68B599"), QColor("#DC919A"), QColor("#AEB5C3")};
+    const std::array<QColor, 5> colors{QColor("#A4B8DB"), QColor("#3569ED"), QColor("#66A89B"), QColor("#D89079"), QColor("#B0B8C8")};
     std::size_t total = 0;
     for (auto value : values) total += value;
     const QRectF bar(0, 6, width(), 12);
-    p.setPen(Qt::NoPen); p.setBrush(QColor("#EEF2F8")); p.drawRoundedRect(bar, 6, 6);
+    p.setPen(Qt::NoPen); p.setBrush(QColor("#E6EBF3")); p.drawRoundedRect(bar, 6, 6);
     QPainterPath clip;
     clip.addRoundedRect(bar, 6, 6);
     p.save(); p.setClipPath(clip);
@@ -244,267 +252,182 @@ void StatisticsChart::paintEvent(QPaintEvent*) {
         const int left = (i % 3) * column;
         const int top = 35 + (i / 3) * 26;
         p.setPen(Qt::NoPen); p.setBrush(colors[i]); p.drawEllipse(QRectF(left, top + 6, 6, 6));
-        p.setPen(QColor("#8B96AA"));
+        p.setPen(QColor("#718095"));
         p.drawText(QRect(left + 12, top, column - 12, 18), Qt::AlignVCenter,
                    labels[i] + "  " + QString::number(static_cast<qulonglong>(values[i])));
     }
 }
+
 PrintWindow::PrintWindow(WindowOptions options, QWidget* parent) : QMainWindow(parent) {
-    setWindowTitle(QStringLiteral("校园共享打印调度 · 工作台"));
-    setMinimumSize(1060, 720);
+    setWindowTitle(QStringLiteral("校园打印 · Paper"));
+    setMinimumSize(1000, 680);
     const auto available = screen()->availableGeometry();
-    resize(std::min(1360, available.width() - 40), std::min(900, available.height() - 60));
+    resize(std::min(1420, available.width() - 40), std::min(900, available.height() - 60));
     QFont interfaceFont = font();
     const auto families = QFontDatabase::families();
     for (const auto& family : {QStringLiteral("Microsoft YaHei UI"), QStringLiteral("PingFang SC"), QStringLiteral("Noto Sans CJK SC")}) {
         if (families.contains(family)) { interfaceFont.setFamily(family); break; }
     }
-    interfaceFont.setPixelSize(13);
-    setFont(interfaceFont);
+    interfaceFont.setPixelSize(13); setFont(interfaceFont);
     QPalette light = palette();
-    light.setColor(QPalette::Window, QColor("#F4F6FA"));
-    light.setColor(QPalette::WindowText, QColor("#263248"));
-    light.setColor(QPalette::Base, Qt::white);
-    light.setColor(QPalette::Text, QColor("#354159"));
-    light.setColor(QPalette::Button, Qt::white);
-    light.setColor(QPalette::ButtonText, QColor("#56647B"));
-    light.setColor(QPalette::Highlight, QColor("#DDE6FF"));
-    light.setColor(QPalette::HighlightedText, QColor("#2B438D"));
+    light.setColor(QPalette::Window, QColor("#F7F8FB"));
+    light.setColor(QPalette::WindowText, QColor("#202737"));
+    light.setColor(QPalette::Base, Qt::white); light.setColor(QPalette::Text, QColor("#293449"));
+    light.setColor(QPalette::Button, Qt::white); light.setColor(QPalette::ButtonText, QColor("#59667C"));
+    light.setColor(QPalette::Highlight, QColor("#DCE7FE")); light.setColor(QPalette::HighlightedText, QColor("#234B9D"));
     setPalette(light);
-    setStyleSheet(ui::styleSheet());
+    setStyleSheet(ui::styleSheet() + QStringLiteral("\nQWidget {font-family: \"%1\";}").arg(interfaceFont.family()));
+    auto* central = new QWidget(this); central->setObjectName("workspace");
+    auto* layout = new QVBoxLayout(central); layout->setContentsMargins(24, 10, 24, 12); layout->setSpacing(12);
+    auto* header = new QHBoxLayout; header->setSpacing(10);
+    auto* mark = new QLabel; mark->setPixmap(ui::icon(ui::Icon::Document, QColor("#26354D")).pixmap(30, 30)); header->addWidget(mark);
+    auto* brand = label(QStringLiteral("校园打印")); brand->setObjectName("pageTitle"); header->addWidget(brand); header->addSpacing(24);
+    auto* navigation = new QButtonGroup(this); navigation->setExclusive(true);
+    auto* stack = new QStackedWidget; stack->setObjectName("workspacePages");
+    const QStringList names{QStringLiteral("工作台"), QStringLiteral("记录"), QStringLiteral("设备")};
+    const QStringList navIds{"navWorkspace", "navHistory", "navDevices"};
+    for (int i = 0; i < 3; ++i) {
+        auto* button = new QPushButton(names[i]); button->setObjectName(navIds[i]); button->setProperty("role", "nav");
+        button->setCheckable(true); button->setChecked(i == 0); navigation->addButton(button, i); header->addWidget(button);
+        connect(button, &QPushButton::clicked, this, [stack, i] { stack->setCurrentIndex(i); });
+    }
+    connect(stack, &QStackedWidget::currentChanged, this, [navigation](int index) { navigation->button(index)->setChecked(true); });
+    header->addStretch();
+    auto* command = new QPushButton(QStringLiteral("⌘  命令")); command->setObjectName("commandPalette"); command->setProperty("role", "quiet");
+    command->setText(QStringLiteral("命令  Ctrl+K")); header->addWidget(command);
+    if (options.demoMode) {
+        auto* demo = new QPushButton(QStringLiteral("演示任务")); demo->setObjectName("demoWorkload"); demo->setProperty("role", "quiet");
+        header->addWidget(demo); connect(demo, &QPushButton::clicked, this, &PrintWindow::loadDemo);
+    }
+    auto* newTask = new QPushButton(QStringLiteral("新建任务")); newTask->setObjectName("newTask"); newTask->setProperty("role", "primary");
+    newTask->setIcon(ui::icon(ui::Icon::Plus, Qt::white)); header->addWidget(newTask); layout->addLayout(header);
 
-    auto* central = new QWidget(this);
-    central->setObjectName("workspace");
-    auto* layout = new QVBoxLayout(central);
-    layout->setContentsMargins(24, 20, 24, 16);
-    layout->setSpacing(16);
+    // Workbench: the illustration and queue share one clean surface; controls are native.
+    auto* workArea = new QScrollArea; workArea->setObjectName("workbenchScroll");
+    workArea->setWidgetResizable(true); workArea->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    auto* work = new QWidget; auto* body = new QVBoxLayout(work);
+    body->setContentsMargins(0, 0, 0, 0); body->setSpacing(0); body->setSizeConstraint(QLayout::SetMinimumSize);
+    scene_ = new PaperWorkspace; body->addWidget(scene_, 1);
+    auto* controls = new QFrame; controls->setObjectName("timelineControls");
+    controls->setStyleSheet("QFrame#timelineControls { background: white; border-top: 1px solid #E5EAF2; }");
+    auto* controlRow = new QHBoxLayout(controls); controlRow->setContentsMargins(28, 17, 28, 10);
+    controlRow->addWidget(label(QStringLiteral("设备与调度"), "section")); controlRow->addStretch();
+    auto* policy = new SelectInput; policy->setObjectName("schedulingPolicy");
+    policy->addItems({QStringLiteral("FCFS · 先来先服务"), QStringLiteral("SJF · 短作业优先"), QStringLiteral("优先级 + 等待老化")});
+    policy->setMinimumWidth(190); controlRow->addWidget(policy); controlRow->addStretch();
+    auto* motion = new QPushButton(QStringLiteral("减少动效")); motion->setObjectName("reduceMotion"); motion->setCheckable(true); motion->setProperty("role", "quiet");
+    controlRow->addWidget(motion);
+    connect(motion, &QPushButton::toggled, this, [this](bool reduced) { scene_->setMotion(!reduced); });
+    auto* pause = new QPushButton(QStringLiteral("暂停派发")); pause->setObjectName("pauseDispatch"); pause->setCheckable(true);
+    pause->setIcon(ui::icon(ui::Icon::Pause)); pause->setToolTip(QStringLiteral("暂停领取新任务；已经运行的任务继续打印。"));
+    controlRow->addWidget(pause); body->addWidget(controls);
+    timeline_ = new PrinterTimeline; body->addWidget(timeline_);
+    auto* workNote = label(QStringLiteral("文档图形为任务示意  ·  颜色区分内容层次，打印进度来自实际执行事件"), "muted");
+    workNote->setContentsMargins(28, 9, 0, 9); body->addWidget(workNote);
+    workArea->setWidget(work); stack->addWidget(workArea);
 
-    auto* header = new QHBoxLayout;
-    header->setSpacing(14);
-    auto* mark = new QLabel;
-    mark->setObjectName("brandMark"); mark->setFixedSize(44, 44);
-    mark->setAlignment(Qt::AlignCenter); mark->setPixmap(ui::icon(ui::Icon::Document, Qt::white).pixmap(27, 27));
-    header->addWidget(mark);
-    auto* titles = new QVBoxLayout;
-    titles->setSpacing(2);
-    auto* heading = label(QStringLiteral("打印工作台")); heading->setObjectName("pageTitle");
-    titles->addWidget(heading);
-    titles->addWidget(label(QStringLiteral("校园共享打印  /  双设备协同调度"), "muted"));
-    header->addLayout(titles); header->addStretch();
-    if (options.demoMode) header->addWidget(label(QStringLiteral("演示模式"), "badge"), 0, Qt::AlignVCenter);
-    connection_ = label(QStringLiteral("检查执行器…"), "badge");
-    header->addWidget(connection_, 0, Qt::AlignVCenter);
-    auto* check = new QPushButton;
-    check->setIcon(ui::icon(ui::Icon::Refresh)); check->setProperty("role", "quiet");
-    check->setToolTip(QStringLiteral("重新检查本地执行器")); check->setAccessibleName(QStringLiteral("重新检查执行器"));
-    header->addWidget(check);
-    auto* report = new QPushButton(QStringLiteral("导出报表"));
-    report->setIcon(ui::icon(ui::Icon::Export)); header->addWidget(report);
-    auto* folder = new QPushButton;
-    folder->setProperty("role", "quiet"); folder->setIcon(ui::icon(ui::Icon::Folder));
-    folder->setToolTip(QStringLiteral("打开运行目录\n") + options.stateDirectory);
-    folder->setAccessibleName(QStringLiteral("打开运行目录")); header->addWidget(folder);
-    connect(folder, &QPushButton::clicked, this, [this, options] {
-        if (!QDir().mkpath(options.stateDirectory) || !QDesktopServices::openUrl(QUrl::fromLocalFile(options.stateDirectory)))
-            feedback_->setText(QStringLiteral("无法打开运行目录：") + options.stateDirectory);
-    });
-    layout->addLayout(header);
-
+    auto* queueArea = new QScrollArea; queueArea->setObjectName("queueScrollArea");
+    queueArea->setWidgetResizable(true); queueArea->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    auto* queueContent = new QWidget; queueContent->setObjectName("queueContent");
+    auto* working = new QVBoxLayout(queueContent); working->setContentsMargins(0, 0, 0, 0); working->setSpacing(14);
+    working->setSizeConstraint(QLayout::SetMinimumSize);
     auto* metrics = new QHBoxLayout;
-    metrics->setSpacing(12);
     const QStringList metricTitles{QStringLiteral("已完成任务"), QStringLiteral("等待队列"), QStringLiteral("平均首次等待"), QStringLiteral("设备利用率")};
     for (int i = 0; i < 4; ++i) {
-        auto* box = card("metric");
-        auto* body = new QVBoxLayout(box);
-        body->setContentsMargins(18, 12, 18, 12); body->setSpacing(3);
-        body->addWidget(label(metricTitles[i], "metricLabel"));
-        metricValues_[i] = label(i < 2 ? "0" : i == 2 ? QStringLiteral("0.0 秒") : "0.0%", "metricValue");
-        body->addWidget(metricValues_[i]);
-        metricHints_[i] = label(QStringLiteral("本次会话"), "metricHint"); body->addWidget(metricHints_[i]);
-        metrics->addWidget(box);
+        auto* box = card("metric"); auto* m = new QVBoxLayout(box); m->setContentsMargins(18, 12, 18, 12);
+        m->addWidget(label(metricTitles[i], "metricLabel")); metricValues_[i] = label("0", "metricValue"); m->addWidget(metricValues_[i]);
+        metricHints_[i] = label(QStringLiteral("本次会话"), "metricHint"); m->addWidget(metricHints_[i]); metrics->addWidget(box);
     }
-    layout->addLayout(metrics);
-
-    auto* content = new QHBoxLayout;
-    content->setSpacing(18);
-    // Keep the queue controls reachable when the window is short or logs are open.
-    auto* queueArea = new QScrollArea;
-    queueArea->setObjectName("queueScrollArea");
-    queueArea->setWidgetResizable(true);
-    queueArea->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
-    queueArea->viewport()->setAutoFillBackground(false);
-    auto* queueContent = new QWidget;
-    queueContent->setObjectName("queueContent");
-    auto* working = new QVBoxLayout(queueContent);
-    working->setContentsMargins(0, 0, 0, 0);
-    working->setSizeConstraint(QLayout::SetMinimumSize);
-    working->setSpacing(16);
-    auto* printerHeading = new QHBoxLayout;
-    printerHeading->addWidget(label(QStringLiteral("打印设备"), "section"));
-    printerHeading->addStretch(); printerHeading->addWidget(label(QStringLiteral("2 台模拟打印机"), "muted"));
-    working->addLayout(printerHeading);
-    auto* printers = new QHBoxLayout;
-    printers->setSpacing(12);
-    for (int i = 0; i < 2; ++i) {
-        auto* box = card();
-        auto* body = new QVBoxLayout(box);
-        body->setContentsMargins(16, 14, 16, 14); body->setSpacing(9);
-        auto* top = new QHBoxLayout;
-        auto* tile = label({}, "iconTile"); tile->setFixedSize(34, 34); tile->setAlignment(Qt::AlignCenter);
-        tile->setPixmap(ui::icon(ui::Icon::Printer).pixmap(22, 22));
-        top->addWidget(tile); top->addSpacing(3);
-        top->addWidget(label(QStringLiteral("打印机 0%1").arg(i + 1), "section")); top->addStretch();
-        printerStates_[i] = label(QStringLiteral("就绪"), "badge"); printerStates_[i]->setProperty("tone", "ready");
-        top->addWidget(printerStates_[i]); body->addLayout(top);
-        printerLabels_[i] = label(QStringLiteral("等待下一个任务"), "printerTitle");
-        printerLabels_[i]->setMinimumWidth(0); printerLabels_[i]->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
-        body->addWidget(printerLabels_[i]);
-        printerDetails_[i] = label(QStringLiteral("提交后将自动分配任务"), "muted");
-        printerDetails_[i]->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred); body->addWidget(printerDetails_[i]);
-        progressBars_[i] = new QProgressBar;
-        progressBars_[i]->setRange(0, 100); progressBars_[i]->setValue(0); progressBars_[i]->setTextVisible(false);
-        body->addWidget(progressBars_[i]);
-        printerProgress_[i] = label(QStringLiteral("当前没有运行任务"), "muted");
-        body->addWidget(printerProgress_[i]); printers->addWidget(box);
-    }
-    working->addLayout(printers);
-
-    auto* queue = card();
-    auto* queueLayout = new QVBoxLayout(queue);
-    queueLayout->setContentsMargins(16, 14, 16, 12); queueLayout->setSpacing(12);
-    auto* actions = new QHBoxLayout;
-    actions->setSpacing(8);
-    actions->addWidget(label(QStringLiteral("任务队列"), "section"));
+    working->addLayout(metrics);
+    auto* queue = card(); auto* queueLayout = new QVBoxLayout(queue); queueLayout->setContentsMargins(18, 16, 18, 14);
+    auto* actions = new QHBoxLayout; actions->addWidget(label(QStringLiteral("任务记录"), "section"));
     queueSummary_ = label(QStringLiteral("0 个任务"), "muted"); actions->addWidget(queueSummary_); actions->addStretch();
-    auto* pause = new QPushButton(QStringLiteral("暂停派发"));
-    pause->setObjectName("pauseDispatch"); pause->setCheckable(true); pause->setIcon(ui::icon(ui::Icon::Pause));
-    pause->setToolTip(QStringLiteral("暂停领取新任务；已经运行的任务继续打印。")); actions->addWidget(pause);
-    cancel_ = new QPushButton(QStringLiteral("取消任务"));
-    cancel_->setObjectName("cancelJob"); cancel_->setProperty("role", "danger"); cancel_->setEnabled(false); actions->addWidget(cancel_);
+    auto* filter = new SelectInput; filter->setObjectName("queueFilter");
+    filter->addItems({QStringLiteral("全部任务"), QStringLiteral("等待中"), QStringLiteral("打印中"), QStringLiteral("已完成"), QStringLiteral("失败"), QStringLiteral("已取消")});
+    actions->addWidget(filter);
+    auto* report = new QPushButton(QStringLiteral("导出报表")); report->setIcon(ui::icon(ui::Icon::Export)); actions->addWidget(report);
+    cancel_ = new QPushButton(QStringLiteral("取消任务")); cancel_->setObjectName("cancelJob"); cancel_->setProperty("role", "danger"); cancel_->setEnabled(false); actions->addWidget(cancel_);
     queueLayout->addLayout(actions);
-    auto* filters = new QHBoxLayout;
-    auto* filter = new SelectInput;
-    filter->setObjectName("queueFilter");
-    filter->addItems({QStringLiteral("全部任务"), QStringLiteral("等待中"), QStringLiteral("打印中"),
-        QStringLiteral("已完成"), QStringLiteral("失败"), QStringLiteral("已取消")});
-    filter->setMinimumWidth(112); filters->addWidget(filter); filters->addStretch();
-    filters->addWidget(label(QStringLiteral("选择任务后可执行操作"), "muted"));
-    queueLayout->addLayout(filters);
-    model_ = new JobTableModel(this);
-    filter_ = new QSortFilterProxyModel(this); filter_->setSourceModel(model_); filter_->setFilterKeyColumn(3);
-    table_ = new QTableView; table_->setObjectName("jobsTable"); table_->setModel(filter_);
-    table_->setItemDelegate(new QueueDelegate(table_));
+    model_ = new JobTableModel(this); filter_ = new QSortFilterProxyModel(this); filter_->setSourceModel(model_); filter_->setFilterKeyColumn(3);
+    table_ = new QTableView; table_->setObjectName("jobsTable"); table_->setModel(filter_); table_->setItemDelegate(new QueueDelegate(table_));
     table_->setSelectionBehavior(QAbstractItemView::SelectRows); table_->setSelectionMode(QAbstractItemView::SingleSelection);
     table_->setEditTriggers(QAbstractItemView::NoEditTriggers); table_->setShowGrid(false); table_->setWordWrap(false);
-    table_->setTextElideMode(Qt::ElideRight); table_->setMinimumHeight(150);
+    table_->setTextElideMode(Qt::ElideRight); table_->setMinimumHeight(220);
     table_->verticalHeader()->setVisible(false); table_->verticalHeader()->setDefaultSectionSize(58);
     table_->horizontalHeader()->setDefaultAlignment(Qt::AlignLeft | Qt::AlignVCenter);
-    table_->horizontalHeader()->setSectionResizeMode(QHeaderView::Fixed);
-    table_->horizontalHeader()->setSectionResizeMode(0, QHeaderView::Stretch);
-    table_->setColumnWidth(1, 56); table_->setColumnWidth(2, 58); table_->setColumnWidth(3, 83);
-    table_->setColumnWidth(4, 118); table_->setColumnWidth(5, 142); table_->hideColumn(6);
-    queueLayout->addWidget(table_, 1);
-    auto* overlay = new QVBoxLayout(table_->viewport());
-    overlay->setContentsMargins(0, 0, 0, 0);
-    emptyState_ = new QWidget;
-    emptyState_->setAttribute(Qt::WA_TransparentForMouseEvents);
-    auto* emptyLayout = new QVBoxLayout(emptyState_);
-    emptyLayout->setSpacing(8); emptyLayout->addStretch();
-    auto* emptyIcon = new QLabel;
-    emptyIcon->setPixmap(ui::icon(ui::Icon::Document, QColor("#BAC6DD")).pixmap(36, 36));
-    emptyIcon->setAlignment(Qt::AlignCenter); emptyLayout->addWidget(emptyIcon);
-    auto* emptyTitle = label(QStringLiteral("这里暂时没有任务"), "section"); emptyTitle->setAlignment(Qt::AlignCenter);
-    emptyLayout->addWidget(emptyTitle);
-    auto* emptyHint = label(QStringLiteral("从右侧提交新任务，或切换状态筛选。"), "muted"); emptyHint->setAlignment(Qt::AlignCenter);
+    table_->horizontalHeader()->setSectionResizeMode(QHeaderView::Fixed); table_->horizontalHeader()->setSectionResizeMode(0, QHeaderView::Stretch);
+    table_->setColumnWidth(1, 65); table_->setColumnWidth(2, 65); table_->setColumnWidth(3, 90);
+    table_->setColumnWidth(4, 130); table_->setColumnWidth(5, 220); table_->hideColumn(6); queueLayout->addWidget(table_, 1);
+    auto* overlay = new QVBoxLayout(table_->viewport()); overlay->setContentsMargins(0, 0, 0, 0);
+    emptyState_ = new QWidget; emptyState_->setAttribute(Qt::WA_TransparentForMouseEvents);
+    auto* emptyLayout = new QVBoxLayout(emptyState_); emptyLayout->addStretch();
+    auto* emptyTitle = label(QStringLiteral("这里暂时没有任务"), "section"); emptyTitle->setAlignment(Qt::AlignCenter); emptyLayout->addWidget(emptyTitle);
+    auto* emptyHint = label(QStringLiteral("新建任务，或切换状态筛选"), "muted"); emptyHint->setAlignment(Qt::AlignCenter);
     emptyLayout->addWidget(emptyHint); emptyLayout->addStretch(); overlay->addWidget(emptyState_);
     if (options.demoMode) {
-        auto* demo = new QHBoxLayout;
-        demo->setSpacing(8); demo->addWidget(label(QStringLiteral("恢复演示"), "eyebrow")); demo->addStretch();
-        fault_ = new QPushButton(QStringLiteral("模拟进程崩溃"));
-        fault_->setObjectName("injectFault"); fault_->setEnabled(false); fault_->setProperty("role", "quiet");
-        fault_->setToolTip(QStringLiteral("中断选中任务的工作进程，观察自动重试。")); demo->addWidget(fault_);
-        disconnect_ = new QPushButton(QStringLiteral("断开控制连接"));
-        disconnect_->setObjectName("disconnectControl"); disconnect_->setEnabled(false); disconnect_->setProperty("role", "quiet");
-        disconnect_->setToolTip(QStringLiteral("断开选中任务的连接，观察自动重连。")); demo->addWidget(disconnect_);
+        auto* demo = new QHBoxLayout; demo->addWidget(label(QStringLiteral("故障恢复演示"), "muted")); demo->addStretch();
+        fault_ = new QPushButton(QStringLiteral("模拟进程崩溃")); fault_->setObjectName("injectFault"); fault_->setEnabled(false); demo->addWidget(fault_);
+        disconnect_ = new QPushButton(QStringLiteral("断开控制连接")); disconnect_->setObjectName("disconnectControl"); disconnect_->setEnabled(false); demo->addWidget(disconnect_);
         queueLayout->addLayout(demo);
     }
-    working->addWidget(queue, 1);
-    queueArea->setWidget(queueContent);
-    content->addWidget(queueArea, 1);
+    working->addWidget(queue, 1); queueArea->setWidget(queueContent); stack->addWidget(queueArea);
 
-    auto* side = new QScrollArea;
-    side->setWidgetResizable(true); side->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
-    side->setMinimumWidth(320); side->setMaximumWidth(342); side->viewport()->setAutoFillBackground(false);
-    auto* sideContent = new QWidget; sideContent->setObjectName("sideContent");
-    sideContent->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
-    auto* sideLayout = new QVBoxLayout(sideContent);
-    sideLayout->setContentsMargins(0, 0, 0, 0); sideLayout->setSpacing(14);
-    auto* submission = card();
-    auto* form = new QVBoxLayout(submission);
-    form->setContentsMargins(18, 16, 18, 16); form->setSpacing(9);
-    form->addWidget(label(QStringLiteral("新建打印任务"), "section")); form->addSpacing(4);
-    form->addWidget(label(QStringLiteral("文档名称"), "muted"));
-    auto* title = new QLineEdit(QStringLiteral("操作系统课设文档"));
-    title->setObjectName("jobTitle"); title->setMaxLength(200); title->setPlaceholderText(QStringLiteral("给文档起一个名称"));
-    form->addWidget(title); form->addSpacing(3);
-    auto* numbers = new QHBoxLayout; numbers->setSpacing(8);
-    auto* pages = new NumberInput; pages->setObjectName("jobPages"); pages->setRange(1, 1000); pages->setValue(8);
-    auto* copies = new NumberInput; copies->setObjectName("jobCopies"); copies->setRange(1, 100);
-    auto* priority = new NumberInput; priority->setObjectName("jobPriority"); priority->setRange(0, 100);
-    priority->setToolTip(QStringLiteral("数值越大越优先；老化策略下等待每 30 秒增加 1 点。"));
-    const std::array<QSpinBox*, 3> inputs{pages, copies, priority};
-    const QStringList numberLabels{QStringLiteral("页数"), QStringLiteral("份数"), QStringLiteral("优先级")};
-    for (int i = 0; i < 3; ++i) {
-        auto* field = new QVBoxLayout; field->setSpacing(6); field->addWidget(label(numberLabels[i], "muted"));
-        inputs[i]->setMinimumWidth(0); field->addWidget(inputs[i]); numbers->addLayout(field);
+    auto* devices = new QWidget; auto* deviceLayout = new QVBoxLayout(devices); deviceLayout->setContentsMargins(0, 12, 0, 0); deviceLayout->setSpacing(18);
+    auto* deviceHead = new QHBoxLayout; deviceHead->addWidget(label(QStringLiteral("设备与执行状态"), "section")); deviceHead->addStretch();
+    auto* check = new QPushButton(QStringLiteral("检查执行器")); check->setIcon(ui::icon(ui::Icon::Refresh)); deviceHead->addWidget(check);
+    auto* folder = new QPushButton(QStringLiteral("打开输出目录")); folder->setIcon(ui::icon(ui::Icon::Folder)); deviceHead->addWidget(folder);
+    deviceLayout->addLayout(deviceHead);
+    connect(folder, &QPushButton::clicked, this, [this, options] {
+        const auto output = QDir(options.stateDirectory).filePath("output");
+        if (!QDir().mkpath(output) || !QDesktopServices::openUrl(QUrl::fromLocalFile(output))) feedback_->setText(QStringLiteral("无法打开输出目录。"));
+    });
+    auto* printers = new QHBoxLayout;
+    for (int i = 0; i < 2; ++i) {
+        auto* box = card(); auto* d = new QVBoxLayout(box); d->setContentsMargins(25, 24, 25, 24); d->setSpacing(15);
+        auto* top = new QHBoxLayout; top->addWidget(label(QStringLiteral("打印机 0%1").arg(i + 1), "section")); top->addStretch();
+        printerStates_[i] = label(QStringLiteral("就绪"), "badge"); top->addWidget(printerStates_[i]); d->addLayout(top);
+        printerLabels_[i] = label(QStringLiteral("等待下一个任务")); printerLabels_[i]->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred); d->addWidget(printerLabels_[i]);
+        printerDetails_[i] = label({}, "muted"); printerDetails_[i]->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred); d->addWidget(printerDetails_[i]);
+        progressBars_[i] = new QProgressBar; progressBars_[i]->setTextVisible(false); progressBars_[i]->setValue(0); d->addWidget(progressBars_[i]);
+        printerProgress_[i] = label({}, "muted"); d->addWidget(printerProgress_[i]); printers->addWidget(box);
     }
-    form->addLayout(numbers); form->addSpacing(3);
-    form->addWidget(label(QStringLiteral("等待任务排序"), "muted"));
-    auto* policy = new SelectInput;
-    policy->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
-    policy->addItems({QStringLiteral("先来先服务  /  FCFS"), QStringLiteral("短作业优先  /  SJF"), QStringLiteral("优先级 + 等待老化")});
-    policy->setObjectName("schedulingPolicy"); form->addWidget(policy);
-    auto* sheets = label(QStringLiteral("本次打印共 8 页"), "muted"); form->addWidget(sheets); form->addSpacing(4);
-    auto sheetSummary = [pages, copies, sheets] {
-        const int count = pages->value() * copies->value();
-        sheets->setText(count > 10000 ? QStringLiteral("总页数超过 10000，请减少页数或份数") : QStringLiteral("本次打印共 %1 页").arg(count));
-    };
-    connect(pages, &QSpinBox::valueChanged, this, sheetSummary);
-    connect(copies, &QSpinBox::valueChanged, this, sheetSummary);
-    auto* submit = new QPushButton(QStringLiteral("加入打印队列"));
-    submit->setObjectName("submitJob"); submit->setProperty("role", "primary"); submit->setIcon(ui::icon(ui::Icon::Plus, Qt::white));
-    form->addWidget(submit);
-    auto* import = new QPushButton(QStringLiteral("从文件批量导入"));
-    import->setIcon(ui::icon(ui::Icon::Import)); form->addWidget(import);
-    sideLayout->addWidget(submission);
-    auto* distribution = card();
-    auto* distributionLayout = new QVBoxLayout(distribution);
-    distributionLayout->setContentsMargins(18, 14, 18, 8); distributionLayout->setSpacing(4);
-    distributionLayout->addWidget(label(QStringLiteral("本次任务分布"), "section"));
-    chart_ = new StatisticsChart; distributionLayout->addWidget(chart_);
-    sideLayout->addWidget(distribution);
-    auto* note = label(QStringLiteral("队列保存在本次会话中。\n退出前请完成或取消剩余任务。"), "muted");
-    note->setWordWrap(true); sideLayout->addWidget(note); sideLayout->addStretch();
-    side->setWidget(sideContent); content->addWidget(side);
-    layout->addLayout(content, 1);
+    deviceLayout->addLayout(printers);
+    auto* distribution = card(); auto* dist = new QVBoxLayout(distribution); dist->setContentsMargins(25, 20, 25, 14);
+    dist->addWidget(label(QStringLiteral("本次任务分布"), "section")); chart_ = new StatisticsChart; dist->addWidget(chart_); deviceLayout->addWidget(distribution);
+    auto* note = label(QStringLiteral("当前使用本地模拟打印，两台独立工作进程向文本文件输出。\n等待队列属于本次会话；未完成的任务需要处理完毕后再关闭窗口。"), "muted");
+    note->setWordWrap(true); deviceLayout->addWidget(note); deviceLayout->addStretch(); stack->addWidget(devices);
+    layout->addWidget(stack, 1);
+    auto* footer = new QHBoxLayout; footer->setSpacing(12);
+    connection_ = label(QStringLiteral("检查执行器…"), "badge"); footer->addWidget(connection_);
+    feedback_ = label(QStringLiteral("新建一份任务，或加载演示任务体验双设备调度。"), "muted");
+    feedback_->setObjectName("feedback"); feedback_->setWordWrap(true); footer->addWidget(feedback_, 1);
+    logToggle_ = new QToolButton; logToggle_->setObjectName("logToggle"); logToggle_->setCheckable(true); logToggle_->setProperty("role", "quiet");
+    logToggle_->setText(QStringLiteral("运行日志")); footer->addWidget(logToggle_); layout->addLayout(footer);
+    log_ = new QPlainTextEdit; log_->setReadOnly(true); log_->setMaximumBlockCount(500); log_->setFixedHeight(120); log_->hide();
+    layout->addWidget(log_); connect(logToggle_, &QToolButton::toggled, log_, &QWidget::setVisible); setCentralWidget(central);
 
-    auto* footer = new QHBoxLayout;
-    footer->setSpacing(12);
-    feedback_ = label(QStringLiteral("准备就绪，从右侧添加第一份打印任务。"), "muted");
-    feedback_->setObjectName("feedback"); feedback_->setWordWrap(true);
-    footer->addWidget(feedback_, 1);
-    logToggle_ = new QToolButton;
-    logToggle_->setObjectName("logToggle");
-    logToggle_->setProperty("role", "quiet"); logToggle_->setCheckable(true);
-    logToggle_->setIcon(ui::icon(ui::Icon::Activity)); logToggle_->setText(QStringLiteral("运行日志"));
-    logToggle_->setToolButtonStyle(Qt::ToolButtonTextBesideIcon); footer->addWidget(logToggle_);
-    layout->addLayout(footer);
-    log_ = new QPlainTextEdit;
-    log_->setReadOnly(true); log_->setMaximumBlockCount(500); log_->setFixedHeight(128);
-    log_->setPlaceholderText(QStringLiteral("执行事件与错误日志")); log_->hide();
-    layout->addWidget(log_);
-    connect(logToggle_, &QToolButton::toggled, log_, &QWidget::setVisible);
-    setCentralWidget(central);
+    auto* submission = new QDialog(this); submission->setObjectName("submissionDialog"); submission->setWindowTitle(QStringLiteral("新建打印任务"));
+    submission->setWindowModality(Qt::WindowModal); submission->setFixedWidth(470);
+    auto* form = new QVBoxLayout(submission); form->setContentsMargins(28, 26, 28, 26); form->setSpacing(13);
+    form->addWidget(label(QStringLiteral("准备打印什么？"), "section")); form->addWidget(label(QStringLiteral("输入文档信息，交给调度器安排。"), "muted"));
+    form->addWidget(label(QStringLiteral("文档名称"), "muted"));
+    auto* title = new QLineEdit(QStringLiteral("操作系统实验报告")); title->setObjectName("jobTitle"); title->setMaxLength(200); form->addWidget(title);
+    auto* pages = new NumberInput; pages->setObjectName("jobPages"); pages->setRange(1, 1000); pages->setValue(8);
+    auto* copies = new NumberInput; copies->setObjectName("jobCopies"); copies->setRange(1, 100); copies->setValue(1);
+    auto* priority = new NumberInput; priority->setObjectName("jobPriority"); priority->setRange(0, 100);
+    const std::array<QSpinBox*, 3> inputs{pages, copies, priority};
+    auto* numbers = new QHBoxLayout;
+    for (int i = 0; i < 3; ++i) {
+        auto* field = new QVBoxLayout; field->addWidget(label(QStringList{QStringLiteral("页数"),QStringLiteral("份数"),QStringLiteral("优先级")}[i], "muted"));
+        field->addWidget(inputs[i]); numbers->addLayout(field);
+    }
+    form->addLayout(numbers);
+    auto* sheets = label(QStringLiteral("本次打印共 8 页"), "muted"); sheets->setWordWrap(true); form->addWidget(sheets);
+    auto sheetSummary = [=] { sheets->setText(QStringLiteral("本次打印共 %1 页 · 优先级越大越优先").arg(pages->value() * copies->value())); };
+    connect(pages, &QSpinBox::valueChanged, this, sheetSummary); connect(copies, &QSpinBox::valueChanged, this, sheetSummary);
+    auto* submit = new QPushButton(QStringLiteral("加入打印队列")); submit->setObjectName("submitJob"); submit->setProperty("role", "primary"); submit->setDefault(true); form->addWidget(submit);
+    auto* import = new QPushButton(QStringLiteral("从 JSON 文件批量导入")); import->setObjectName("importJobs"); form->addWidget(import);
+    connect(newTask, &QPushButton::clicked, this, [=] { submission->show(); submission->raise(); title->setFocus(); title->selectAll(); });
     qRegisterMetaType<ViewState>();
     controller_ = new PrintController(options); controller_->moveToThread(&backendThread_);
     connect(&backendThread_, &QThread::started, controller_, &PrintController::initialize);
@@ -535,11 +458,16 @@ PrintWindow::PrintWindow(WindowOptions options, QWidget* parent) : QMainWindow(p
         log_->appendPlainText(lines.join('\n'));
     }, Qt::QueuedConnection);
     connect(submit, &QPushButton::clicked, this, [=] {
+        if (title->text().trimmed().isEmpty() || pages->value() * copies->value() > 10000) {
+            const auto error = QStringLiteral("请输入有效名称，总页数不得超过 10000。");
+            sheets->setText(error); feedback_->setText(error); return;
+        }
         emit submitRequested(title->text(), pages->value(), copies->value(), priority->value());
+        submission->accept();
     });
     connect(import, &QPushButton::clicked, this, [this, options] {
         const auto path = QFileDialog::getOpenFileName(this, QStringLiteral("导入模拟任务数组"), options.stateDirectory, "JSON (*.json)");
-        if (!path.isEmpty()) importFile(path);
+        if (!path.isEmpty()) { importFile(path); }
     });
     connect(policy, &QComboBox::currentIndexChanged, this, &PrintWindow::policyRequested);
     connect(pause, &QPushButton::toggled, this, [this, pause](bool paused) {
@@ -559,13 +487,62 @@ PrintWindow::PrintWindow(WindowOptions options, QWidget* parent) : QMainWindow(p
         updateSelection();
     });
     connect(table_->selectionModel(), &QItemSelectionModel::selectionChanged, this, &PrintWindow::updateSelection);
+    scene_->selectJob = [this](const QString& id) {
+        for (int row=0; row<filter_->rowCount(); ++row) {
+            if (filter_->index(row,0).data(Qt::UserRole).toString() != id) continue;
+            table_->selectRow(row); table_->scrollTo(filter_->index(row,0)); updateSelection(); break;
+        }
+    };
+    auto toggleFullscreen = [this] { isFullScreen() ? showNormal() : showFullScreen(); };
+
+    auto* fullKey = new QShortcut(QKeySequence(Qt::Key_F11), this);
+    connect(fullKey, &QShortcut::activated, this, toggleFullscreen);
+    auto showCommands = [=] {
+        QDialog palette(this); palette.setObjectName("commandDialog"); palette.setWindowTitle(QStringLiteral("命令中心"));
+        palette.setMinimumWidth(480); palette.resize(520, 420);
+        auto* body = new QVBoxLayout(&palette); body->setContentsMargins(20,20,20,20); body->setSpacing(12);
+        body->addWidget(label(QStringLiteral("你想做什么？"), "section"));
+        auto* query = new QLineEdit; query->setObjectName("commandQuery"); query->setPlaceholderText(QStringLiteral("输入命令关键词，Enter 执行")); body->addWidget(query);
+        auto* choices = new QListWidget; choices->setObjectName("commandChoices"); body->addWidget(choices);
+        const QStringList commands{QStringLiteral("新建打印任务"), QStringLiteral("暂停 / 继续派发"),QStringLiteral("调度策略 · FCFS 先来先服务"),
+            QStringLiteral("调度策略 · SJF 短作业优先"),QStringLiteral("调度策略 · 优先级老化"),QStringLiteral("导出会话报表"),QStringLiteral("切换全屏"),QStringLiteral("回到工作台")};
+        for(int i=0;i<commands.size();++i){auto* item=new QListWidgetItem(commands[i],choices);item->setData(Qt::UserRole,i);}
+        choices->setCurrentRow(0);
+        connect(query,&QLineEdit::textChanged,&palette,[=](const QString& text){
+            QListWidgetItem* first=nullptr;
+            for(int i=0;i<choices->count();++i){auto* item=choices->item(i);item->setHidden(!item->text().contains(text,Qt::CaseInsensitive));if(!item->isHidden()&&!first)first=item;}
+            choices->setCurrentItem(first);
+        });
+        int selected=-1;
+        auto activate=[&]{auto* item=choices->currentItem();if(item&&!item->isHidden()){selected=item->data(Qt::UserRole).toInt();palette.accept();}};
+        connect(query,&QLineEdit::returnPressed,&palette,activate);
+        connect(choices,&QListWidget::itemActivated,&palette,[&](QListWidgetItem*){activate();});
+        query->setFocus(); if(palette.exec()!=QDialog::Accepted)return;
+        if(selected==0)newTask->click();
+        else if(selected==1)pause->click();
+        else if(selected>=2&&selected<=4)policy->setCurrentIndex(selected-2);
+        else if(selected==5)report->click();
+        else if(selected==6)toggleFullscreen();
+        else if(selected==7)stack->setCurrentIndex(0);
+    };
+    connect(command,&QPushButton::clicked,this,showCommands);
+    auto* commandKey=new QShortcut(QKeySequence(QStringLiteral("Ctrl+K")),this);
+    connect(commandKey,&QShortcut::activated,this,showCommands);
     backendThread_.start();
 }
 PrintWindow::~PrintWindow() { backendThread_.quit(); backendThread_.wait(); }
+void PrintWindow::loadDemo() {
+    const QStringList names{QStringLiteral("操作系统实验报告"), QStringLiteral("课程设计说明书"),
+        QStringLiteral("复习笔记"), QStringLiteral("实验数据"), QStringLiteral("阅读材料")};
+    const int pages[]{80, 60, 32, 18, 12};
+    for (int i = 0; i < 5; ++i) emit submitRequested(names[i], pages[i], 1, i == 4 ? 8 : 0);
+}
 void PrintWindow::importFile(const QString& path) { emit importRequested(path); }
 void PrintWindow::applyView(const ViewState& view) {
     Q_ASSERT(QThread::currentThread() == qApp->thread());
     model_->update(view.jobs);
+    scene_->setView(view);
+    timeline_->setView(view);
     emptyState_->setVisible(filter_->rowCount() == 0);
     queueSummary_->setText(QStringLiteral("%1 个任务").arg(view.jobs.size()));
     const bool available = !view.connection.contains(QStringLiteral("不可用"));
@@ -607,6 +584,7 @@ void PrintWindow::updateSelection() {
     const bool queued = current.isValid() && current.data(Qt::UserRole + 1).toInt() == static_cast<int>(JobState::Queued);
     const bool running = current.isValid() && current.data(Qt::UserRole + 1).toInt() == static_cast<int>(JobState::Running);
     const bool connected = current.data(Qt::UserRole + 2).toBool();
+    if (current.isValid() && table_->isVisible()) scene_->select(current.data(Qt::UserRole).toString());
     cancel_->setEnabled(queued || (running && connected));
     cancel_->setToolTip(queued ? QStringLiteral("立即取消尚未领取的任务") : QStringLiteral("请求停止正在执行的任务，收到停止确认后生效。"));
     if (fault_) fault_->setEnabled(running && connected);

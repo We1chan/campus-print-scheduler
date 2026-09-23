@@ -37,6 +37,8 @@ struct PrinterView {
 };
 struct ViewState {
     QList<JobView> jobs;
+    QStringList waitingOrder; // Snapshot order under the active policy, including aging.
+    int policyIndex = 0;
     std::array<PrinterView, 2> printers;
     Statistics metrics;
     QString connection;
