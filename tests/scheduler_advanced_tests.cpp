@@ -176,6 +176,28 @@ void malformedSnapshots() {
         require(s.snapshot().empty(), "failed restore is atomic");
     }
 }
+void batchAndPreview() {
+    Scheduler atomic;
+    require(atomic.submit(job("existing")), "existing job");
+    require(!atomic.submitBatch({job("new"), job("existing")}), "reject whole duplicate batch");
+    require(atomic.snapshot().size() == 1, "no partial batch on duplicate");
+    auto bad = job("bad"); bad.pages = 0;
+    require(!atomic.submitBatch({job("new"), bad}), "reject whole invalid batch");
+    require(atomic.snapshot().size() == 1, "no partial batch on invalid fields");
+    for (auto policy : {Policy::Fcfs, Policy::ShortestJobFirst, Policy::PriorityAging}) {
+        Scheduler s({10});
+        require(s.submitBatch({job("old", 20, 0), job("short", 1, 10),
+                              job("urgent", 3, 10, 4), job("future", 1, 100)}), "batch accepted");
+        const auto before = s.snapshot();
+        const auto preview = s.waitingOrder(policy, 50);
+        const std::vector<std::string> expected = policy == Policy::Fcfs ?
+            std::vector<std::string>{"old", "short", "urgent"} : policy == Policy::ShortestJobFirst ?
+            std::vector<std::string>{"short", "urgent", "old"} : std::vector<std::string>{"urgent", "old", "short"};
+        require(preview == expected, "preview respects configured aging, policy and future arrivals");
+        require(s.snapshot()[0].attempts == before[0].attempts, "preview does not mutate state");
+        for (const auto& id : preview) require(claim(s, policy, 50).id == id, "preview equals actual claims");
+    }
+}
 void invalidInputs() {
     Scheduler s;
     for (const int p : {-1, 101}) { auto j=job("bad"); j.priority=p; require(!s.submit(j), "priority bounds"); }
@@ -192,5 +214,5 @@ int main() {
         {"cancel state transitions", cancelStates}, {"completion versus cancel race", completionRace},
         {"claim versus cancel race", claimCancelRace}, {"concurrent producers and unique claims", concurrentIdentity},
         {"restore and snapshot isolation", restoreAndIsolation}, {"malformed snapshot atomicity", malformedSnapshots},
-        {"input validation", invalidInputs}});
+        {"batch atomicity and authoritative queue preview", batchAndPreview}, {"input validation", invalidInputs}});
 }

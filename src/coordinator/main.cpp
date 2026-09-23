@@ -9,6 +9,7 @@
 #include <QCryptographicHash>
 #include <QDir>
 #include <QFile>
+#include <QElapsedTimer>
 #include <QFileInfo>
 #include <QHash>
 #include <QJsonArray>
@@ -74,12 +75,6 @@ QJsonObject statisticsToJson(const cps::Statistics& stats) {
     };
 }
 
-QString defaultSocketName(const QString& stateDirectory) {
-    const auto digest = QCryptographicHash::hash(
-        QDir(stateDirectory).absolutePath().toUtf8(), QCryptographicHash::Sha256).toHex().left(16);
-    return QStringLiteral("campus-print-%1").arg(QString::fromLatin1(digest));
-}
-
 // Windows named pipes allow several servers on one name, so QLocalServer::listen
 // cannot detect a live coordinator using a different state directory. A lock file
 // keyed by the socket name in the system temp dir works identically on all platforms.
@@ -93,7 +88,7 @@ QString socketLockPath(const QString& socketName) {
 class Coordinator : public QObject {
 public:
     Coordinator(QString stateDirectory, QString socketName, cps::PersistentState initial,
-                int pageMs, int maxRestarts, int timeoutMs, QObject* parent = nullptr)
+                int pageMs, int maxRestarts, int timeoutMs, bool demoMode, QObject* parent = nullptr)
         : QObject(parent),
           stateDirectory_(QDir(stateDirectory).absolutePath()),
           jobsDirectory_(QDir(stateDirectory_).filePath("jobs")),
@@ -105,6 +100,7 @@ public:
           pageMs_(pageMs),
           maxRestarts_(maxRestarts),
           timeoutMs_(timeoutMs),
+          demoMode_(demoMode),
           instanceLock_(QDir(stateDirectory_).filePath(".coordinator.lock")),
           socketLock_(socketLockPath(socketName_)),
           server_(this),
@@ -151,6 +147,7 @@ public:
             if (job.state == cps::JobState::Running || job.state == cps::JobState::Cancelling) {
                 recovering_.insert(QString::fromStdString(job.id));
                 recoveryMisses_.insert(QString::fromStdString(job.id), 0);
+                slots_.insert(QString::fromStdString(job.id), static_cast<int>(slots_.size()));
             }
         }
         garbageCollectLeftovers();
@@ -181,6 +178,7 @@ private:
         int attempt = 0;
         QByteArray stdoutBuffer;
         QString cancelFile;
+        int printed = 0;
     };
 
     bool persist(QString& error) {
@@ -274,7 +272,7 @@ private:
             connect(socket, &QLocalSocket::readyRead, this, [this, socket] {
                 auto& buffer = clientBuffers_[socket];
                 buffer += socket->readAll();
-                if (buffer.size() > 1024 * 1024) {
+                if (buffer.size() > 8 * 1024 * 1024) {
                     socket->disconnectFromServer();
                     return;
                 }
@@ -296,6 +294,7 @@ private:
     void send(QLocalSocket* socket, QJsonObject object) {
         if (!socket) return;
         object.insert("schema_version", 1);
+        if (socket->bytesToWrite() > 32 * 1024 * 1024) { socket->abort(); return; }
         socket->write(QJsonDocument(object).toJson(QJsonDocument::Compact) + '\n');
         socket->flush();
     }
@@ -326,6 +325,45 @@ private:
         reply(socket, requestId, {{"type", "error"}, {"reason", reason}});
     }
 
+    bool parseSubmission(const QJsonObject& object, cps::TimeMs submitted, cps::Job& job) {
+        static const QRegularExpression safeId(QStringLiteral("^[A-Za-z0-9_-]{1,80}$"));
+        const auto id = object.value("job_id").toString();
+        const auto title = object.value("title").toString().trimmed();
+        if (!safeId.match(id).hasMatch() || title.isEmpty() || title.size() > 200 ||
+            !strictInt(object.value("pages"), 1, 1000, job.pages) ||
+            !strictInt(object.value("copies"), 1, 100, job.copies) || job.sheets() > 10000 ||
+            (object.contains("priority") && !strictInt(object.value("priority"), 0, 100, job.priority)) ||
+            (object.contains("max_attempts") && !strictInt(object.value("max_attempts"), 1, 100, job.maxAttempts)) ||
+            QFileInfo(outputPath(id)).isFile()) return false;
+        job.id = id.toStdString(); job.title = title.toUtf8().toStdString(); job.submittedMs = submitted;
+        return true;
+    }
+
+    QJsonObject snapshot() const {
+        const auto jobs = scheduler_->snapshot();
+        const auto now = scheduler_->nowMs();
+        auto start = now;
+        QJsonArray rows, order;
+        for (const auto& job : jobs) {
+            start = std::min(start, job.submittedMs);
+            const auto id = QString::fromStdString(job.id);
+            auto row = cps::jobSnapshotToJson(job);
+            row.insert("slot", slots_.value(id, -1));
+            row.insert("recovering", recovering_.contains(id));
+            row.insert("printed_sheets", job.state == cps::JobState::Completed ? job.sheets() :
+                       active_.value(id).printed);
+            rows.append(row);
+        }
+        for (const auto& id : scheduler_->waitingOrder(state_.policy, now)) order.append(QString::fromStdString(id));
+        const auto metrics = statisticsToJson(cps::statistics(jobs, start, now, state_.printers));
+        return {{"type", "snapshot"}, {"policy", cps::policyName(state_.policy)}, {"paused", state_.paused},
+            {"printers", state_.printers}, {"page_ms", pageMs_}, {"demo_mode", demoMode_},
+            {"coordinator_pid", static_cast<double>(QCoreApplication::applicationPid())},
+            {"aging_interval_ms", static_cast<double>(state_.schedulerOptions.agingIntervalMs)},
+            {"window_start_ms", static_cast<double>(start)}, {"now_ms", static_cast<double>(now)},
+            {"jobs", rows}, {"waiting_order", order}, {"metrics", metrics}};
+    }
+
     void handleCommand(QLocalSocket* socket, const QByteArray& line) {
         QJsonParseError parseError;
         const auto document = QJsonDocument::fromJson(line, &parseError);
@@ -344,63 +382,65 @@ private:
         }
 
         if (type == QLatin1String("snapshot")) {
-            QJsonArray jobs;
-            for (const auto& job : scheduler_->snapshot()) jobs.append(cps::jobSnapshotToJson(job));
-            reply(socket, requestId, {
-                {"type", "snapshot"},
-                {"policy", cps::policyName(state_.policy)},
-                {"printers", state_.printers},
-                {"jobs", jobs}
-            });
+            reply(socket, requestId, snapshot());
             return;
         }
 
-        if (type == QLatin1String("submit")) {
-            if (stopping_) {
-                commandError(socket, requestId, QStringLiteral("coordinator is shutting down"));
+        if (type == QLatin1String("submit") || type == QLatin1String("submit_batch")) {
+            const QJsonArray input = type == QLatin1String("submit")
+                ? QJsonArray{command.value("job")} : command.value("jobs").toArray();
+            if (stopping_ || input.isEmpty() || scheduler_->snapshot().size() +
+                    static_cast<std::size_t>(input.size()) > 10000) {
+                commandError(socket, requestId, QStringLiteral("empty batch, queue full or shutting down"));
                 return;
             }
-            const auto value = command.value("job");
-            if (!value.isObject()) {
-                commandError(socket, requestId, QStringLiteral("job object is required"));
-                return;
+            std::vector<cps::Job> jobs;
+            const auto submitted = scheduler_->nowMs();
+            for (const auto& value : input) {
+                cps::Job job;
+                if (!value.isObject() || !parseSubmission(value.toObject(), submitted, job)) {
+                    commandError(socket, requestId, QStringLiteral("invalid job fields or output already exists"));
+                    return;
+                }
+                jobs.push_back(std::move(job));
             }
-            const auto object = value.toObject();
-            const QString id = object.value("job_id").toString();
-            const QString title = object.value("title").toString();
-            static const QRegularExpression safeId(QStringLiteral("^[A-Za-z0-9_-]{1,80}$"));
-            cps::Job job;
-            int priority = 0;
-            int maxAttempts = 3;
-            const auto priorityValue = object.value("priority");
-            const auto attemptsValue = object.value("max_attempts");
-            if (!safeId.match(id).hasMatch() || title.trimmed().isEmpty() || title.size() > 200 ||
-                !strictInt(object.value("pages"), 1, 1000, job.pages) ||
-                !strictInt(object.value("copies"), 1, 100, job.copies) ||
-                job.pages * job.copies > 10000 ||
-                (!priorityValue.isUndefined() && !strictInt(priorityValue, 0, 100, priority)) ||
-                (!attemptsValue.isUndefined() && !strictInt(attemptsValue, 1, 100, maxAttempts))) {
-                commandError(socket, requestId, QStringLiteral("invalid job fields"));
-                return;
-            }
-            if (QFileInfo(outputPath(id)).isFile()) {
-                commandError(socket, requestId,
-                             QStringLiteral("job_id conflicts with an existing final output"));
-                return;
-            }
-            job.id = id.toStdString();
-            job.title = title.toUtf8().toStdString();
-            job.priority = priority;
-            job.maxAttempts = maxAttempts;
-            job.submittedMs = scheduler_->nowMs();
-            if (!scheduler_->submit(job)) {
+            if (!scheduler_->submitBatch(jobs)) {
                 commandError(socket, requestId, QStringLiteral("job rejected or duplicate job_id"));
                 return;
             }
             if (!persistOrStop()) return;
-            reply(socket, requestId, {{"type", "accepted"}, {"job_id", id}});
-            broadcastState(id);
+            reply(socket, requestId, {{"type", "accepted"}, {"count", input.size()},
+                {"job_id", QString::fromStdString(jobs.front().id)}});
+            // One notification per batch avoids flooding clients with thousands of events.
+            broadcast({{"type", "queue_changed"}});
             dispatch();
+            return;
+        }
+
+        if (type == QLatin1String("set_paused")) {
+            if (!command.value("paused").isBool()) {
+                commandError(socket, requestId, QStringLiteral("paused must be boolean"));
+                return;
+            }
+            state_.paused = command.value("paused").toBool();
+            if (!persistOrStop()) return;
+            reply(socket, requestId, {{"type", "accepted"}});
+            dispatch();
+            return;
+        }
+        if (type == QLatin1String("crash_worker")) {
+            const auto id = command.value("job_id").toString();
+            const auto job = findJob(id);
+            if (!demoMode_ || !job || job->state != cps::JobState::Running || !active_.contains(id)) {
+                commandError(socket, requestId, QStringLiteral("demo disabled or job not running"));
+                return;
+            }
+            QSaveFile fault(cancelPath(id, job->attempts) + ".fault");
+            if (!fault.open(QIODevice::WriteOnly) || !fault.commit()) {
+                commandError(socket, requestId, QStringLiteral("cannot write fault marker"));
+                return;
+            }
+            reply(socket, requestId, {{"type", "accepted"}});
             return;
         }
 
@@ -479,7 +519,7 @@ private:
     }
 
     void dispatch() {
-        if (stopping_) return;
+        if (stopping_ || state_.paused) return;
         while (active_.size() + recovering_.size() < state_.printers) {
             const auto job = scheduler_->claim(state_.policy);
             if (!job) break;
@@ -505,14 +545,20 @@ private:
             QFile::remove(cancellation);
             auto* process = new QProcess(this);
             process->setProgram(cps::siblingExecutable("print-supervisor"));
-            process->setArguments({
+            QStringList arguments{
                 "--job", jobPath,
                 "--output-dir", outputDirectory_,
                 "--page-ms", QString::number(pageMs_),
                 "--max-restarts", QString::number(maxRestarts_),
                 "--timeout-ms", QString::number(timeoutMs_),
-                "--cancel-file", cancellation
-            });
+                "--cancel-file", cancellation,
+                "--claim-attempt", QString::number(job->attempts)
+            };
+            if (demoMode_) arguments << "--demo-mode" << "--fault-file" << cancellation + ".fault";
+            process->setArguments(arguments);
+            int slot = 0;
+            while (slots_.values().contains(slot)) ++slot;
+            slots_.insert(id, slot);
             active_.insert(id, ActiveJob{process, job->attempts, {}, cancellation});
 
             connect(process, &QProcess::readyReadStandardOutput, this, [this, id] {
@@ -527,7 +573,13 @@ private:
                     QJsonParseError error;
                     const auto document = QJsonDocument::fromJson(line, &error);
                     if (error.error == QJsonParseError::NoError && document.isObject()) {
-                        broadcast(document.object());
+                        auto event = document.object();
+                        if (event.value("job_id").toString() != id) continue;
+                        event.insert("claim_attempt", it->attempt);
+                        const auto kind = event.value("type").toString();
+                        if (kind == "progress") it->printed = event.value("printed_sheets").toInt();
+                        if (kind == "worker_restarting") it->printed = 0;
+                        broadcast(event);
                     }
                 }
             });
@@ -557,6 +609,7 @@ private:
         if (it == active_.end()) return;
         const ActiveJob active = it.value();
         active_.erase(it);
+        slots_.remove(id);
 
         const auto job = findJob(id);
         const bool outputCommitted = QFileInfo(outputPath(id)).isFile();
@@ -572,6 +625,7 @@ private:
             }
         }
         QFile::remove(active.cancelFile);
+        QFile::remove(active.cancelFile + ".fault");
         QFile::remove(jobFilePath(id));
         active.process->deleteLater();
         if (!persistOrStop()) return;
@@ -590,6 +644,7 @@ private:
             auto job = findJob(id);
             if (!job) {
                 recovering_.remove(id);
+                slots_.remove(id);
                 recoveryMisses_.remove(id);
                 continue;
             }
@@ -605,6 +660,7 @@ private:
             if (QFileInfo(outputPath(id)).isFile()) {
                 scheduler_->finish(job->id, job->attempts, true, scheduler_->nowMs());
                 recovering_.remove(id);
+                slots_.remove(id);
                 recoveryMisses_.remove(id);
                 QFile::remove(cancellation);
                 QFile::remove(jobFilePath(id));
@@ -630,6 +686,7 @@ private:
                 scheduler_->retry(job->id, job->attempts, scheduler_->nowMs());
             }
             recovering_.remove(id);
+            slots_.remove(id);
             recoveryMisses_.remove(id);
             QFile::remove(cancellation);
             QFile::remove(jobFilePath(id));
@@ -656,6 +713,7 @@ private:
     int pageMs_ = 100;
     int maxRestarts_ = 3;
     int timeoutMs_ = 30000;
+    bool demoMode_ = false;
     std::unique_ptr<cps::Scheduler> scheduler_;
     QLockFile instanceLock_;
     QLockFile socketLock_;
@@ -670,6 +728,7 @@ private:
     QHash<QString, int> recoveryMisses_;
     QTimer recoveryTimer_;
     bool stopping_ = false;
+    QHash<QString, int> slots_;
 };
 
 } // namespace
@@ -717,6 +776,7 @@ int main(int argc, char* argv[]) {
     parser.setApplicationDescription("Persistent local coordinator for simulated campus printing.");
     parser.addHelpOption();
     parser.addOptions({
+        {"request", "Send one JSON command to an existing coordinator and print its reply", "json"},
         {"state-dir", "Persistent state directory", "directory", cps::defaultStateDirectory()},
         {"socket-name", "QLocalServer name (default derives from state directory)", "name"},
         {"policy", "Initial policy: fcfs|sjf|priority", "policy", "fcfs"},
@@ -725,6 +785,7 @@ int main(int argc, char* argv[]) {
         {"page-ms", "Milliseconds per simulated sheet", "ms", "100"},
         {"max-restarts", "Worker restart limit per supervisor", "count", "3"},
         {"timeout-ms", "Worker silence timeout", "ms", "30000"},
+        {"demo-mode", "Allow explicit worker fault injection"},
         {"daemon", "Detach coordinator from the terminal on POSIX"}
     });
     parser.process(app);
@@ -745,14 +806,42 @@ int main(int argc, char* argv[]) {
     }
 
     const QString stateDirectory = QDir(parser.value("state-dir")).absolutePath();
+    QDir().mkpath(stateDirectory);
     const QString socketName = parser.value("socket-name").isEmpty()
-        ? defaultSocketName(stateDirectory) : parser.value("socket-name");
+        ? cps::coordinatorSocketName(stateDirectory) : parser.value("socket-name");
+    if (parser.isSet("request")) {
+        QJsonParseError error;
+        const auto document = QJsonDocument::fromJson(parser.value("request").toUtf8(), &error);
+        if (error.error != QJsonParseError::NoError || !document.isObject()) return 64;
+        auto command = document.object();
+        command.insert("schema_version", 1);
+        command.insert("request_id", "cli-request");
+        QLocalSocket socket;
+        socket.connectToServer(socketName);
+        if (!socket.waitForConnected(3000)) return 69;
+        const auto data = QJsonDocument(command).toJson(QJsonDocument::Compact) + '\n';
+        if (data.size() > 8 * 1024 * 1024) return 64;
+        socket.write(data);
+        QElapsedTimer deadline; deadline.start();
+        while (deadline.elapsed() < 5000) {
+            while (socket.canReadLine()) {
+                const auto line = socket.readLine();
+                const auto response = QJsonDocument::fromJson(line).object();
+                if (response.value("request_id").toString() != "cli-request") continue;
+                std::fwrite(line.constData(), 1, static_cast<std::size_t>(line.size()), stdout);
+                return response.value("type").toString() == "error" ? 64 : 0;
+            }
+            socket.waitForReadyRead(100);
+        }
+        return 74;
+    }
+
     cps::PersistentState initial;
     initial.schedulerOptions.agingIntervalMs = aging;
     initial.policy = *policy;
     initial.printers = printers;
 
-    Coordinator coordinator(stateDirectory, socketName, initial, pageMs, maxRestarts, timeoutMs);
+    Coordinator coordinator(stateDirectory, socketName, initial, pageMs, maxRestarts, timeoutMs, parser.isSet("demo-mode"));
     QString error;
     const int startCode = coordinator.start(error);
     if (startCode != 0) {

@@ -2,6 +2,7 @@
 #include "cps/runtime/state_store.hpp"
 
 #include <QFile>
+#include <QJsonDocument>
 #include <QTemporaryDir>
 #include <iostream>
 #include <stdexcept>
@@ -43,6 +44,7 @@ int main() {
         state.schedulerOptions.agingIntervalMs = 30000;
         state.policy = cps::Policy::PriorityAging;
         state.printers = 2;
+        state.paused = true;
         state.savedAtMs = 4000;
         state.jobs = scheduler.snapshot();
 
@@ -52,6 +54,7 @@ int main() {
         cps::PersistentState loaded;
         require(cps::readPersistentState(path, loaded, error), "read state");
         require(loaded.policy == cps::Policy::PriorityAging, "policy round trip");
+        require(loaded.paused, "pause survives restart");
         require(loaded.printers == 2, "printer count round trip");
         require(loaded.jobs.size() == 1 && loaded.jobs[0].attempts == 2, "job round trip");
         require(loaded.jobs[0].state == cps::JobState::Completed, "terminal state round trip");
@@ -60,6 +63,22 @@ int main() {
         cps::Scheduler restored(loaded.schedulerOptions, [] { return cps::TimeMs{4000}; });
         require(restored.restore(loaded.jobs, loaded.savedAtMs), "scheduler restore");
         require(restored.snapshot()[0].finishedMs == cps::TimeMs{3500}, "finish time round trip");
+
+        QFile legacy(path);
+        require(legacy.open(QIODevice::ReadOnly), "open legacy state");
+        auto legacyObject = QJsonDocument::fromJson(legacy.readAll()).object();
+        legacy.close();
+        legacyObject.remove("paused");
+        require(legacy.open(QIODevice::WriteOnly | QIODevice::Truncate), "rewrite legacy state");
+        require(legacy.write(QJsonDocument(legacyObject).toJson()) > 0, "write legacy state");
+        legacy.close();
+        require(cps::readPersistentState(path, loaded, error) && !loaded.paused,
+                "old schema-1 state without pause remains compatible");
+        legacyObject.insert("paused", "true");
+        require(legacy.open(QIODevice::WriteOnly | QIODevice::Truncate), "rewrite invalid pause");
+        require(legacy.write(QJsonDocument(legacyObject).toJson()) > 0, "write invalid pause");
+        legacy.close();
+        require(!cps::readPersistentState(path, loaded, error), "reject non-boolean pause");
 
         QFile corrupt(path);
         require(corrupt.open(QIODevice::WriteOnly | QIODevice::Truncate), "open corrupt state");

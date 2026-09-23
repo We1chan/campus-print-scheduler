@@ -6,6 +6,7 @@ from pathlib import Path
 import subprocess
 import sys
 import tempfile
+import time
 
 
 def main():
@@ -28,6 +29,47 @@ def main():
                                 env=env, cwd=root, capture_output=True, timeout=20)
         if result.returncode:
             raise RuntimeError(f"Deployed GUI failed ({result.returncode}): {result.stderr!r}")
+        coordinator = binaries / ("print-coordinator" + suffix)
+        def request(command):
+            response = subprocess.run([str(coordinator), "--state-dir", str(root),
+                                       "--request", json.dumps(command)], env=env, cwd=root,
+                                      capture_output=True, encoding="utf-8", timeout=12)
+            if response.returncode:
+                raise RuntimeError(f"Deployed coordinator request failed: {response.stderr} {response.stdout}")
+            return json.loads(response.stdout)
+        try:
+            request(dict(type="set_paused", paused=True))
+            request(dict(type="submit_batch", jobs=[
+                dict(job_id="persist-a", title="发布包持久队列", pages=20, copies=1),
+                dict(job_id="persist-b", title="关闭后恢复", pages=2, copies=1)]))
+            # The first GUI already exited. A second GUI must attach to the same queue.
+            again = subprocess.run([str(binaries / ("campus-print" + suffix)), "--smoke-test",
+                                    "--data-dir", str(root)], env=env, cwd=root, capture_output=True, timeout=20)
+            if again.returncode:
+                raise RuntimeError(f"Deployed GUI reopen failed: {again.stderr!r}")
+            snapshot = request(dict(type="snapshot"))
+            if len(snapshot["jobs"]) != 2 or not snapshot["paused"]:
+                raise RuntimeError("Deployed GUI failed to preserve the shared queue/pause state")
+            request(dict(type="set_paused", paused=False))
+            deadline = time.monotonic() + 15
+            while time.monotonic() < deadline:
+                snapshot = request(dict(type="snapshot"))
+                if snapshot["metrics"]["completed"] == 2:
+                    break
+                time.sleep(0.1)
+            else:
+                raise RuntimeError("Deployed coordinator did not finish both queued jobs")
+            for item in snapshot["jobs"]:
+                output = root / "output" / (item["job_id"] + ".txt")
+                if item["attempts"] != 1 or output.read_text(encoding="utf-8").count("sheet=") != item["pages"]:
+                    raise RuntimeError("Deployed persistent job duplicated or produced incorrect output")
+        finally:
+            request(dict(type="shutdown"))
+            deadline = time.monotonic() + 5
+            while (root / ".coordinator.lock").exists() and time.monotonic() < deadline:
+                time.sleep(0.05)
+            if (root / ".coordinator.lock").exists():
+                raise RuntimeError("Deployed coordinator did not shut down")
         job = root / "任务.json"
         job.write_text(json.dumps(dict(schema_version=1, job_id="package-job", title="发布包测试", pages=2, copies=1),
                                   ensure_ascii=False), encoding="utf-8")
@@ -42,7 +84,7 @@ def main():
         content = (root / "package-job.txt").read_text(encoding="utf-8")
         if content.count("sheet=") != 2:
             raise RuntimeError("Deployed worker output does not match the requested job")
-    print("Deployed GUI startup and supervisor/worker printing passed with SDK paths removed.")
+    print("Deployed GUI reopen, persistent coordinator queue and supervisor/worker printing passed with SDK paths removed.")
 
 
 if __name__ == "__main__":

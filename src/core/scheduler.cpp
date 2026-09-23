@@ -93,8 +93,7 @@ Job* Scheduler::find(const std::string& id) {
 }
 bool Scheduler::submit(Job job) {
     if (!validJob(job) || job.state != JobState::Queued || job.attempts != 0 ||
-        !job.runs.empty() || job.firstStartedMs || job.finishedMs || job.accumulatedWaitMs != 0)
-        return false;
+        !job.runs.empty() || job.firstStartedMs || job.finishedMs || job.accumulatedWaitMs != 0) return false;
     std::lock_guard<std::mutex> lock(mutex_);
     if (find(job.id)) return false;
     job.queuedSinceMs = job.submittedMs;
@@ -102,30 +101,55 @@ bool Scheduler::submit(Job job) {
     jobs_.push_back(std::move(job));
     return true;
 }
+bool Scheduler::submitBatch(std::vector<Job> jobs) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    std::set<std::string> ids;
+    for (const auto& existing : jobs_) ids.insert(existing.id);
+    for (const auto& job : jobs) {
+        if (!validJob(job) || job.state != JobState::Queued || job.attempts != 0 ||
+            !job.runs.empty() || job.firstStartedMs || job.finishedMs || job.accumulatedWaitMs != 0 ||
+            !ids.insert(job.id).second) return false;
+    }
+    for (auto& job : jobs) {
+        job.queuedSinceMs = job.submittedMs;
+        job.lastChangedMs = job.submittedMs;
+        jobs_.push_back(std::move(job));
+    }
+    return true;
+}
+bool Scheduler::precedes(const Job& a, const Job& b, Policy policy, TimeMs now) const {
+    if (policy == Policy::ShortestJobFirst && a.sheets() != b.sheets()) return a.sheets() < b.sheets();
+    if (policy == Policy::PriorityAging) {
+        const auto score = [&](const Job& job) {
+            return job.priority + (job.accumulatedWaitMs + now - job.queuedSinceMs) / options_.agingIntervalMs;
+        };
+        if (score(a) != score(b)) return score(a) > score(b);
+    }
+    return a.queuedSinceMs < b.queuedSinceMs;
+}
+std::vector<std::string> Scheduler::waitingOrder(Policy policy, TimeMs now) const {
+    if (!validTime(now) || (policy != Policy::Fcfs && policy != Policy::ShortestJobFirst &&
+                          policy != Policy::PriorityAging)) return {};
+    std::lock_guard<std::mutex> lock(mutex_);
+    std::vector<const Job*> waiting;
+    for (const auto& job : jobs_)
+        if (job.state == JobState::Queued && job.queuedSinceMs <= now) waiting.push_back(&job);
+    std::stable_sort(waiting.begin(), waiting.end(), [&](const Job* a, const Job* b) {
+        return precedes(*a, *b, policy, now);
+    });
+    std::vector<std::string> ids;
+    for (const auto* job : waiting) ids.push_back(job->id);
+    return ids;
+}
 std::optional<Job> Scheduler::claim(Policy policy) { return claim(policy, nowMs()); }
 std::optional<Job> Scheduler::claim(Policy policy, TimeMs now) {
     if (!validTime(now) || (policy != Policy::Fcfs && policy != Policy::ShortestJobFirst &&
                           policy != Policy::PriorityAging)) return std::nullopt;
     std::lock_guard<std::mutex> lock(mutex_);
     Job* best = nullptr;
-    const auto score = [&](const Job& job) {
-        return job.priority + (job.accumulatedWaitMs + now - job.queuedSinceMs) / options_.agingIntervalMs;
-    };
     for (auto& job : jobs_) {
         if (job.state != JobState::Queued || job.queuedSinceMs > now) continue;
-        bool better = best == nullptr;
-        if (best) {
-            bool tied = true;
-            if (policy == Policy::ShortestJobFirst) {
-                better = job.sheets() < best->sheets();
-                tied = job.sheets() == best->sheets();
-            } else if (policy == Policy::PriorityAging) {
-                better = score(job) > score(*best);
-                tied = score(job) == score(*best);
-            }
-            if (tied) better = job.queuedSinceMs < best->queuedSinceMs;
-        }
-        if (better) best = &job;
+        if (!best || precedes(job, *best, policy, now)) best = &job;
     }
     if (!best) return std::nullopt;
     best->accumulatedWaitMs += now - best->queuedSinceMs;

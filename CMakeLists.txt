@@ -79,7 +79,7 @@ if(CPS_BUILD_QT_APPS)
         set_target_properties(gui_tests PROPERTIES AUTOMOC ON)
         target_link_libraries(gui_tests PRIVATE cps_gui Qt6::Test cps_options)
         add_test(NAME gui COMMAND gui_tests -o "${CMAKE_BINARY_DIR}/gui-results.xml,junitxml" -o -,txt)
-        set_tests_properties(gui PROPERTIES TIMEOUT 60 ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+        set_tests_properties(gui PROPERTIES TIMEOUT 120 ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
 
         add_executable(runtime_state_tests tests/runtime_state_tests.cpp)
         target_link_libraries(runtime_state_tests PRIVATE cps_runtime Qt6::Core cps_options)

@@ -83,6 +83,7 @@ private:
     QPlainTextEdit* log_ = nullptr;
     StatisticsChart* chart_ = nullptr;
     bool closeApproved_ = false;
+    bool demoAvailable_ = false;
     bool closePending_ = false;
 };
 } // namespace cps::gui

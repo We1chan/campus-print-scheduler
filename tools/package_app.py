@@ -28,7 +28,7 @@ def main():
     qt_bin = args.qt_bin.resolve()
     windows = sys.platform == "win32"
     suffix = ".exe" if windows else ""
-    names = ["campus-print", "print-supervisor", "print-worker", "scheduler-replay"]
+    names = ["campus-print", "print-coordinator", "print-supervisor", "print-worker", "scheduler-replay"]
     deploy = qt_bin / ("windeployqt.exe" if windows else "macdeployqt")
     for path in [deploy, *(source / (name + suffix) for name in names)]:
         if not path.is_file():
@@ -51,10 +51,14 @@ def main():
             plistlib.dump({"CFBundleExecutable": "campus-print", "CFBundleIdentifier": "edu.campusprint.scheduler",
                           "CFBundleName": "CampusPrint", "CFBundlePackageType": "APPL",
                           "CFBundleShortVersionString": "0.1.0", "NSHighResolutionCapable": True}, file)
-        subprocess.run([str(deploy), str(bundle), "-always-overwrite",
+        # Relocating dylib load commands invalidates the linker signature on arm64.
+        # Sign the deployed binaries locally; this is not a Developer ID signature.
+        subprocess.run([str(deploy), str(bundle), "-always-overwrite", "-codesign=-",
                         *("-executable=" + str(destination / name) for name in names[1:])], env=env, check=True)
+        subprocess.run(["/usr/bin/codesign", "--verify", "--deep", "--strict", str(bundle)], check=True)
     root = Path(__file__).resolve().parents[1]
     shutil.copy2(root / "docs" / "release.md", output / "README-release.md")
+    shutil.copy2(root / "docs" / "clean-up.md", output / "clean-up.md")
     shutil.copytree(root / "examples", output / "examples")
     commit = subprocess.run(["git", "rev-parse", "HEAD"], cwd=root, capture_output=True, text=True, check=True).stdout.strip()
     dirty = bool(subprocess.run(["git", "status", "--porcelain"], cwd=root, capture_output=True, text=True, check=True).stdout.strip())

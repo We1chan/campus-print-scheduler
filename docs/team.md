@@ -12,7 +12,7 @@
 
 ## A：调度与性能分析
 
-当前进度：优先级老化、取消/重试状态接口、快照加载、统计和负载回放已实现。2026-09-23 已补齐 26 个命名测试场景、33 组策略实验、四组图表与个人答辩提纲，见 [专项验证](validation-a.md)、[实验报告](experiments-a.md)、[答辩提纲](defense-a.md)。A 的独立实现与材料已完成，仍需与 B / C 完成统一 GUI—coordinator 链路的联调验收。
+当前进度：优先级老化、取消/重试状态接口、快照加载、统计和负载回放已实现。2026-09-23 已补齐 26 个命名测试场景、33 组策略实验、四组图表与个人答辩提纲，见 [专项验证](validation-a.md)、[实验报告](experiments-a.md)、[答辩提纲](defense-a.md)。A 的独立实现与材料已完成，统一 GUI/coordinator 的策略、状态、统计与恢复验收见 [集成验证](validation-integration.md)。
 
 拥有 `include/cps/core/`、`src/core/`、核心/统计/负载工具专项测试。统计放 `src/metrics/`，回放与实验工具放 `tools/`，实验配置与摘要放 `experiments/`。
 
@@ -34,7 +34,7 @@
 
 拥有 `src/runtime/`、`src/worker/`、`src/supervisor/`、`src/platform/` 及相应头文件；负责进程集成测试的运行逻辑。
 
-当前进度：已实现完整 Scheduler JSON 快照、`print-coordinator` 独立后台协调进程、QLocalServer/QLocalSocket JSONL 控制协议、单实例锁、先持久化再执行、Running/Cancelling 启动恢复对账、attempt 唯一取消 marker、supervisor 取消处理、POSIX coordinator daemon，以及相应状态/协调器集成测试。现有 GUI 尚未切换到该 IPC，因此与 C 的联调仍是下一步。
+当前进度：已实现完整 Scheduler JSON 快照、`print-coordinator` 独立后台协调进程、QLocalServer/QLocalSocket JSONL 控制协议、单实例锁、先持久化再执行、Running/Cancelling 启动恢复对账、attempt 唯一取消 marker、supervisor 取消处理、POSIX coordinator daemon，以及相应状态/协调器集成测试。GUI 已切换到该 IPC，集成后继续共同维护恢复与取消契约。
 
 在已有单任务 supervisor / worker、文件锁、原子输出基础上交付：
 
@@ -55,7 +55,7 @@
 当前进度：双设备进度、任务表、分帧解析、工作线程、等待任务取消、三策略与统计图/报表、
 纸张工作台、命令中心、GUI 自动化及 Qt 打包脚本已实现并合并 `main`，见 [gui.md](gui.md) 和
 [纸张工作台 Demo](paper-demo.md)。已补充单任务监督进程的取消确认、控制重连和故障演示协议；
-下一步仍是将 GUI 状态源切换到 B 的持久 coordinator。独立 runner 部署测试和人工验收边界见
+GUI 状态源已切换到 B 的持久 coordinator，并同步保留纸张工作台。独立 runner 部署测试和人工验收边界见
 [release.md](release.md)。
 
 拥有 `src/gui/`、`.github/`、CMake 公共构建设置、开发与发布文档。维护总体集成测试入口，模块测试由 A / B 共同负责。
@@ -84,5 +84,5 @@
 ## 下一步协作
 
 - A：使用已完成测试和实验材料核对集成后的调度、取消与统计口径，配合 B / C 验收，并熟悉个人答辩提纲。
-- B：首轮持久化状态、coordinator、恢复与取消链路已完成；下一步与 C 联调 GUI 本地 IPC，并根据三平台 CI 结果修复兼容问题。
-- C：将 GUI 切换为 B 的持久 coordinator 客户端，联调重连和取消，并把 coordinator 纳入最终跨平台发布包。
+- B：复核统一链路的故障恢复、取消意图与输出核对边界，准备进程相关答辩。
+- C：GUI 已接入持久后台，发布脚本包含 coordinator；接下来在课堂使用的真实机器上做人工演示验收。

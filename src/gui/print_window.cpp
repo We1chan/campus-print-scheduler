@@ -411,7 +411,7 @@ PrintWindow::PrintWindow(WindowOptions options, QWidget* parent) : QMainWindow(p
     deviceLayout->addLayout(printers);
     auto* distribution = card(); auto* dist = new QVBoxLayout(distribution); dist->setContentsMargins(25, 20, 25, 14);
     dist->addWidget(label(QStringLiteral("本次任务分布"), "section")); chart_ = new StatisticsChart; dist->addWidget(chart_); deviceLayout->addWidget(distribution);
-    auto* note = label(QStringLiteral("当前使用本地模拟打印，两台独立工作进程向文本文件输出。\n等待队列属于本次会话；未完成的任务需要处理完毕后再关闭窗口。"), "muted");
+    auto* note = label(QStringLiteral("当前使用本地模拟打印，两台独立工作进程向文本文件输出。\n队列由独立后台保存；关闭窗口后任务继续执行，重开可查看最新结果。"), "muted");
     note->setWordWrap(true); deviceLayout->addWidget(note); deviceLayout->addStretch(); stack->addWidget(devices);
     layout->addWidget(stack, 1);
     auto* footer = new QHBoxLayout; footer->setSpacing(12);
@@ -495,7 +495,7 @@ PrintWindow::PrintWindow(WindowOptions options, QWidget* parent) : QMainWindow(p
     connect(cancel_, &QPushButton::clicked, this, [this] { emit cancelRequested(table_->currentIndex().data(Qt::UserRole).toString()); });
     connect(check, &QPushButton::clicked, this, &PrintWindow::checkRequested);
     connect(report, &QPushButton::clicked, this, [this, options] {
-        const auto path = QFileDialog::getSaveFileName(this, QStringLiteral("导出会话统计"), options.stateDirectory + "/report.json", "JSON (*.json)");
+        const auto path = QFileDialog::getSaveFileName(this, QStringLiteral("导出持久队列统计"), options.stateDirectory + "/report.json", "JSON (*.json)");
         if (!path.isEmpty()) emit exportRequested(path);
     });
     connect(filter, &QComboBox::currentIndexChanged, this, [this, filter](int index) {
@@ -522,7 +522,7 @@ PrintWindow::PrintWindow(WindowOptions options, QWidget* parent) : QMainWindow(p
         auto* query = new QLineEdit; query->setObjectName("commandQuery"); query->setPlaceholderText(QStringLiteral("输入命令关键词，Enter 执行")); body->addWidget(query);
         auto* choices = new QListWidget; choices->setObjectName("commandChoices"); body->addWidget(choices);
         const QStringList commands{QStringLiteral("新建打印任务"), QStringLiteral("暂停 / 继续派发"),QStringLiteral("调度策略 · FCFS 先来先服务"),
-            QStringLiteral("调度策略 · SJF 短作业优先"),QStringLiteral("调度策略 · 优先级老化"),QStringLiteral("导出会话报表"),QStringLiteral("切换全屏"),QStringLiteral("回到工作台")};
+            QStringLiteral("调度策略 · SJF 短作业优先"),QStringLiteral("调度策略 · 优先级老化"),QStringLiteral("导出队列报表"),QStringLiteral("切换全屏"),QStringLiteral("回到工作台")};
         for(int i=0;i<commands.size();++i){auto* item=new QListWidgetItem(commands[i],choices);item->setData(Qt::UserRole,i);}
         choices->setCurrentRow(0);
         connect(query,&QLineEdit::textChanged,&palette,[=](const QString& text){
@@ -562,7 +562,18 @@ void PrintWindow::applyView(const ViewState& view) {
     timeline_->setView(view);
     emptyState_->setVisible(filter_->rowCount() == 0);
     queueSummary_->setText(QStringLiteral("%1 个任务").arg(view.jobs.size()));
-    const bool available = !view.connection.contains(QStringLiteral("不可用"));
+    const bool available = view.connected;
+    demoAvailable_ = view.demoAvailable;
+    auto* policy = findChild<QComboBox*>("schedulingPolicy");
+    auto* pause = findChild<QPushButton*>("pauseDispatch");
+    const QSignalBlocker policyBlocker(policy), pauseBlocker(pause);
+    policy->setCurrentIndex(view.policyIndex);
+    pause->setChecked(view.paused);
+    pause->setText(view.paused ? QStringLiteral("继续派发") : QStringLiteral("暂停派发"));
+    pause->setIcon(ui::icon(view.paused ? ui::Icon::Play : ui::Icon::Pause));
+    policy->setEnabled(available); pause->setEnabled(available);
+    findChild<QPushButton*>("submitJob")->setEnabled(available);
+    findChild<QPushButton*>("importJobs")->setEnabled(available);
     connection_->setText(available ? (view.paused ? QStringLiteral("派发已暂停") : QStringLiteral("执行器就绪")) : QStringLiteral("执行器不可用"));
     connection_->setToolTip(view.connection);
     tone(connection_, !available ? "error" : view.paused ? "waiting" : "ready");
@@ -602,9 +613,9 @@ void PrintWindow::updateSelection() {
     const bool running = current.isValid() && current.data(Qt::UserRole + 1).toInt() == static_cast<int>(JobState::Running);
     const bool connected = current.data(Qt::UserRole + 2).toBool();
     if (current.isValid() && table_->isVisible()) scene_->select(current.data(Qt::UserRole).toString());
-    cancel_->setEnabled(queued || (running && connected));
+    cancel_->setEnabled((queued || running) && connected);
     cancel_->setToolTip(queued ? QStringLiteral("立即取消尚未领取的任务") : QStringLiteral("请求停止正在执行的任务，收到停止确认后生效。"));
-    if (fault_) fault_->setEnabled(running && connected);
+    if (fault_) fault_->setEnabled(running && connected && demoAvailable_);
     if (disconnect_) disconnect_->setEnabled(running && connected);
 }
 void PrintWindow::closeEvent(QCloseEvent* event) {

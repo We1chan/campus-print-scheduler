@@ -1,7 +1,8 @@
 # 项目结束后的文件清理
 
 本项目无需新增 Windows 服务、计划任务、数据库或防火墙规则。优先复用已有开发工具。
-可选控制端点只监听回环临时端口，随 supervisor 退出消失，不产生项目目录外的 socket 文件。
+coordinator 使用 Qt 本地 IPC，Unix 下端点和端点互斥锁可能位于系统临时目录，正常退出时由 Qt 清理。
+单任务可选控制端点仅监听回环临时端口。GUI 退出不会停止持久后台。
 源码在一个 clone 目录内；下列项目产物均应放入 clone 内且已被 Git 忽略：
 
 | 路径 | 内容 | 保留条件 |
@@ -15,7 +16,15 @@
 开发运行统一显式传 `--data-dir runtime/gui`。测试可通过当前进程的 TEMP/TMP 或 TMPDIR
 指向 `runtime/test-temp`，不会修改系统环境变量。
 
-结束时先确认代码已推送、课设报告和截图已经备份，且 GUI、supervisor、worker 均已退出，
+可以通过同一套二进制请求停止指定数据目录的后台；后台等待正在执行的任务完成后退出，暂停/等待任务留存于状态文件：
+
+```sh
+./build/dev/bin/print-coordinator --state-dir runtime/gui --request '{"type":"shutdown"}'
+```
+
+Windows PowerShell 使用 `./build/dev/bin/print-coordinator.exe`。收到 accepted 仅代表接收关闭请求；确认该目录 `.coordinator.lock` 消失后再清理。需要尽快停止时先在 GUI 取消活动任务。后台没有设置开机自启。
+
+结束时先确认代码已推送、课设报告和截图已经备份，且 GUI、coordinator、supervisor、worker 均已退出，
 然后删除**这个项目的 clone 目录**即可清掉上述文件。删除前重新核对绝对路径，不运行模糊名称或全盘匹配删除。
 如果曾不带 `--data-dir` 运行 GUI，还需按界面显示的实际目录核对那一份运行数据。
 

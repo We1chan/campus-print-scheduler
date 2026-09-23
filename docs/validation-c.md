@@ -3,6 +3,8 @@
 日期：2026-09-20、2026-09-23。范围为 Issue #3 的本地执行器、可选控制协议、
 纸张工作台及主分支集成验证。
 
+本页保留 C 的阶段性验证记录。后续 GUI 已切换至持久 coordinator，当前统一链路的结果与边界见 [集成验收](validation-integration.md)。
+
 ## 本机实际执行
 
 - Windows 11 x64；复用已有 Qt 6.10.1 MinGW 64-bit、GCC 13.1.0、CMake 和 Python 3.12.14。

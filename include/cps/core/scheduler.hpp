@@ -45,6 +45,8 @@ public:
     explicit Scheduler(SchedulerOptions options = {}, Clock clock = {});
     TimeMs nowMs() const;
     bool submit(Job job);
+    bool submitBatch(std::vector<Job> jobs);
+    std::vector<std::string> waitingOrder(Policy policy, TimeMs now) const;
     std::optional<Job> claim(Policy policy);
     std::optional<Job> claim(Policy policy, TimeMs now);
     // Compatibility entry point for the original, single-claim GUI.
@@ -59,6 +61,7 @@ public:
     bool restore(const std::vector<Job>& jobs, TimeMs now);
     std::vector<Job> snapshot() const;
 private:
+    bool precedes(const Job& a, const Job& b, Policy policy, TimeMs now) const;
     Job* find(const std::string& id);
     bool finishLocked(Job& job, int attempt, bool success, TimeMs now);
     SchedulerOptions options_;

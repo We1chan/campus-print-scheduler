@@ -1,6 +1,6 @@
 # 纸张工作台 Demo
 
-该界面基于浅色概念稿实现，使用 Qt Widgets 与 QPainter，数据连接现有本地模拟调度器。
+该界面基于浅色概念稿实现，使用 Qt Widgets 与 QPainter，数据来自独立 coordinator 的本地 IPC 快照。
 
 ## 本机体验
 
@@ -37,8 +37,8 @@ campus-print --data-dir runtime/paper-demo --demo-mode --demo-workload --page-ms
 
 纸张绘制的是任务单示意，不读取真实 PDF。输出为模拟文本文件，不连接物理打印机。
 时间区域显示实时页数和共享等待顺序，不保证未来的设备归属或预测结束时间。
-当前仍使用 GUI 内存队列和单任务 supervisor，未接入持久 coordinator。
-窗口在仍有等待或执行任务时会阻止关闭，并说明原因；可完成任务或在记录页取消。
+当前使用持久 coordinator。关闭窗口后任务继续执行，重开相同数据目录恢复任务和统计。
+启动参数中的 page-ms 与 demo-mode 只在新建后台时生效，已有后台继续使用原参数；需要更换时先正常停止后台。
 
 ## 验证
 

@@ -68,6 +68,7 @@ int main(int argc, char* argv[]) {
         {"max-restarts", "Restart limit (0..10)", "count", "3"},
         {"timeout-ms", "Maximum silence from worker (>=20000; >=500 with --demo-mode)", "ms", "30000"},
         {"cancel-file", "Cancellation marker watched while the job is active", "file"},
+        {"fault-file", "Demo-only attempt-scoped worker fault marker", "file"},
         {"daemon", "Detach from terminal on POSIX; unsupported on Windows"},
         {"control-token", "Enable authenticated loopback control using this token", "token"},
         {"claim-attempt", "Scheduler claim token, independent of worker restarts", "attempt", "1"},
@@ -251,18 +252,23 @@ int main(int argc, char* argv[]) {
             finish(70);
         }
     });
-    // The coordinator cancels by persisting an attempt-scoped marker file; the
-    // control protocol stays the GUI's interactive path.
+    // Attempt-scoped markers keep interactive control independent of GUI lifetime.
     const QString cancelFile = parser.value("cancel-file");
-    if (!cancelFile.isEmpty()) {
-        auto* cancelPoll = new QTimer(&app);
-        cancelPoll->setInterval(100);
-        QObject::connect(cancelPoll, &QTimer::timeout, &app, [&] {
-            if (QFile::exists(cancelFile)) {
-                requestCancel("cancel marker observed");
+    const QString faultFile = parser.value("fault-file");
+    if (!cancelFile.isEmpty() || (!faultFile.isEmpty() && parser.isSet("demo-mode"))) {
+        auto* markerPoll = new QTimer(&app);
+        markerPoll->setInterval(100);
+        QObject::connect(markerPoll, &QTimer::timeout, &app, [&] {
+            if (!cancelFile.isEmpty() && QFile::exists(cancelFile)) requestCancel("cancel marker observed");
+            if (parser.isSet("demo-mode") && !faultFile.isEmpty() && QFile::exists(faultFile)) {
+                QFile::remove(faultFile);
+                if (!terminal && !cancelling && worker.state() == QProcess::Running) {
+                    event({{"type", "fault_injected"}, {"claim_attempt", claimAttempt}, {"worker_attempt", restarts + 1}});
+                    worker.kill();
+                }
             }
         });
-        cancelPoll->start();
+        markerPoll->start();
     }
     startWorker();
     return app.exec();

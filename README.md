@@ -18,13 +18,13 @@
 | POSIX 脱离终端的有限任务守护模式 | 已实现；Windows 使用前台监督模式 |
 | Windows / macOS / Linux 自动构建测试 | 已配置，结果见 Actions |
 | 内存任务取消、带令牌重试、快照校验加载 | A 核心 API 已实现；B 已接入持久执行与取消，C 界面已接控制协议 |
-| 持久任务队列、独立 coordinator、应用重启恢复 | B 后端已实现；GUI 尚未切换到 coordinator |
+| 持久任务队列、独立 coordinator、应用重启恢复 | GUI 已接入持久后台，关窗继续执行，重开同步队列 |
 | 优先级与老化、统计、数据集回放 | A 已实现；26 个新增测试场景、33 组策略实验与答辩材料已完成 |
 | 纸张工作台、双打印机进度、JSONL 分帧、批量导入、统计图/报表 | C 已实现，见 [界面说明](docs/gui.md) 和 [演示入口](docs/paper-demo.md) |
-| 等待/运行任务取消、暂停派发、控制重连、演示故障 | 已实现；通过可选单任务监督控制协议集成 |
+| 等待/运行任务取消、暂停派发、控制重连、演示故障 | 已通过 coordinator 本地 IPC 集成 |
 | Windows/macOS Qt 部署与包测试 | 已提供打包、校验和独立 runner 测试；人工现场验收另行记录 |
 
-当前 `campus-print` GUI 仍沿用旧的“界面内 Scheduler + 直接启动 supervisor”链路，因此关闭 GUI 仍会丢失这条旧链路的内存队列。B 组新增的 `print-coordinator` 已能独立持有持久队列、恢复未完成任务并提供本地 IPC；待 C 将 GUI 切换到该接口后，关闭 GUI 才不会影响后台任务。请勿把当前版本描述成真实物理打印机的 exactly-once 系统。
+当前 `campus-print` 通过本地 IPC 使用独立 `print-coordinator`，首次连接可自动启动后台。关闭窗口后任务继续执行；用同一数据目录重开可恢复队列、策略、暂停状态与统计。后台异常后自动重连并进行恢复核对。跨平台发布包包含 coordinator，验收记录见 [统一链路验证](docs/validation-integration.md)。真实物理打印机的不可撤销副作用不在本模拟系统保证范围内。
 
 ## 三个人先看这里
 

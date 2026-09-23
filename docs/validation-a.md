@@ -53,4 +53,4 @@ ctest --preset ci
 
 只运行新增套件可用 `ctest --preset dev -R "scheduler_advanced|metrics_replay|workload_tools"`。本机详细日志位于 `build/dev/Testing/Temporary/LastTest.log` 和 `build/ci/Testing/Temporary/LastTest.log`，均被 Git 忽略。
 
-待团队完成的验收：GUI 改用独立 coordinator 的持久队列；策略、取消、重连、崩溃恢复在统一链路上的联调；包含 coordinator 的最终发行包与实际演示机器验收。现有包测试成功不意味着这些尚未集成的内容已经完成。
+以上为 A 独立实现阶段的历史记录。后续已完成 GUI/coordinator 接入与统一链路的策略、取消、统计、重连和崩溃恢复测试，详见 [集成验收](validation-integration.md)。课堂实际演示机器的人工验收仍需单独完成。

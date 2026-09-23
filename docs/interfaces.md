@@ -143,3 +143,33 @@ supervisor 启动的 worker 在原子输出首行写入本次 execution_token，
 | 130 | 已确认取消（正常退出；必须同时有 cancelled 事件） |
 
 Windows 的 TerminateProcess 与 POSIX 信号的退出值不同，测试只依赖成功/失败语义，不硬编码崩溃的原始退出码。
+
+
+## GUI/coordinator 统一协议
+
+GUI 使用状态目录派生的 `QLocalServer` 名称（规范路径的 SHA-256 前 16 位）。Windows 路径规范后忽略大小写。
+每条命令为一行 JSON，必含 `schema_version: 1`、非空 `request_id`、`type`。回复回传 request_id；异步事件不代替命令确认。
+修改操作先持久化再回复 accepted，丢失确认时客户端不自动重发。命令帧上限 8 MiB，GUI 回复帧上限 64 MiB。
+
+| type | 参数 | 语义 |
+| --- | --- | --- |
+| snapshot | 无 | 获取完整队列、策略、暂停状态、设备槽位、页数进度、后台时间及统计 |
+| stats | 可选 window_start_ms/window_end_ms | 查询指定时间窗口的统计；缺省为 0/后台当前时刻，GUI 快照另外采用最早提交时刻作为起点 |
+| submit | job 对象 | job_id/title/pages/copies，priority/max_attempts 可选 |
+| submit_batch | jobs 数组 | 全部校验后原子入队，一次持久化；空批、重复 ID、非法字段或超限拒绝整个批次 |
+| set_policy | policy: fcfs/sjf/priority | 只影响后续领取，正在执行的任务不抢占 |
+| set_paused | paused: boolean | 持久暂停/继续派发，已运行任务继续 |
+| cancel | job_id | 等待任务立即取消，运行任务保存 attempt 专属取消意图并等待执行停止 |
+| crash_worker | job_id | 仅后台 --demo-mode 允许，对活动尝试注入 worker 崩溃 |
+| shutdown | 无 | 停止新派发，活动任务结束后退出，等待任务继续保存在文件 |
+
+队列上限 10000 项。`Scheduler::submitBatch()` 在同一临界区校验并写入，失败不部分入队。
+`waitingOrder()` 与 `claim()` 共用比较规则，GUI 不复制策略公式。快照中的 waiting_order 仅表示当前候选顺序，不承诺设备归属。
+快照每个 job 增加 slot、printed_sheets、recovering 展示字段，不改变核心 Job 快照字段。后台重启后的恢复中任务不虚构进度。
+
+state.json 新增可选 `paused` 布尔字段，旧文件缺省 false，仍使用 schema_version 1。
+快照/报表统计窗口为全部持久任务最早提交至后台 now_ms；重开窗口不重置等待和周转。
+吞吐量与利用率分母包含窗口持续扩大的空闲时间。报表 mode 为 persistent_simulation，jobs 包含完整 runs 时间线以供复核。
+
+诊断和测试可调用 `print-coordinator --state-dir <目录> --request '{"type":"snapshot"}'`，向已有服务发送一条命令并打印回复。
+GUI 自动创建的是独立本地协调进程，不是 Windows Service；POSIX 传统 daemon 演示仍使用 --daemon。

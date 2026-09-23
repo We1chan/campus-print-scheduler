@@ -1,6 +1,11 @@
 #include "event_stream.hpp"
 #include "print_window.hpp"
 #include "paper_workspace.hpp"
+#include "coordinator_test_client.hpp"
+#include "cps/runtime/job_io.hpp"
+#include <QProcess>
+#include <memory>
+#include <cmath>
 
 #include <QApplication>
 #include <QComboBox>
@@ -73,7 +78,7 @@ private slots:
     }
 
     void interactiveQueueAndCompletion() {
-        QTemporaryDir root(QDir::tempPath() + QStringLiteral("/界面 测试-XXXXXX"));
+        BackendDirectory root(QDir::tempPath() + QStringLiteral("/界面 测试-XXXXXX"));
         QVERIFY(root.isValid());
         PrintWindow window({root.path(), 10, false});
         window.show();
@@ -111,7 +116,7 @@ private slots:
     }
 
     void commandPaletteControlsDispatch() {
-        QTemporaryDir root;
+        BackendDirectory root;
         PrintWindow window({root.path(), 10, false}); window.show();
         auto* command = window.findChild<QPushButton*>("commandPalette");
         auto* pause = window.findChild<QPushButton*>("pauseDispatch");
@@ -139,7 +144,7 @@ private slots:
     }
 
     void largeQueueRemainsInteractive() {
-        QTemporaryDir root;
+        BackendDirectory root;
         PrintWindow window({root.path(), 10, false});
         window.show();
         QTest::mouseClick(window.findChild<QPushButton*>("pauseDispatch"), Qt::LeftButton);
@@ -173,12 +178,12 @@ private slots:
         QVERIFY2(longestGap < 2000, "GUI event loop stalled for two seconds during import");
         qInfo("5000-job import: heartbeat ticks=%d, longest observed gap=%lld ms", ticks, static_cast<long long>(longestGap));
         // No executor was started while the local queue was paused.
-        QVERIFY(!QDir(root.path() + "/output").exists());
+        QVERIFY(QDir(root.path() + "/output").entryList({"*.txt"}, QDir::Files).isEmpty());
         window.findChild<QDialog*>("submissionDialog")->reject();
     }
 
     void paperWorkbenchTracksPolicyAndRealJobs() {
-        QTemporaryDir root;
+        BackendDirectory root;
         PrintWindow window({root.path(), 100, false});
         window.resize(1380, 860); window.show();
         QVERIFY(QTest::qWaitForWindowExposed(&window));
@@ -232,7 +237,7 @@ private slots:
     }
 
     void invalidBatchIsAtomicAndReportIsWritten() {
-        QTemporaryDir root;
+        BackendDirectory root;
         PrintWindow window({root.path(), 10, false});
         window.show();
         QTest::mouseClick(window.findChild<QPushButton*>("pauseDispatch"), Qt::LeftButton);
@@ -248,29 +253,167 @@ private slots:
         QFile report(root.path() + "/report.json");
         QVERIFY(report.open(QIODevice::ReadOnly));
         const auto json = QJsonDocument::fromJson(report.readAll()).object();
-        QCOMPARE(json.value("mode").toString(), QString("local_simulation"));
+        QCOMPARE(json.value("mode").toString(), QString("persistent_simulation"));
         QCOMPARE(json.value("completed").toInt(), 0);
     }
 
     void closeCannotRaceSubmission() {
-        QTemporaryDir root;
-        PrintWindow window({root.path(), 30, false});
-        window.show();
-        openForm(window);
-        QTest::mouseClick(window.findChild<QPushButton*>("submitJob"), Qt::LeftButton);
-        window.close(); // Close before the first UI snapshot arrives.
-        QTRY_VERIFY(window.findChild<QLabel*>("feedback")->text().contains(QStringLiteral("仍有等待或运行任务")));
-        QVERIFY(window.isVisible());
-        auto* table = window.findChild<QTableView*>("jobsTable");
+        BackendDirectory root;
+        QString id;
+        {
+            PrintWindow window({root.path(), 30, false}); window.show();
+            window.submitRequested(QStringLiteral("关闭前提交"), 100, 1, 0);
+            window.close(); // Serialized after submit, before its first visual snapshot.
+            QTRY_VERIFY(!window.isVisible());
+            CoordinatorClient client(root.path());
+            const auto jobs = client.request("snapshot").value("jobs").toArray();
+            QCOMPARE(jobs.size(), 1); id = jobs[0].toObject().value("job_id").toString();
+        }
+        PrintWindow reopened({root.path(), 30, false}); reopened.show();
+        auto* table = reopened.findChild<QTableView*>("jobsTable");
+        QTRY_COMPARE(table->model()->rowCount(), 1);
+        QCOMPARE(table->model()->index(0, 0).data(Qt::UserRole).toString(), id);
         QTRY_COMPARE_WITH_TIMEOUT(table->model()->index(0, 3).data().toString(), QStringLiteral("已完成"), 10000);
-        const auto screenshot = qEnvironmentVariable("CPS_GUI_SCREENSHOT");
-        if (!screenshot.isEmpty()) QVERIFY(window.grab().save(screenshot));
-        window.close();
-        QTRY_VERIFY(!window.isVisible());
+        reopened.close(); QTRY_VERIFY(!reopened.isVisible());
+    }
+
+    static QJsonObject readObject(const QString& path) {
+        QFile file(path);
+        if (!file.open(QIODevice::ReadOnly)) return {};
+        return QJsonDocument::fromJson(file.readAll()).object();
+    }
+
+    void persistentPoliciesAndReport() {
+        BackendDirectory root(QDir::tempPath() + QStringLiteral("/持久 验收-XXXXXX"));
+        {
+            PrintWindow window({root.path(), 40, false}); window.show();
+            window.pauseRequested(true);
+            window.submitRequested(QStringLiteral("先来的大任务"), 40, 1, 0);
+            window.submitRequested(QStringLiteral("短任务"), 2, 1, 0);
+            window.submitRequested(QStringLiteral("紧急任务"), 10, 1, 100);
+            auto* table = window.findChild<QTableView*>("jobsTable");
+            QTRY_COMPARE(table->model()->rowCount(), 3);
+            CoordinatorClient client(root.path());
+            const auto first = client.request("snapshot");
+            QVERIFY(first.value("paused").toBool());
+            const auto rows = first.value("jobs").toArray();
+            const auto id = [&](int i) { return rows[i].toObject().value("job_id").toString(); };
+            for (int policy = 0; policy < 3; ++policy) {
+                window.policyRequested(policy);
+                auto* picker = window.findChild<QComboBox*>("schedulingPolicy");
+                QTRY_COMPARE(picker->currentIndex(), policy);
+                QJsonObject snap;
+                const QStringList names{"fcfs", "sjf", "priority"};
+                QTRY_VERIFY((snap = client.request("snapshot")).value("policy").toString() == names[policy]);
+                QCOMPARE(snap.value("waiting_order").toArray()[0].toString(), id(policy));
+                for (const auto& j : snap.value("jobs").toArray()) QCOMPARE(j.toObject().value("attempts").toInt(), 0);
+            }
+            // Backend validation is atomic too, independent of the GUI's input checks.
+            const QJsonObject valid{{"job_id", "atomic-new"}, {"title", "valid"}, {"pages", 1}, {"copies", 1}};
+            auto duplicate = valid; duplicate.insert("job_id", id(0));
+            QCOMPARE(client.request("submit_batch", {{"jobs", QJsonArray{valid, duplicate}}}).value("type").toString(), QString("error"));
+            QCOMPARE(client.request("snapshot").value("jobs").toArray().size(), 3);
+            window.close(); QTRY_VERIFY(!window.isVisible());
+        }
+        PrintWindow reopened({root.path(), 40, false}); reopened.show();
+        auto* table = reopened.findChild<QTableView*>("jobsTable");
+        QTRY_COMPARE(table->model()->rowCount(), 3);
+        QTRY_VERIFY(reopened.findChild<QPushButton*>("pauseDispatch")->isChecked());
+        QTRY_COMPARE(reopened.findChild<QComboBox*>("schedulingPolicy")->currentIndex(), 2);
+        reopened.pauseRequested(false);
+        for (int i = 0; i < 3; ++i)
+            QTRY_COMPARE_WITH_TIMEOUT(table->model()->index(i, 3).data().toString(), QStringLiteral("已完成"), 15000);
+        const auto path = root.path() + "/audit.json";
+        reopened.exportRequested(path);
+        QTRY_VERIFY(QFile::exists(path));
+        const auto report = readObject(path);
+        QCOMPARE(report.value("mode").toString(), QString("persistent_simulation"));
+        QCOMPARE(report.value("completed").toInt(), 3);
+        QCOMPARE(report.value("cancelled").toInt(), 0);
+        const double start = report.value("window_start_ms").toDouble();
+        const double end = report.value("window_end_ms").toDouble();
+        double waits = 0, turns = 0, busy = 0, maxWait = 0;
+        for (const auto& item : report.value("jobs").toArray()) {
+            const auto j = item.toObject();
+            const double submitted = j.value("submitted_ms").toDouble();
+            const double started = j.value("first_started_ms").toDouble();
+            const double finished = j.value("finished_ms").toDouble();
+            const double wait = started - submitted;
+            QVERIFY(started >= submitted && finished >= started && finished <= end);
+            waits += wait; turns += finished - submitted; maxWait = std::max(maxWait, wait);
+            QCOMPARE(j.value("accumulated_wait_ms").toDouble(), wait);
+            QCOMPARE(j.value("attempts").toInt(), 1);
+            const auto runs = j.value("runs").toArray(); QCOMPARE(runs.size(), 1);
+            busy += runs[0].toObject().value("stopped_ms").toDouble() - runs[0].toObject().value("started_ms").toDouble();
+            QFile output(root.path() + "/output/" + j.value("job_id").toString() + ".txt");
+            QVERIFY(output.open(QIODevice::ReadOnly));
+            QCOMPARE(output.readAll().count("sheet="), j.value("pages").toInt() * j.value("copies").toInt());
+            QFile events(root.path() + "/output/" + j.value("job_id").toString() + ".events.jsonl");
+            QVERIFY(events.open(QIODevice::ReadOnly));
+            QCOMPARE(events.readAll().count("worker_started"), 1);
+        }
+        const auto near = [&](const char* field, double expected) {
+            return std::abs(report.value(field).toDouble() - expected) < 1e-6 * std::max(1.0, std::abs(expected));
+        };
+        QVERIFY(near("average_first_wait_ms", waits / 3));
+        QVERIFY(near("average_total_queue_wait_ms", waits / 3));
+        QVERIFY(near("average_turnaround_ms", turns / 3));
+        QVERIFY(near("max_first_wait_ms", maxWait));
+        QVERIFY(near("busy_printer_ms", busy));
+        QVERIFY(near("throughput_per_second", 3000.0 / (end - start)));
+        QVERIFY(near("utilization", busy / (2 * (end - start))));
+        reopened.close(); QTRY_VERIFY(!reopened.isVisible());
+        PrintWindow again({root.path(), 40, false}); again.show();
+        again.exportRequested(root.path() + "/after-reopen.json");
+        QTRY_VERIFY(QFile::exists(root.path() + "/after-reopen.json"));
+        const auto restored = readObject(root.path() + "/after-reopen.json");
+        QCOMPARE(restored.value("completed").toInt(), 3);
+        QCOMPARE(restored.value("window_start_ms"), report.value("window_start_ms"));
+        QCOMPARE(restored.value("average_first_wait_ms"), report.value("average_first_wait_ms"));
+        again.close(); QTRY_VERIFY(!again.isVisible());
+    }
+
+    void backendCrashDuringCancellation() {
+        BackendDirectory root;
+        QProcess backend;
+        backend.setProgram(cps::siblingExecutable("print-coordinator"));
+        backend.setArguments({"--state-dir", root.path(), "--page-ms", "20"});
+        backend.start(); QVERIFY(backend.waitForStarted(5000));
+        CoordinatorClient client(root.path());
+        QJsonObject initial;
+        QTRY_VERIFY(!(initial = client.request("snapshot")).isEmpty());
+        const double originalPid = initial.value("coordinator_pid").toDouble();
+        PrintWindow window({root.path(), 20, false}); window.show();
+        window.submitRequested("cancel across crash", 200, 1, 0);
+        window.submitRequested("recover remaining work", 100, 1, 0);
+        auto* table = window.findChild<QTableView*>("jobsTable");
+        QTRY_COMPARE(table->model()->rowCount(), 2);
+        QTRY_COMPARE(table->model()->index(0, 3).data().toString(), QStringLiteral("打印中"));
+        const auto cancelledId = table->model()->index(0, 0).data(Qt::UserRole).toString();
+        // Crash immediately after the durable cancellation ACK, before its terminal event.
+        QCOMPARE(client.request("cancel", {{"job_id", cancelledId}}).value("type").toString(), QString("accepted"));
+        backend.kill(); QVERIFY(backend.waitForFinished(5000)); client.disconnect();
+        QTRY_COMPARE_WITH_TIMEOUT(table->model()->index(0, 3).data().toString(), QStringLiteral("已取消"), 20000);
+        QTRY_COMPARE_WITH_TIMEOUT(table->model()->index(1, 3).data().toString(), QStringLiteral("已完成"), 20000);
+        const auto recovered = client.request("snapshot");
+        QVERIFY(recovered.value("coordinator_pid").toDouble() != originalPid);
+        QCOMPARE(recovered.value("metrics").toObject().value("cancelled").toInt(), 1);
+        QCOMPARE(recovered.value("metrics").toObject().value("completed").toInt(), 1);
+        for (const auto& item : recovered.value("jobs").toArray()) {
+            const auto job = item.toObject();
+            if (job.value("job_id").toString() == cancelledId) {
+                QCOMPARE(job.value("attempts").toInt(), 1);
+                QVERIFY(!QFile::exists(root.path() + "/output/" + cancelledId + ".txt"));
+            } else {
+                QFile file(root.path() + "/output/" + job.value("job_id").toString() + ".txt");
+                QVERIFY(file.open(QIODevice::ReadOnly)); QCOMPARE(file.readAll().count("sheet="), 100);
+            }
+        }
+        window.close(); QTRY_VERIFY(!window.isVisible());
     }
 
     void runningCancelFaultAndReconnect() {
-        QTemporaryDir root;
+        BackendDirectory root;
         PrintWindow window({root.path(), 30, true});
         window.show();
         // Cocoa activation/exposure is asynchronous. Don't start short-lived
@@ -321,14 +464,14 @@ private slots:
     }
 
     void demoControlsAbsentInNormalMode() {
-        QTemporaryDir root;
+        BackendDirectory root;
         PrintWindow window({root.path(), 10, false});
         QVERIFY(!window.findChild<QPushButton*>("injectFault"));
         QVERIFY(!window.findChild<QPushButton*>("disconnectControl"));
     }
 
     void compactWindowKeepsControlsReachable() {
-        QTemporaryDir root;
+        BackendDirectory root;
         PrintWindow window({root.path(), 30, true});
         window.resize(1060, 720);
         window.show();

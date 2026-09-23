@@ -15,7 +15,10 @@ struct PersistentState {
     int printers = 2;
     TimeMs savedAtMs = 0;
     std::vector<Job> jobs;
+    bool paused = false;
 };
+
+QString coordinatorSocketName(const QString& stateDirectory);
 
 QString policyName(Policy policy);
 std::optional<Policy> policyFromName(const QString& name);

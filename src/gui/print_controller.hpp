@@ -2,7 +2,8 @@
 #include "cps/core/scheduler.hpp"
 #include "cps/metrics/statistics.hpp"
 #include "event_stream.hpp"
-#include "control_client.hpp"
+#include <QLocalSocket>
+#include <QJsonObject>
 
 #include <QHash>
 #include <QObject>
@@ -43,10 +44,11 @@ struct ViewState {
     Statistics metrics;
     QString connection;
     bool paused = false;
+    bool connected = false;
+    bool demoAvailable = false;
 };
 
-// This object, its timers, scheduler and QProcesses live in one worker thread.
-// Only value snapshots and text cross to the QWidget thread via queued signals.
+// IPC runs in a worker thread. The coordinator owns all queue and process state.
 class PrintController : public QObject {
     Q_OBJECT
 public:
@@ -69,36 +71,24 @@ signals:
     void logsReady(const QStringList& lines);
     void closeReady(bool allowed);
 private:
-    struct Run {
-        Run(const Job& claimed, QProcess* child) : job(claimed), process(child),
-            stream(QString::fromStdString(claimed.id)) {}
-        Job job;
-        QProcess* process;
-        EventStream stream;
-        bool outputCommitted = false;
-        bool supervisorCompleted = false;
-        QString detail;
-        ControlClient* control = nullptr;
-        QString controlToken;
-        bool cancelRequested = false;
-        bool cancelledConfirmed = false;
-    };
-    bool addJob(const QString& title, int pages, int copies, int priority);
-    void dispatch();
-    void receive(int slot, const EventBatch& batch);
-    void complete(int slot, int exitCode, QProcess::ExitStatus status);
+    bool connectBackend();
+    QJsonObject request(const QString& type, QJsonObject payload = {});
+    void mutate(const QString& type, QJsonObject payload = {});
+    void refresh();
     void publish();
+    void disconnected();
     void log(const QString& line);
+    bool applySnapshot(const QJsonObject& snapshot);
     WindowOptions options_;
-    Scheduler scheduler_;
-    TimeMs startedMs_ = 0;
-    Policy policy_ = Policy::Fcfs;
-    bool paused_ = false;
+    QLocalSocket* socket_ = nullptr;
+    QTimer* refresh_ = nullptr;
+    qint64 lastLaunchMs_ = 0;
     bool available_ = false;
-    QHash<QString, JobView> details_;
-    std::array<std::unique_ptr<Run>, 2> runs_;
-    std::array<PrinterView, 2> printers_;
+    bool demoAvailable_ = false;
+    ViewState view_;
+    QJsonObject snapshot_;
     QStringList logs_;
+
 };
 } // namespace cps::gui
 Q_DECLARE_METATYPE(cps::gui::ViewState)

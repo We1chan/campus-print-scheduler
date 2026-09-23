@@ -203,6 +203,14 @@ class Processes(unittest.TestCase):
         result = subprocess.run([str(ARGS.gui), "--smoke-test", "--data-dir", str(self.root / "gui-smoke")], env=env,
                                 capture_output=True, timeout=15)
         self.assertEqual(result.returncode, 0, result.stderr.decode("utf-8", errors="replace"))
+        coordinator = ARGS.gui.with_name("print-coordinator" + (".exe" if os.name == "nt" else ""))
+        stopped = self.run_command([str(coordinator), "--state-dir", str(self.root / "gui-smoke"),
+                                    "--request", json.dumps({"type": "shutdown"})])
+        self.assertEqual(stopped.returncode, 0, stopped.stderr)
+        deadline = time.monotonic() + 5
+        while (self.root / "gui-smoke" / ".coordinator.lock").exists() and time.monotonic() < deadline:
+            time.sleep(0.05)
+        self.assertFalse((self.root / "gui-smoke" / ".coordinator.lock").exists())
 
     @unittest.skipIf(os.name == "nt", "POSIX daemon mode; Windows uses foreground supervision")
     def test_posix_daemon(self):

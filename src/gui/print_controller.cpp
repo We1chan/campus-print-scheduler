@@ -1,381 +1,255 @@
 #include "print_controller.hpp"
 #include "cps/runtime/job_io.hpp"
+#include "cps/runtime/state_store.hpp"
 
+#include <QDateTime>
 #include <QDir>
+#include <QElapsedTimer>
 #include <QFile>
 #include <QFileInfo>
 #include <QJsonArray>
 #include <QJsonDocument>
+#include <QLockFile>
 #include <QSaveFile>
 #include <QThread>
 #include <QUuid>
 #include <cmath>
-#include <algorithm>
 
 namespace cps::gui {
 PrintController::PrintController(WindowOptions options) : options_(std::move(options)) {}
 
 void PrintController::initialize() {
     Q_ASSERT(QThread::currentThread() == thread());
-    startedMs_ = scheduler_.nowMs();
-    auto* refresh = new QTimer(this);
-    connect(refresh, &QTimer::timeout, this, &PrintController::publish);
-    refresh->start(100);
-    checkConnection();
+    socket_ = new QLocalSocket(this);
+    socket_->setReadBufferSize(64 * 1024 * 1024 + 1);
+    refresh_ = new QTimer(this);
+    connect(refresh_, &QTimer::timeout, this, &PrintController::refresh);
+    refresh_->start(300);
+    refresh();
 }
 
-bool PrintController::addJob(const QString& title, int pages, int copies, int priority) {
-    if (title.trimmed().isEmpty() || title.trimmed().size() > 200 || pages < 1 || pages > 1000 ||
-        copies < 1 || copies > 100 || pages * copies > 10000 || priority < 0 || priority > 100)
-        return false;
-    Job job;
-    job.id = QUuid::createUuid().toString(QUuid::WithoutBraces).toStdString();
-    job.title = title.trimmed().toUtf8().toStdString();
-    job.pages = pages;
-    job.copies = copies;
-    job.priority = priority;
-    job.submittedMs = scheduler_.nowMs();
-    if (!scheduler_.submit(job)) return false;
-    const auto id = QString::fromStdString(job.id);
-    details_.insert(id, {id, title.trimmed(), job.sheets(), priority, JobState::Queued, 0, {}});
-    return true;
+bool PrintController::connectBackend() {
+    if (socket_->state() == QLocalSocket::ConnectedState) return true;
+    if (!QDir().mkpath(options_.stateDirectory)) return false;
+    const auto endpoint = cps::coordinatorSocketName(options_.stateDirectory);
+    socket_->abort(); socket_->connectToServer(endpoint);
+    if (socket_->waitForConnected(100)) return true;
+    const auto now = QDateTime::currentMSecsSinceEpoch();
+    if (now - lastLaunchMs_ >= 3000) {
+        lastLaunchMs_ = now;
+        // Do not spawn repeatedly while an existing owner is starting or recovering.
+        QLockFile probe(QDir(options_.stateDirectory).filePath(".coordinator.lock"));
+        probe.setStaleLockTime(0);
+        if (probe.tryLock(0)) {
+            probe.unlock();
+            QProcess backend;
+            backend.setProgram(cps::siblingExecutable("print-coordinator"));
+            QStringList args{"--state-dir", QDir(options_.stateDirectory).absolutePath(),
+                "--page-ms", QString::number(options_.pageMs)};
+            if (options_.demoMode) args << "--demo-mode";
+            backend.setArguments(args);
+            backend.setWorkingDirectory(QDir(options_.stateDirectory).absolutePath());
+            backend.setStandardOutputFile(QProcess::nullDevice());
+            backend.setStandardErrorFile(QDir(options_.stateDirectory).filePath("coordinator.log"), QIODevice::Append);
+            if (!backend.startDetached()) log(QStringLiteral("后台启动失败：") + backend.errorString());
+        }
+    }
+    // Bounded waits happen only on this worker thread, never the QWidget thread.
+    for (int i = 0; i < 10; ++i) {
+        socket_->abort(); socket_->connectToServer(endpoint);
+        if (socket_->waitForConnected(50)) return true;
+        QThread::msleep(20);
+    }
+    return false;
+}
+
+void PrintController::disconnected() {
+    if (available_) log(QStringLiteral("控制连接断开 · 正在重新连接持久后台"));
+    available_ = false;
+    socket_->abort();
+}
+
+QJsonObject PrintController::request(const QString& type, QJsonObject payload) {
+    if (!connectBackend()) { disconnected(); return {}; }
+    const auto id = QUuid::createUuid().toString(QUuid::WithoutBraces);
+    payload.insert("schema_version", 1); payload.insert("request_id", id); payload.insert("type", type);
+    const auto bytes = QJsonDocument(payload).toJson(QJsonDocument::Compact) + '\n';
+    if (bytes.size() > 8 * 1024 * 1024 || socket_->write(bytes) != bytes.size()) {
+        disconnected(); return {};
+    }
+    QElapsedTimer deadline; deadline.start();
+    while (deadline.elapsed() < 5000) {
+        while (socket_->canReadLine()) {
+            const auto line = socket_->readLine(64 * 1024 * 1024 + 1);
+            QJsonParseError error;
+            const auto doc = QJsonDocument::fromJson(line, &error);
+            if (error.error != QJsonParseError::NoError || !doc.isObject() ||
+                doc.object().value("schema_version").toDouble() != 1) {
+                disconnected(); return {};
+            }
+            const auto message = doc.object();
+            if (message.value("request_id").toString() == id) return message;
+            const auto event = message.value("type").toString();
+            if (event != "progress" && event != "job_state" && event != "queue_changed")
+                log(message.value("job_id").toString() + ": " + event);
+        }
+        if (socket_->bytesAvailable() >= 64 * 1024 * 1024 ||
+            socket_->state() != QLocalSocket::ConnectedState) break;
+        socket_->waitForReadyRead(100);
+    }
+    // Never replay a mutation after losing its acknowledgment: it may already be durable.
+    disconnected(); return {};
+}
+
+void PrintController::mutate(const QString& type, QJsonObject payload) {
+    const auto response = request(type, std::move(payload));
+    if (response.value("type").toString() == "accepted")
+        emit feedback(QStringLiteral("后台已确认操作并保存状态。"));
+    else if (response.isEmpty())
+        emit feedback(QStringLiteral("未收到后台确认，请重连后核对队列；未自动重发操作。"));
+    else emit feedback(QStringLiteral("后台拒绝操作：") + response.value("reason").toString());
+    refresh();
 }
 
 void PrintController::submit(const QString& title, int pages, int copies, int priority) {
-    if (details_.size() >= 10000) {
-        emit feedback(QStringLiteral("当前会话最多保留 10000 个任务；请导出报表后开启新会话。"));
-    } else if (!addJob(title, pages, copies, priority)) {
-        emit feedback(QStringLiteral("提交失败：名称须为 1–200 字符，总页数不得超过 10000。"));
-    } else {
-        emit feedback(QStringLiteral("任务已加入等待队列。"));
-        dispatch();
+    if (title.trimmed().isEmpty() || title.trimmed().size() > 200 || pages < 1 || pages > 1000 ||
+        copies < 1 || copies > 100 || pages * copies > 10000 || priority < 0 || priority > 100) {
+        emit feedback(QStringLiteral("提交失败：名称须为 1–200 字符，总页数不得超过 10000。")); return;
     }
+    mutate("submit", {{"job", QJsonObject{{"job_id", QUuid::createUuid().toString(QUuid::WithoutBraces)},
+        {"title", title.trimmed()}, {"pages", pages}, {"copies", copies}, {"priority", priority}}}});
 }
 
 void PrintController::importFile(const QString& path) {
     QFile file(path);
     if (!file.open(QIODevice::ReadOnly) || file.size() > 4 * 1024 * 1024) {
-        emit feedback(QStringLiteral("导入失败：文件无法读取或超过 4 MiB。"));
-        return;
+        emit feedback(QStringLiteral("导入失败：文件无法读取或超过 4 MiB。")); return;
     }
     QJsonParseError error;
-    const auto document = QJsonDocument::fromJson(file.readAll(), &error);
-    if (error.error != QJsonParseError::NoError || !document.isArray() || document.array().isEmpty() ||
-        document.array().size() + details_.size() > 10000) {
-        emit feedback(QStringLiteral("导入失败：需要非空 JSON 数组，当前会话总数不得超过 10000。"));
-        return;
+    const auto doc = QJsonDocument::fromJson(file.readAll(), &error);
+    if (error.error != QJsonParseError::NoError || !doc.isArray() || doc.array().isEmpty() || doc.array().size() > 10000) {
+        emit feedback(QStringLiteral("导入失败：需要 1–10000 条任务的 JSON 数组，未导入任何任务。")); return;
     }
-    const auto items = document.array();
-    // Validate the entire batch before submission so a malformed row cannot partially import.
-    for (const auto& item : items) {
-        const auto value = item.toObject();
-        auto validNumber = [&value](const char* key, int minimum, int maximum, int fallback) {
-            const auto v = value.value(QLatin1String(key));
-            const double n = v.isUndefined() ? fallback : v.toDouble(-1);
-            return (v.isUndefined() || v.isDouble()) && n >= minimum && n <= maximum && std::floor(n) == n;
+    QJsonArray jobs;
+    for (const auto& item : doc.array()) {
+        auto job = item.toObject();
+        const auto title = job.value("title").toString().trimmed();
+        auto valid = [&](const char* key, int min, int max, int fallback) {
+            if (!job.contains(key)) job.insert(key, fallback);
+            const auto value = job.value(key); const double n = value.toDouble(-1);
+            return value.isDouble() && n >= min && n <= max && std::floor(n) == n;
         };
-        const auto title = value.value("title").toString().trimmed();
-        if (!item.isObject() || title.isEmpty() || title.size() > 200 ||
-            !validNumber("pages", 1, 1000, -1) || !validNumber("copies", 1, 100, 1) ||
-            !validNumber("priority", 0, 100, 0) ||
-            value.value("pages").toInt() * value.value("copies").toInt(1) > 10000) {
-            emit feedback(QStringLiteral("导入失败：存在无效的名称、页数、份数或优先级；未导入任何任务。"));
-            return;
+        if (!item.isObject() || title.isEmpty() || title.size() > 200 || !valid("pages", 1, 1000, -1) ||
+            !valid("copies", 1, 100, 1) || !valid("priority", 0, 100, 0) ||
+            job.value("pages").toInt() * job.value("copies").toInt() > 10000) {
+            emit feedback(QStringLiteral("导入失败：存在无效字段，未导入任何任务。")); return;
         }
+        // Only send supported fields; backend validates the whole batch before writing.
+        jobs.append(QJsonObject{{"job_id", QUuid::createUuid().toString(QUuid::WithoutBraces)},
+            {"title", title}, {"pages", job.value("pages")}, {"copies", job.value("copies")},
+            {"priority", job.value("priority")}});
     }
-    for (const auto& item : items) {
-        const auto value = item.toObject();
-        addJob(value.value("title").toString(), value.value("pages").toInt(),
-               value.value("copies").toInt(1), value.value("priority").toInt());
-    }
-    emit feedback(QStringLiteral("已导入 %1 个模拟任务（立即入队，生成新任务 ID）。").arg(items.size()));
-    dispatch();
+    mutate("submit_batch", {{"jobs", jobs}});
 }
-
-void PrintController::cancel(const QString& id) {
-    if (!details_.contains(id)) return;
-    for (auto& run : runs_) {
-        if (run && QString::fromStdString(run->job.id) == id) {
-            if (run->cancelRequested) return;
-            if (!run->control->isReady()) {
-                emit feedback(QStringLiteral("控制连接正在恢复，请连接成功后重试取消。"));
-                return;
-            }
-            if (scheduler_.cancel(run->job.id, scheduler_.nowMs())) {
-                run->cancelRequested = true;
-                run->control->sendCommand("cancel");
-                emit feedback(QStringLiteral("已请求取消，正在等待工作进程停止确认。"));
-                publish();
-            }
-            return;
-        }
-    }
-    scheduler_.cancel(id.toStdString(), scheduler_.nowMs());
-    publish();
-}
-
-void PrintController::injectFault(const QString& id) {
-    if (!options_.demoMode) return;
-    for (auto& run : runs_) {
-        if (run && QString::fromStdString(run->job.id) == id && run->control->isReady() && !run->cancelRequested)
-            run->control->sendCommand("crash_worker");
-    }
-}
-void PrintController::disconnectControl(const QString& id) {
-    if (!options_.demoMode) return;
-    for (auto& run : runs_) {
-        if (run && QString::fromStdString(run->job.id) == id) run->control->simulateDisconnect();
-    }
-}
-
+void PrintController::cancel(const QString& id) { mutate("cancel", {{"job_id", id}}); }
 void PrintController::setPolicy(int index) {
-    if (index < 0 || index > 2) return;
-    policy_ = index == 0 ? Policy::Fcfs : index == 1 ? Policy::ShortestJobFirst : Policy::PriorityAging;
-    dispatch();
+    if (index >= 0 && index <= 2) mutate("set_policy", {{"policy", QStringList{"fcfs", "sjf", "priority"}[index]}});
+}
+void PrintController::setPaused(bool paused) { mutate("set_paused", {{"paused", paused}}); }
+void PrintController::checkConnection() { refresh(); }
+void PrintController::injectFault(const QString& id) {
+    if (options_.demoMode && demoAvailable_) mutate("crash_worker", {{"job_id", id}});
+}
+void PrintController::disconnectControl(const QString&) {
+    if (options_.demoMode) { disconnected(); publish(); }
 }
 
-void PrintController::setPaused(bool paused) {
-    paused_ = paused;
-    dispatch();
+bool PrintController::applySnapshot(const QJsonObject& snapshot) {
+    if (snapshot.value("type").toString() != "snapshot" || !snapshot.value("jobs").isArray() ||
+        !snapshot.value("metrics").isObject() || snapshot.value("printers").toInt() != 2) return false;
+    ViewState next;
+    for (const auto& row : snapshot.value("jobs").toArray()) {
+        Job job; QString error;
+        if (!row.isObject() || !cps::jobSnapshotFromJson(row.toObject(), job, error)) return false;
+        const auto object = row.toObject(); const auto id = QString::fromStdString(job.id);
+        const auto title = QString::fromUtf8(job.title.data(), static_cast<qsizetype>(job.title.size()));
+        const bool recovering = object.value("recovering").toBool();
+        const int printed = object.value("printed_sheets").toInt();
+        const auto detail = recovering ? QStringLiteral("后台正在核对旧执行结果") :
+            QStringLiteral("后台快照 · 执行次数 %1").arg(job.attempts);
+        next.jobs.append({id, title, job.sheets(), job.priority, job.state, printed, detail, true});
+        const int slot = object.value("slot").toInt(-1);
+        if (slot >= 0 && slot < 2) next.printers[slot] = {id, title,
+            recovering ? QStringLiteral("恢复核对中") : job.state == JobState::Cancelling ? QStringLiteral("取消中") : QStringLiteral("打印中"),
+            printed, job.sheets(), QStringLiteral("后台已连接")};
+    }
+    for (const auto& id : snapshot.value("waiting_order").toArray()) next.waitingOrder.append(id.toString());
+    const auto policy = cps::policyFromName(snapshot.value("policy").toString());
+    if (!policy) return false;
+    next.policyIndex = *policy == Policy::Fcfs ? 0 : *policy == Policy::ShortestJobFirst ? 1 : 2;
+    next.paused = snapshot.value("paused").toBool();
+    const auto m = snapshot.value("metrics").toObject();
+    auto& stats = next.metrics;
+    stats.submitted = static_cast<std::size_t>(m.value("submitted").toDouble());
+    stats.firstStarted = static_cast<std::size_t>(m.value("first_started").toDouble());
+    stats.completed = static_cast<std::size_t>(m.value("completed").toDouble());
+    stats.failed = static_cast<std::size_t>(m.value("failed").toDouble());
+    stats.cancelled = static_cast<std::size_t>(m.value("cancelled").toDouble());
+    stats.queued = static_cast<std::size_t>(m.value("queued").toDouble());
+    stats.running = static_cast<std::size_t>(m.value("running").toDouble());
+    stats.cancelling = static_cast<std::size_t>(m.value("cancelling").toDouble());
+    stats.averageFirstWaitMs = m.value("average_first_wait_ms").toDouble();
+    stats.averageTotalQueueWaitMs = m.value("average_total_queue_wait_ms").toDouble();
+    stats.averageTurnaroundMs = m.value("average_turnaround_ms").toDouble();
+    stats.busyPrinterMs = m.value("busy_printer_ms").toDouble();
+    stats.throughputPerSecond = m.value("throughput_per_second").toDouble();
+    stats.utilization = m.value("utilization").toDouble();
+    stats.maxFirstWaitMs = static_cast<TimeMs>(m.value("max_first_wait_ms").toDouble());
+    stats.maxCurrentQueueWaitMs = static_cast<TimeMs>(m.value("max_current_queue_wait_ms").toDouble());
+    if (!available_) log(QStringLiteral("控制连接已连接 · 持久队列快照已同步"));
+    available_ = true; demoAvailable_ = snapshot.value("demo_mode").toBool();
+    snapshot_ = snapshot; view_ = next;
+    return true;
+}
+void PrintController::refresh() {
+    if (!applySnapshot(request("snapshot"))) disconnected();
     publish();
 }
-
-void PrintController::checkConnection() {
-    available_ = QFileInfo(cps::siblingExecutable("print-supervisor")).isExecutable() &&
-        QFileInfo(cps::siblingExecutable("print-worker")).isExecutable();
-    if (!available_) emit feedback(QStringLiteral("执行器不可用：请检查同目录的 supervisor、worker 及 Qt 运行库。"));
-    dispatch();
-    publish();
-}
-
-void PrintController::dispatch() {
-    if (paused_ || !available_) return;
-    for (int slot = 0; slot < 2; ++slot) {
-        if (runs_[slot]) continue;
-        const auto job = scheduler_.claim(policy_);
-        if (!job) break;
-        const QString id = QString::fromStdString(job->id);
-        details_[id].state = JobState::Running;
-        const QString jobsDirectory = QDir(options_.stateDirectory).filePath("jobs");
-        const QString path = QDir(jobsDirectory).filePath(id + ".json");
-        QString error;
-        if (!QDir().mkpath(jobsDirectory)) error = QStringLiteral("无法创建任务目录：") + jobsDirectory;
-        if (!error.isEmpty() || !cps::writeJob(path, *job, error)) {
-            scheduler_.finish(job->id, job->attempts, false, scheduler_.nowMs());
-            details_[id].detail = QStringLiteral("写入任务失败：") + error;
-            log(details_[id].detail);
-            // Yield between failures rather than drain a large queue in one event callback.
-            QTimer::singleShot(0, this, &PrintController::dispatch);
-            continue;
-        }
-        auto* process = new QProcess(this);
-        runs_[slot] = std::make_unique<Run>(*job, process);
-        auto* run = runs_[slot].get();
-        run->controlToken = QUuid::createUuid().toString(QUuid::WithoutBraces);
-        run->control = new ControlClient(id, run->controlToken, job->attempts, this);
-        printers_[slot] = {id, details_[id].title, QStringLiteral("正在启动"), 0, job->sheets(), QStringLiteral("等待控制端点")};
-        connect(run->control, &ControlClient::connectionChanged, this, [this, slot, run, id](bool ready, const QString& state) {
-            if (runs_[slot].get() != run) return;
-            details_[id].controlReady = ready;
-            printers_[slot].connection = state;
-            log(id + ": " + state);
-            if (ready && run->cancelRequested) run->control->sendCommand("cancel");
-            publish();
-        });
-        connect(run->control, &ControlClient::messageReceived, this, [this, slot, run, id](const QJsonObject& message) {
-            if (runs_[slot].get() != run) return;
-            if (message.value("type").toString() == "control_ack" && !message.value("accepted").toBool())
-                emit feedback(QStringLiteral("执行器拒绝控制命令：") + message.value("reason").toString());
-            if (message.value("type").toString() == "control_state")
-                log(id + QStringLiteral(": 重连快照已确认，执行次数 %1").arg(message.value("worker_attempt").toInt()));
-        });
-        process->setProgram(cps::siblingExecutable("print-supervisor"));
-        QStringList arguments{"--job", path, "--output-dir", QDir(options_.stateDirectory).filePath("output"),
-            "--page-ms", QString::number(options_.pageMs), "--control-token", run->controlToken,
-            "--claim-attempt", QString::number(job->attempts)};
-        if (options_.demoMode) arguments.append("--demo-mode");
-        process->setArguments(arguments);
-        connect(process, &QProcess::readyReadStandardOutput, this, [this, slot] {
-            auto& run = *runs_[slot];
-            receive(slot, run.stream.append(run.process->readAllStandardOutput()));
-        });
-        connect(process, &QProcess::readyReadStandardError, this, [this, slot] {
-            auto& run = *runs_[slot];
-            const auto errorText = QString::fromUtf8(run.process->readAllStandardError()).trimmed().left(2000);
-            if (!errorText.isEmpty()) {
-                run.detail = errorText;
-                log(errorText);
-            }
-        });
-        connect(process, &QProcess::errorOccurred, this, [this, slot](QProcess::ProcessError code) {
-            if (code == QProcess::FailedToStart && runs_[slot]) {
-                available_ = false;
-                runs_[slot]->detail = runs_[slot]->process->errorString();
-                complete(slot, 78, QProcess::CrashExit);
-            }
-        });
-        connect(process, &QProcess::finished, this, [this, slot](int code, QProcess::ExitStatus status) {
-            complete(slot, code, status);
-        });
-        process->start();
-    }
-}
-
-void PrintController::receive(int slot, const EventBatch& batch) {
-    auto& run = *runs_[slot];
-    auto& printer = printers_[slot];
-    auto& detail = details_[printer.jobId];
-    for (const auto& error : batch.errors) log(printer.jobId + ": " + error);
-    for (const auto& event : batch.events) {
-        const auto type = event.value("type").toString();
-        if (event.contains("claim_attempt") && event.value("claim_attempt").toInt() != run.job.attempts) {
-            log(QStringLiteral("忽略旧执行令牌事件：") + printer.jobId);
-            continue;
-        }
-        if (type == "control_ready") {
-            run.control->start(static_cast<quint16>(event.value("port").toInt()));
-        } else if (type == "cancelling") {
-            scheduler_.cancel(run.job.id, scheduler_.nowMs());
-            printer.status = QStringLiteral("取消中 · 等待进程停止");
-        } else if (type == "cancelled") {
-            run.cancelledConfirmed = true;
-            run.detail = event.value("reason").toString();
-        } else if (type == "progress") {
-            if (event.value("total_sheets").toInt() != run.job.sheets()) {
-                log(QStringLiteral("忽略总页数与任务不一致的进度：") + printer.jobId);
-                continue;
-            }
-            printer.printed = event.value("printed_sheets").toInt();
-            detail.printed = printer.printed;
-            printer.status = QStringLiteral("打印中");
-        } else if (type == "worker_started") {
-            printer.printed = detail.printed = 0;
-            run.outputCommitted = false;
-            printer.status = QStringLiteral("打印中 · 第 %1 次执行").arg(event.value("attempt").toInt());
-        } else if (type == "worker_restarting") {
-            printer.printed = detail.printed = 0;
-            run.outputCommitted = false;
-            printer.status = QStringLiteral("故障恢复 · 第 %1 次重试").arg(event.value("restart").toInt());
-        } else if (type == "worker_timeout") {
-            printer.status = QStringLiteral("工作进程超时，等待恢复");
-        } else if (type == "completed") {
-            const auto expected = QDir(options_.stateDirectory).absoluteFilePath("output/" + printer.jobId + ".txt");
-            run.outputCommitted = QFileInfo(event.value("output_path").toString()).absoluteFilePath() == expected;
-            printer.status = QStringLiteral("已输出，等待监督进程确认");
-        } else if (type == "supervisor_completed") {
-            run.supervisorCompleted = true;
-        } else if (type == "failed") {
-            run.detail = event.value("reason").toString(QStringLiteral("执行失败，退出码 %1").arg(event.value("exit_code").toDouble()));
-        }
-        if (type != "progress") log(printer.jobId + ": " + QString::fromUtf8(QJsonDocument(event).toJson(QJsonDocument::Compact)));
-    }
-}
-
-void PrintController::complete(int slot, int exitCode, QProcess::ExitStatus status) {
-    if (!runs_[slot]) return;
-    auto& run = *runs_[slot];
-    receive(slot, run.stream.append(run.process->readAllStandardOutput()));
-    receive(slot, run.stream.finish());
-    const auto id = QString::fromStdString(run.job.id);
-    const QFileInfo output(QDir(options_.stateDirectory).filePath("output/" + id + ".txt"));
-    const bool success = status == QProcess::NormalExit && exitCode == 0 &&
-        run.outputCommitted && run.supervisorCompleted && output.isFile() && output.size() > 0;
-    const bool cancelled = status == QProcess::NormalExit && exitCode == 130 && run.cancelledConfirmed;
-    if (cancelled) {
-        scheduler_.cancel(run.job.id, scheduler_.nowMs());
-        scheduler_.acknowledgeCancel(run.job.id, run.job.attempts, scheduler_.nowMs());
-    } else if (!scheduler_.finish(run.job.id, run.job.attempts, success, scheduler_.nowMs())) {
-        run.detail = QStringLiteral("取消未获得停止确认，保留取消中状态；请检查进程日志。");
-    }
-    details_[id].controlReady = false;
-    details_[id].detail = cancelled ? QStringLiteral("已确认工作进程停止") : success ? QStringLiteral("原子输出已确认") :
-        (run.detail.isEmpty() ? QStringLiteral("执行未成功确认（退出码 %1）；请查看日志。").arg(exitCode) : run.detail);
-    if (success) details_[id].printed = run.job.sheets();
-    log(id + ": " + details_[id].detail);
-    emit feedback(details_[id].title + "：" + details_[id].detail);
-    run.control->stop();
-    run.control->disconnect(this);
-    run.control->deleteLater();
-    run.process->disconnect(this);
-    run.process->deleteLater();
-    runs_[slot].reset();
-    printers_[slot] = {};
-    publish();
-    QTimer::singleShot(0, this, &PrintController::dispatch);
-}
-
 void PrintController::publish() {
-    const auto jobs = scheduler_.snapshot();
-    const auto now = scheduler_.nowMs();
-    ViewState view;
-    view.jobs.reserve(static_cast<qsizetype>(jobs.size()));
-    for (const auto& job : jobs) {
-        auto& detail = details_[QString::fromStdString(job.id)];
-        detail.state = job.state;
-        view.jobs.append(detail);
-    }
-    std::vector<const Job*> waiting;
-    for (const auto& job : jobs)
-        if (job.state == JobState::Queued && job.queuedSinceMs <= now) waiting.push_back(&job);
-    std::stable_sort(waiting.begin(), waiting.end(), [&](const Job* a, const Job* b) {
-        if (policy_ == Policy::ShortestJobFirst && a->sheets() != b->sheets()) return a->sheets() < b->sheets();
-        if (policy_ == Policy::PriorityAging) {
-            const auto score = [now](const Job* j) {
-                return j->priority + (j->accumulatedWaitMs + now - j->queuedSinceMs) / SchedulerOptions{}.agingIntervalMs;
-            };
-            if (score(a) != score(b)) return score(a) > score(b);
-        }
-        return a->queuedSinceMs < b->queuedSinceMs;
-    });
-    for (const auto* job : waiting) view.waitingOrder.append(QString::fromStdString(job->id));
-    view.policyIndex = policy_ == Policy::Fcfs ? 0 : policy_ == Policy::ShortestJobFirst ? 1 : 2;
-    view.printers = printers_;
-    view.paused = paused_;
-    view.connection = available_ ? QStringLiteral("本地执行器就绪 · 内存队列") : QStringLiteral("执行器不可用 · 等待重新检查");
-    view.metrics = statistics(jobs, startedMs_, now, 2);
-    emit viewChanged(view);
-    if (!logs_.isEmpty()) {
-        emit logsReady(logs_);
-        logs_.clear();
-    }
+    view_.connected = available_;
+    view_.demoAvailable = demoAvailable_;
+    view_.connection = available_ ? QStringLiteral("持久后台已连接 · 关闭窗口后继续执行") :
+        QStringLiteral("后台暂不可用 · 正在重连，当前显示上次快照");
+    for (auto& job : view_.jobs) job.controlReady = available_;
+    emit viewChanged(view_);
+    if (!logs_.isEmpty()) { emit logsReady(logs_); logs_.clear(); }
 }
-
 void PrintController::log(const QString& line) {
     if (logs_.size() >= 200) logs_.removeFirst();
     logs_.append(line.left(2000));
 }
-
 void PrintController::exportReport(const QString& path) {
-    const auto jobs = scheduler_.snapshot();
-    const auto now = scheduler_.nowMs();
-    const auto stats = statistics(jobs, startedMs_, now, 2);
-    QJsonArray rows;
-    for (const auto& job : jobs) {
-        rows.append(QJsonObject{{"job_id", QString::fromStdString(job.id)},
-            {"title", QString::fromStdString(job.title)}, {"sheets", job.sheets()},
-            {"state", static_cast<int>(job.state)}, {"priority", job.priority}});
-    }
-    const QJsonObject report{{"schema_version", 1}, {"mode", "local_simulation"},
-        {"policy", policy_ == Policy::Fcfs ? "FCFS" : policy_ == Policy::ShortestJobFirst ? "SJF" : "PriorityAging"},
-        {"policy_note", "Policy can change during a session; this is not a controlled policy comparison."},
-        {"window_start_ms", static_cast<double>(startedMs_)}, {"window_end_ms", static_cast<double>(now)},
-        {"printers", 2}, {"page_ms", options_.pageMs}, {"completed", static_cast<double>(stats.completed)},
-        {"failed", static_cast<double>(stats.failed)}, {"cancelled", static_cast<double>(stats.cancelled)},
-        {"average_first_wait_ms", stats.averageFirstWaitMs}, {"average_turnaround_ms", stats.averageTurnaroundMs},
-        {"throughput_per_second", stats.throughputPerSecond}, {"utilization", stats.utilization}, {"jobs", rows}};
-    const auto data = QJsonDocument(report).toJson();
-    QSaveFile file(path);
+    refresh();
+    if (!available_) { emit feedback(QStringLiteral("报表未导出：无法获取后台最新快照。")); return; }
+    auto report = snapshot_.value("metrics").toObject();
+    report.insert("schema_version", 1); report.insert("mode", "persistent_simulation");
+    report.insert("policy", snapshot_.value("policy"));
+    report.insert("policy_note", "Policy may change during the persistent history; this is not a controlled policy comparison.");
+    report.insert("window_start_ms", snapshot_.value("window_start_ms"));
+    report.insert("window_end_ms", snapshot_.value("now_ms"));
+    report.insert("printers", snapshot_.value("printers")); report.insert("page_ms", snapshot_.value("page_ms"));
+    report.insert("jobs", snapshot_.value("jobs"));
+    const auto data = QJsonDocument(report).toJson(); QSaveFile file(path);
     if (!file.open(QIODevice::WriteOnly) || file.write(data) != data.size() || !file.commit())
         emit feedback(QStringLiteral("报表写入失败：") + file.errorString());
     else emit feedback(QStringLiteral("报表已保存：") + path);
 }
-
 void PrintController::requestClose() {
-    const auto jobs = scheduler_.snapshot();
-    bool busy = false;
-    for (const auto& job : jobs)
-        busy = busy || job.state == JobState::Queued || job.state == JobState::Running || job.state == JobState::Cancelling;
-    if (busy) emit feedback(QStringLiteral("仍有等待或运行任务：请继续派发至完成，或取消等待任务后退出。"));
-    emit closeReady(!busy);
+    // Earlier queued commands have finished their IPC exchange before this slot runs.
+    // Disconnecting this client never stops the persistent coordinator or its workers.
+    if (refresh_) refresh_->stop();
+    if (socket_) socket_->abort();
+    available_ = false;
+    emit closeReady(true);
 }
 } // namespace cps::gui

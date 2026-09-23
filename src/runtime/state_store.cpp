@@ -1,6 +1,9 @@
 #include "cps/runtime/state_store.hpp"
 
 #include <QFile>
+#include <QDir>
+#include <QFileInfo>
+#include <QCryptographicHash>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QRegularExpression>
@@ -76,6 +79,17 @@ QJsonValue optionalTime(const std::optional<TimeMs>& value) {
 }
 
 } // namespace
+
+QString coordinatorSocketName(const QString& stateDirectory) {
+    const QFileInfo info(stateDirectory);
+    QString path = info.canonicalFilePath();
+    if (path.isEmpty()) path = QDir(stateDirectory).absolutePath();
+#ifdef Q_OS_WIN
+    path = path.toCaseFold();
+#endif
+    const auto digest = QCryptographicHash::hash(path.toUtf8(), QCryptographicHash::Sha256).toHex().left(16);
+    return QStringLiteral("campus-print-%1").arg(QString::fromLatin1(digest));
+}
 
 QString policyName(Policy policy) {
     switch (policy) {
@@ -182,6 +196,7 @@ bool writePersistentState(const QString& path, const PersistentState& state, QSt
         {"saved_at_ms", static_cast<double>(state.savedAtMs)},
         {"policy", policyName(state.policy)},
         {"printers", state.printers},
+        {"paused", state.paused},
         {"aging_interval_ms", static_cast<double>(state.schedulerOptions.agingIntervalMs)},
         {"jobs", jobs}
     };
@@ -217,7 +232,8 @@ bool readPersistentState(const QString& path, PersistentState& state, QString& e
         !integerValue(object.value("saved_at_ms"), 0, MaxTimeMs, saved) ||
         !integerValue(object.value("aging_interval_ms"), 1, MaxTimeMs, aging) ||
         !intValue(object, "printers", 1, 64, printers) || !policy ||
-        !object.value("jobs").isArray()) {
+        !object.value("jobs").isArray() ||
+        (object.contains("paused") && !object.value("paused").isBool())) {
         error = QStringLiteral("Invalid persistent state header");
         return false;
     }
@@ -227,6 +243,7 @@ bool readPersistentState(const QString& path, PersistentState& state, QString& e
     parsed.schedulerOptions.agingIntervalMs = static_cast<TimeMs>(aging);
     parsed.policy = *policy;
     parsed.printers = printers;
+    parsed.paused = object.value("paused").toBool(false);
     for (const auto& value : object.value("jobs").toArray()) {
         if (!value.isObject()) {
             error = QStringLiteral("Persistent jobs must be objects");
