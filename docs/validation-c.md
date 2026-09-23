@@ -39,6 +39,10 @@
 中对应提交查看。工作流会保存 CTest 日志与 QtTest JUnit，Windows/macOS 另保存已部署 Qt 的归档包。
 macOS 包使用 tar.gz 保留可执行权限和 framework 符号链接。
 
+2026-09-23 将纸张工作台集成到主仓库后，主仓库
+[运行 35830290565](https://github.com/We1chan/campus-print-scheduler/actions/runs/35830290565)
+覆盖 Windows、macOS、Ubuntu，以及 Windows/macOS 两个独立发布包环境，共 5 个 job 全部成功。
+
 ## 本次继续实现的控制与部署验证
 
 - 新增 control_integration 后，本机 Release 的 4 个 CTest 套件通过。
