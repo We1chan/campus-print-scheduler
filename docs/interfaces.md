@@ -83,6 +83,7 @@ B 使用 `state_store` 完成快照序列化与原子持久化，并由 `print-c
 | snapshot | 无 | 返回 policy、printers 与完整 jobs 快照 |
 | cancel | job_id | Queued 立即取消；Running 持久化取消意图并通知 supervisor |
 | set_policy | policy=`fcfs|sjf|priority` | 改变后续领取策略并持久化 |
+| stats | 可选 window_start_ms/window_end_ms（整数，须在 [0, 当前时间] 内） | 调用 A 的 statistics() 返回窗口内统计 DTO；缺省窗口为 [0, now] |
 | shutdown | 无 | 停止接收新连接，等待活动/恢复中的任务收尾后退出 |
 
 异步广播使用同一连接发送。`job_state` 携带完整 job 快照；supervisor/worker 的 versioned 事件也会原样转发。C 必须按行分帧，并用 `request_id` 区分请求响应与无 request_id 的异步事件。

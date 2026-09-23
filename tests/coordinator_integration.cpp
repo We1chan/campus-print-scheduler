@@ -240,6 +240,20 @@ int main(int argc, char* argv[]) {
         require(!QFileInfo(QDir(root).filePath("output/cancel-job.txt")).exists(),
                 "cancelled job exposed final output");
 
+        const auto stats = restarted.request("stats");
+        require(stats.value("type").toString() == QStringLiteral("stats"), "stats command unsupported");
+        const auto counters = stats.value("statistics").toObject();
+        require(counters.value("completed").toInt() >= 1 &&
+                counters.value("failed").toInt() >= 1 &&
+                counters.value("cancelled").toInt() >= 1,
+                "stats counters do not reflect finished jobs");
+        const auto badWindow = restarted.request("stats", {{"window_start_ms", 10}, {"window_end_ms", 5}});
+        require(badWindow.value("type").toString() == QStringLiteral("error"),
+                "stats accepted an inverted window");
+        const auto negativeWindow = restarted.request("stats", {{"window_start_ms", -1}});
+        require(negativeWindow.value("type").toString() == QStringLiteral("error"),
+                "stats accepted a negative window start");
+
         submit(restarted, "recovery-job", 80);
         waitForState(restarted, "recovery-job", "running");
         coordinator.kill();

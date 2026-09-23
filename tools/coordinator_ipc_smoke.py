@@ -120,6 +120,12 @@ def main():
     check(r.get("type") == "accepted" and c.req({"type": "snapshot"})["policy"] == "sjf",
           "set_policy round-trips")
 
+    r = c.req({"type": "stats"})
+    check(r.get("type") == "stats" and r["statistics"]["completed"] >= 1,
+          "stats returns A's counters over IPC")
+    bad = c.req({"type": "stats", "window_start_ms": -1})
+    check(bad.get("type") == "error", "stats rejects invalid window")
+
     c.req({"type": "submit", "job": {"job_id": "smoke-cancel", "title": "取消", "pages": 300, "copies": 1}})
     c.wait_state("smoke-cancel", {"running"}, timeout=30)
     r = c.req({"type": "cancel", "job_id": "smoke-cancel"})

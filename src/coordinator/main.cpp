@@ -1,4 +1,5 @@
 #include "cps/core/scheduler.hpp"
+#include "cps/metrics/statistics.hpp"
 #include "cps/platform/daemon.hpp"
 #include "cps/runtime/job_io.hpp"
 #include "cps/runtime/state_store.hpp"
@@ -41,6 +42,36 @@ bool strictInt(const QJsonValue& value, int min, int max, int& result) {
     if (!std::isfinite(number) || number < min || number > max || std::floor(number) != number) return false;
     result = static_cast<int>(number);
     return true;
+}
+
+bool strictTime(const QJsonValue& value, cps::TimeMs max, cps::TimeMs& result) {
+    if (!value.isDouble()) return false;
+    const double number = value.toDouble();
+    if (!std::isfinite(number) || number < 0 || std::floor(number) != number ||
+        number > static_cast<double>(max)) return false;
+    result = static_cast<cps::TimeMs>(number);
+    return true;
+}
+
+QJsonObject statisticsToJson(const cps::Statistics& stats) {
+    return {
+        {"submitted", static_cast<double>(stats.submitted)},
+        {"first_started", static_cast<double>(stats.firstStarted)},
+        {"completed", static_cast<double>(stats.completed)},
+        {"failed", static_cast<double>(stats.failed)},
+        {"cancelled", static_cast<double>(stats.cancelled)},
+        {"queued", static_cast<double>(stats.queued)},
+        {"running", static_cast<double>(stats.running)},
+        {"cancelling", static_cast<double>(stats.cancelling)},
+        {"average_first_wait_ms", stats.averageFirstWaitMs},
+        {"max_first_wait_ms", static_cast<double>(stats.maxFirstWaitMs)},
+        {"average_total_queue_wait_ms", stats.averageTotalQueueWaitMs},
+        {"average_turnaround_ms", stats.averageTurnaroundMs},
+        {"max_current_queue_wait_ms", static_cast<double>(stats.maxCurrentQueueWaitMs)},
+        {"busy_printer_ms", stats.busyPrinterMs},
+        {"throughput_per_second", stats.throughputPerSecond},
+        {"utilization", stats.utilization}
+    };
 }
 
 QString defaultSocketName(const QString& stateDirectory) {
@@ -407,6 +438,32 @@ private:
             if (!persistOrStop()) return;
             reply(socket, requestId, {{"type", "accepted"}, {"policy", cps::policyName(*policy)}});
             dispatch();
+            return;
+        }
+
+        if (type == QLatin1String("stats")) {
+            const auto now = scheduler_->nowMs();
+            const auto startValue = command.value("window_start_ms");
+            const auto endValue = command.value("window_end_ms");
+            cps::TimeMs start = 0;
+            cps::TimeMs end = now;
+            if ((!startValue.isUndefined() && !strictTime(startValue, now, start)) ||
+                (!endValue.isUndefined() && !strictTime(endValue, now, end)) || start > end) {
+                commandError(socket, requestId,
+                             QStringLiteral("window_start_ms/window_end_ms must be integers in [0, now]"));
+                return;
+            }
+            try {
+                const auto stats = cps::statistics(scheduler_->snapshot(), start, end, state_.printers);
+                reply(socket, requestId, {
+                    {"type", "stats"},
+                    {"window_start_ms", static_cast<double>(start)},
+                    {"window_end_ms", static_cast<double>(end)},
+                    {"statistics", statisticsToJson(stats)}
+                });
+            } catch (const std::invalid_argument&) {
+                commandError(socket, requestId, QStringLiteral("invalid statistics window"));
+            }
             return;
         }
 
