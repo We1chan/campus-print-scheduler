@@ -1,5 +1,6 @@
 #include "event_stream.hpp"
 #include "print_window.hpp"
+#include "paper_workspace.hpp"
 
 #include <QApplication>
 #include <QComboBox>
@@ -18,11 +19,18 @@
 #include <QTemporaryDir>
 #include <QTest>
 #include <QElapsedTimer>
+#include <QDialog>
+#include <QListWidget>
 
 using namespace cps::gui;
 
 class GuiTests : public QObject {
     Q_OBJECT
+    static void openForm(PrintWindow& window) {
+        window.findChild<QPushButton*>("newTask")->click();
+        auto* dialog = window.findChild<QDialog*>("submissionDialog");
+        QVERIFY(dialog && dialog->isVisible());
+    }
 private slots:
     void framing() {
         const QByteArray line = QJsonDocument(QJsonObject{{"schema_version", 1},
@@ -77,25 +85,57 @@ private slots:
         auto* feedback = window.findChild<QLabel*>("feedback");
         QVERIFY(title && pages && submit && pause && table && feedback);
         QTest::mouseClick(pause, Qt::LeftButton);
+        openForm(window);
         title->setText("   ");
         QTest::mouseClick(submit, Qt::LeftButton);
         QTRY_VERIFY(feedback->text().contains(QStringLiteral("名称")));
         QCOMPARE(table->model()->rowCount(), 0);
         title->setText(QStringLiteral("中文 交互验收"));
         pages->setValue(2);
-        for (int i = 0; i < 3; ++i) QTest::mouseClick(submit, Qt::LeftButton);
+        for (int i = 0; i < 3; ++i) { openForm(window); QTest::mouseClick(submit, Qt::LeftButton); }
         QTRY_COMPARE(table->model()->rowCount(), 3);
+        window.findChild<QPushButton*>("navHistory")->click();
         table->selectRow(0);
         auto* cancel = window.findChild<QPushButton*>("cancelJob");
         QTRY_VERIFY(cancel->isEnabled());
         QTest::mouseClick(cancel, Qt::LeftButton);
         QTRY_COMPARE(table->model()->index(0, 3).data().toString(), QStringLiteral("已取消"));
+        window.findChild<QPushButton*>("navWorkspace")->click();
         QTest::mouseClick(pause, Qt::LeftButton);
+        window.findChild<QPushButton*>("navHistory")->click();
         QTRY_COMPARE_WITH_TIMEOUT(table->model()->index(1, 3).data().toString(), QStringLiteral("已完成"), 10000);
         QTRY_COMPARE(table->model()->index(2, 3).data().toString(), QStringLiteral("已完成"));
         QCOMPARE(QDir(root.path() + "/output").entryList({"*.txt"}, QDir::Files).size(), 2);
         window.close();
         QTRY_VERIFY(!window.isVisible());
+    }
+
+    void commandPaletteControlsDispatch() {
+        QTemporaryDir root;
+        PrintWindow window({root.path(), 10, false}); window.show();
+        auto* command = window.findChild<QPushButton*>("commandPalette");
+        auto* pause = window.findChild<QPushButton*>("pauseDispatch");
+        QVERIFY(command && pause);
+        bool foundDialog = false;
+        QTimer::singleShot(50, &window, [&] {
+            auto* dialog = window.findChild<QDialog*>("commandDialog");
+            if (!dialog) return;
+            auto* query = dialog->findChild<QLineEdit*>("commandQuery");
+            auto* choices = dialog->findChild<QListWidget*>("commandChoices");
+            if (!query || !choices) { dialog->reject(); return; }
+            foundDialog = true; query->setText(QStringLiteral("暂停"));
+            QTest::keyClick(query, Qt::Key_Return);
+        });
+        // A guard prevents a broken modal interaction from hanging the test suite.
+        QTimer::singleShot(2000, &window, [&] { auto* dialog=window.findChild<QDialog*>("commandDialog"); if(dialog)dialog->reject(); });
+        command->click();
+        QVERIFY(foundDialog); QVERIFY(pause->isChecked());
+        auto* motion = window.findChild<QPushButton*>("reduceMotion");
+        QVERIFY(motion); motion->click();
+        QVERIFY(motion->isChecked());
+        // These visual controls must not resume dispatch or create jobs.
+        QVERIFY(pause->isChecked()); QCOMPARE(window.findChild<QTableView*>("jobsTable")->model()->rowCount(),0);
+        window.close(); QTRY_VERIFY(!window.isVisible());
     }
 
     void largeQueueRemainsInteractive() {
@@ -126,6 +166,7 @@ private slots:
         QTRY_COMPARE_WITH_TIMEOUT(table->model()->rowCount(), 5000, 15000);
         QVERIFY(ticks > 0);
         auto* title = window.findChild<QLineEdit*>("jobTitle");
+        openForm(window);
         title->clear();
         QTest::keyClicks(title, "still responsive");
         QCOMPARE(title->text(), QString("still responsive"));
@@ -133,6 +174,61 @@ private slots:
         qInfo("5000-job import: heartbeat ticks=%d, longest observed gap=%lld ms", ticks, static_cast<long long>(longestGap));
         // No executor was started while the local queue was paused.
         QVERIFY(!QDir(root.path() + "/output").exists());
+        window.findChild<QDialog*>("submissionDialog")->reject();
+    }
+
+    void paperWorkbenchTracksPolicyAndRealJobs() {
+        QTemporaryDir root;
+        PrintWindow window({root.path(), 100, false});
+        window.resize(1380, 860); window.show();
+        QVERIFY(QTest::qWaitForWindowExposed(&window));
+        auto* pause = window.findChild<QPushButton*>("pauseDispatch");
+        pause->click();
+        window.submitRequested(QStringLiteral("操作系统实验报告"), 30, 1, 1);
+        window.submitRequested(QStringLiteral("实验数据"), 2, 1, 0);
+        window.submitRequested(QStringLiteral("阅读材料"), 10, 1, 9);
+        auto* table = window.findChild<QTableView*>("jobsTable");
+        auto* canvas = dynamic_cast<PaperWorkspace*>(window.findChild<QWidget*>("paperWorkspace"));
+        auto* policy = window.findChild<QComboBox*>("schedulingPolicy");
+        QVERIFY(canvas && policy);
+        QTRY_COMPARE(table->model()->rowCount(), 3);
+        const auto id = [&](int row) { return table->model()->index(row, 0).data(Qt::UserRole).toString(); };
+        QTRY_COMPARE(canvas->waitingIds().value(0), id(0));
+        policy->setCurrentIndex(1);
+        QTRY_COMPARE(canvas->waitingIds().value(0), id(1));
+        policy->setCurrentIndex(2);
+        QTRY_COMPARE(canvas->waitingIds().value(0), id(2));
+        window.findChild<QPushButton*>("waitingJob0")->click();
+        QCOMPARE(canvas->selectedId(), id(2));
+        policy->setCurrentIndex(0);
+        QTRY_COMPARE(canvas->waitingIds().value(0), id(0));
+        const auto evidence = qEnvironmentVariable("CPS_GUI_EVIDENCE_DIR");
+        auto screenshot = [&](const QString& name) {
+            return evidence.isEmpty() || (QDir().mkpath(evidence) && window.grab().save(QDir(evidence).filePath(name)));
+        };
+        QTest::qWait(450); QVERIFY(screenshot("paper-01-queued.png"));
+        pause->click();
+        QTRY_COMPARE(table->model()->index(0, 3).data().toString(), QStringLiteral("打印中"));
+        policy->setCurrentIndex(2);
+        // Policy changes must not preempt the already running long task.
+        QCOMPARE(table->model()->index(0, 3).data().toString(), QStringLiteral("打印中"));
+        window.findChild<QPushButton*>("waitingJob0")->click();
+        QTest::qWait(180);
+        QVERIFY(screenshot("paper-02-running.png"));
+        QTRY_COMPARE_WITH_TIMEOUT(table->model()->index(0, 3).data().toString(), QStringLiteral("已完成"), 10000);
+        QTRY_COMPARE(table->model()->index(2, 3).data().toString(), QStringLiteral("已完成"));
+        QTRY_VERIFY(canvas->waitingIds().isEmpty());
+        QCOMPARE(QDir(root.path() + "/output").entryList({"*.txt"}, QDir::Files).size(), 3);
+        QVERIFY(screenshot("paper-03-completed.png"));
+        openForm(window);
+        if (!evidence.isEmpty()) QVERIFY(window.findChild<QDialog*>("submissionDialog")->grab().save(QDir(evidence).filePath("paper-04-form.png")));
+        window.findChild<QDialog*>("submissionDialog")->reject();
+        window.resize(1000, 680);
+        auto* scroll = window.findChild<QScrollArea*>("workbenchScroll");
+        scroll->ensureWidgetVisible(pause);
+        QTRY_VERIFY(scroll->viewport()->rect().contains(QRect(pause->mapTo(scroll->viewport(), QPoint(0, 0)), pause->size())));
+        QVERIFY(screenshot("paper-05-compact.png"));
+        window.close(); QTRY_VERIFY(!window.isVisible());
     }
 
     void invalidBatchIsAtomicAndReportIsWritten() {
@@ -160,6 +256,7 @@ private slots:
         QTemporaryDir root;
         PrintWindow window({root.path(), 30, false});
         window.show();
+        openForm(window);
         QTest::mouseClick(window.findChild<QPushButton*>("submitJob"), Qt::LeftButton);
         window.close(); // Close before the first UI snapshot arrives.
         QTRY_VERIFY(window.findChild<QLabel*>("feedback")->text().contains(QStringLiteral("仍有等待或运行任务")));
@@ -182,8 +279,11 @@ private slots:
         auto* pages = window.findChild<QSpinBox*>("jobPages");
         pages->setValue(1000); // Keep both jobs alive until explicitly cancelled.
         auto* submit = window.findChild<QPushButton*>("submitJob");
+        openForm(window);
         QTest::mouseClick(submit, Qt::LeftButton);
+        openForm(window);
         QTest::mouseClick(submit, Qt::LeftButton);
+        window.findChild<QPushButton*>("navHistory")->click();
         auto* table = window.findChild<QTableView*>("jobsTable");
         QTRY_COMPARE(table->model()->rowCount(), 2);
         table->selectRow(0);
@@ -232,6 +332,7 @@ private slots:
         PrintWindow window({root.path(), 30, true});
         window.resize(1060, 720);
         window.show();
+        window.findChild<QPushButton*>("navHistory")->click();
         QVERIFY(QTest::qWaitForWindowExposed(&window));
         auto* table = window.findChild<QTableView*>("jobsTable");
         auto* fault = window.findChild<QPushButton*>("injectFault");

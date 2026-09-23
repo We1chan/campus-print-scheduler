@@ -10,6 +10,7 @@
 #include <QThread>
 #include <QUuid>
 #include <cmath>
+#include <algorithm>
 
 namespace cps::gui {
 PrintController::PrintController(WindowOptions options) : options_(std::move(options)) {}
@@ -313,6 +314,21 @@ void PrintController::publish() {
         detail.state = job.state;
         view.jobs.append(detail);
     }
+    std::vector<const Job*> waiting;
+    for (const auto& job : jobs)
+        if (job.state == JobState::Queued && job.queuedSinceMs <= now) waiting.push_back(&job);
+    std::stable_sort(waiting.begin(), waiting.end(), [&](const Job* a, const Job* b) {
+        if (policy_ == Policy::ShortestJobFirst && a->sheets() != b->sheets()) return a->sheets() < b->sheets();
+        if (policy_ == Policy::PriorityAging) {
+            const auto score = [now](const Job* j) {
+                return j->priority + (j->accumulatedWaitMs + now - j->queuedSinceMs) / SchedulerOptions{}.agingIntervalMs;
+            };
+            if (score(a) != score(b)) return score(a) > score(b);
+        }
+        return a->queuedSinceMs < b->queuedSinceMs;
+    });
+    for (const auto* job : waiting) view.waitingOrder.append(QString::fromStdString(job->id));
+    view.policyIndex = policy_ == Policy::Fcfs ? 0 : policy_ == Policy::ShortestJobFirst ? 1 : 2;
     view.printers = printers_;
     view.paused = paused_;
     view.connection = available_ ? QStringLiteral("本地执行器就绪 · 内存队列") : QStringLiteral("执行器不可用 · 等待重新检查");
