@@ -200,17 +200,26 @@ class Processes(unittest.TestCase):
 
     def test_gui_offscreen_startup(self):
         env = dict(os.environ, QT_QPA_PLATFORM="offscreen")
-        result = subprocess.run([str(ARGS.gui), "--smoke-test", "--data-dir", str(self.root / "gui-smoke")], env=env,
-                                capture_output=True, timeout=15)
-        self.assertEqual(result.returncode, 0, result.stderr.decode("utf-8", errors="replace"))
         coordinator = ARGS.gui.with_name("print-coordinator" + (".exe" if os.name == "nt" else ""))
-        stopped = self.run_command([str(coordinator), "--state-dir", str(self.root / "gui-smoke"),
-                                    "--request", json.dumps({"type": "shutdown"})])
-        self.assertEqual(stopped.returncode, 0, stopped.stderr)
-        deadline = time.monotonic() + 5
-        while (self.root / "gui-smoke" / ".coordinator.lock").exists() and time.monotonic() < deadline:
-            time.sleep(0.05)
-        self.assertFalse((self.root / "gui-smoke" / ".coordinator.lock").exists())
+        process = subprocess.Popen([str(ARGS.gui), "--smoke-test", "--data-dir", str(self.root / "gui-smoke")],
+                                   env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        try:
+            # The GUI must release its capture pipes while its coordinator is still alive.
+            # Popen lets finally stop that coordinator even if pipe EOF never arrives;
+            # subprocess.run's timeout cleanup can itself hang on Windows in that case.
+            _, stderr = process.communicate(timeout=15)
+            self.assertEqual(process.returncode, 0, stderr.decode("utf-8", errors="replace"))
+        finally:
+            if process.poll() is None:
+                process.kill()
+            stopped = self.run_command([str(coordinator), "--state-dir", str(self.root / "gui-smoke"),
+                                        "--request", json.dumps({"type": "shutdown"})])
+            process.communicate(timeout=5)
+            self.assertEqual(stopped.returncode, 0, stopped.stderr)
+            deadline = time.monotonic() + 5
+            while (self.root / "gui-smoke" / ".coordinator.lock").exists() and time.monotonic() < deadline:
+                time.sleep(0.05)
+            self.assertFalse((self.root / "gui-smoke" / ".coordinator.lock").exists())
 
     @unittest.skipIf(os.name == "nt", "POSIX daemon mode; Windows uses foreground supervision")
     def test_posix_daemon(self):

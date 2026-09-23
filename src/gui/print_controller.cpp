@@ -14,6 +14,9 @@
 #include <QThread>
 #include <QUuid>
 #include <cmath>
+#ifdef Q_OS_WIN
+#include <qt_windows.h>
+#endif
 
 namespace cps::gui {
 PrintController::PrintController(WindowOptions options) : options_(std::move(options)) {}
@@ -49,8 +52,22 @@ bool PrintController::connectBackend() {
             if (options_.demoMode) args << "--demo-mode";
             backend.setArguments(args);
             backend.setWorkingDirectory(QDir(options_.stateDirectory).absolutePath());
+            backend.setStandardInputFile(QProcess::nullDevice());
             backend.setStandardOutputFile(QProcess::nullDevice());
             backend.setStandardErrorFile(QDir(options_.stateDirectory).filePath("coordinator.log"), QIODevice::Append);
+#ifdef Q_OS_WIN
+            // Qt's detached CreateProcess inherits all inheritable handles, including
+            // a launcher's capture pipes even when we redirect the new standard streams.
+            // Keep this GUI's own streams usable, but never pass them to the daemon.
+            for (const DWORD channel : {STD_INPUT_HANDLE, STD_OUTPUT_HANDLE, STD_ERROR_HANDLE}) {
+                const HANDLE handle = GetStdHandle(channel);
+                if (handle && handle != INVALID_HANDLE_VALUE &&
+                    !SetHandleInformation(handle, HANDLE_FLAG_INHERIT, 0)) {
+                    log(QStringLiteral("无法隔离后台启动句柄：%1").arg(GetLastError()));
+                    return false;
+                }
+            }
+#endif
             if (!backend.startDetached()) log(QStringLiteral("后台启动失败：") + backend.errorString());
         }
     }
