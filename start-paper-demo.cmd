@@ -22,4 +22,7 @@ if not defined PAPER_APP (
     pause
     exit /b 1
 )
+rem Owner console first: it creates the shop backend and loads the demo orders.
 start "" "%PAPER_APP%" --data-dir "%ROOT%runtime\paper-demo" --demo-mode --demo-workload --page-ms 650
+rem Student client: a second process on the same data directory and backend.
+start "" "%PAPER_APP%" --role student --data-dir "%ROOT%runtime\paper-demo" --demo-mode --page-ms 650

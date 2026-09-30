@@ -14,6 +14,8 @@ constexpr TimeMs MaxTimeMs = 9007199254740991LL; // exactly representable in JSO
 enum class Policy { Fcfs, ShortestJobFirst, PriorityAging, Deadline, Revenue };
 enum class PaperSize { A4, A3 };
 enum class ServiceTier { Express, Standard, Flexible };
+// Counter: settled at the shop. The others are simulated online prepayments.
+enum class PaymentMethod { Counter, Wechat, Alipay, CampusCard };
 using Money = std::int64_t; // integer cents, never floating point currency
 struct Printer {
     std::string name;
@@ -56,6 +58,8 @@ struct Job {
     Money costCents = 0;
     Money refundCents = 0;
     int assignedPrinter = -1;
+    PaymentMethod payment = PaymentMethod::Counter;
+    std::string customer = {};        // self-service account, empty for counter orders
     int sheets() const { return pages * copies; }
     int paperSheets() const { return ((pages + (duplex ? 1 : 0)) / (duplex ? 2 : 1)) * copies; }
 };

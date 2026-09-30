@@ -31,6 +31,14 @@ struct JobView {
     QString specification = {};
     Money quotedCents = 0;
     QString deadline = {};
+    TimeMs estimatedStartMs = -1;  // backend forecast, -1 when there is none
+    TimeMs estimatedFinishMs = -1;
+    QString blocked = {};          // no_device / no_paper / horizon
+    int ahead = 0;
+    QString customer = {};
+    PaymentMethod payment = PaymentMethod::Counter;
+    Money refundCents = 0;
+    int printer = -1;
 };
 struct PrinterView {
     QString jobId;
@@ -39,6 +47,8 @@ struct PrinterView {
     int printed = 0;
     int total = 0;
     QString connection;
+    TimeMs estimatedFinishMs = -1;
+    QString customer = {};
 };
 struct ViewState {
     QList<JobView> jobs;
@@ -47,6 +57,8 @@ struct ViewState {
     std::vector<PrinterView> printers = std::vector<PrinterView>(2);
     QJsonObject shop;
     Statistics metrics;
+    TimeMs nowMs = 0;        // backend clock of this snapshot
+    TimeMs queueClearMs = -1;
     QString connection;
     bool paused = false;
     bool connected = false;
@@ -63,6 +75,7 @@ public slots:
     void submit(const QString& title, int pages, int copies, int priority);
     void importFile(const QString& path);
     void submitOrder(QJsonObject order);
+    void requestQuote(QJsonObject order, int token);
     void runExperiments(const QString& path, int customers);
     void shopCommand(const QString& type, QJsonObject payload);
     void cancel(const QString& id);
@@ -75,14 +88,18 @@ public slots:
     void disconnectControl(const QString& id);
 signals:
     void experimentReady(const QJsonObject& report);
+    // An empty quote means the backend was unreachable; type "error" means rejected.
+    void quoteReady(int token, const QJsonObject& quote);
+    void orderResult(bool accepted, const QString& jobId, const QString& message);
     void viewChanged(const cps::gui::ViewState& state);
-    void feedback(const QString& text);
+    // `problem` marks a rejected, failed or unconfirmed action so the window can colour it.
+    void feedback(const QString& text, bool problem = false);
     void logsReady(const QStringList& lines);
     void closeReady(bool allowed);
 private:
     bool connectBackend();
     QJsonObject request(const QString& type, QJsonObject payload = {});
-    void mutate(const QString& type, QJsonObject payload = {});
+    QJsonObject mutate(const QString& type, QJsonObject payload = {});
     void refresh();
     void publish();
     void disconnected();

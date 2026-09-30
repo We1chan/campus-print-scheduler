@@ -50,6 +50,20 @@ int main() {
         check(concurrent.cancel(claimed.id, 1) && concurrent.acknowledgeCancel(claimed.id, 1, 2), "cancel execution");
         check(cps::availablePaper(concurrent.snapshot(), {10, 0}).a4 == 10, "cancel releases reservation");
         check(concurrent.claimFor(cps::Policy::Fcfs, 3, fleet, {0, 1}, {10, 0}).has_value(), "released stock reusable");
+        cps::Scheduler paying;
+        auto online = order("online"); online.payment = cps::PaymentMethod::Wechat; online.customer = "2024000001";
+        check(paying.submit(online) && paying.submit(order("counter")), "paid orders");
+        auto money = cps::shopMetrics(paying.snapshot(), 0, 10);
+        check(money.prepaidCents == online.quotedCents && money.pendingCents == 2 * online.quotedCents,
+              "online prepayment is held until the order completes");
+        check(paying.claimFor(cps::Policy::Fcfs, 0, fleet, {0}, {100, 0}).value().id == "online" &&
+              paying.finish("online", 1, true, 5) && paying.refund("online", 50), "complete paid order");
+        money = cps::shopMetrics(paying.snapshot(), 0, 10);
+        check(money.prepaidCents == 0 && money.paidCents[1] == online.quotedCents - 50 && money.paidCents[0] == 0,
+              "settled revenue is split by payment channel");
+        check(paying.snapshot()[0].customer == "2024000001", "customer survives the queue");
+        online.id = "bad-channel"; online.payment = static_cast<cps::PaymentMethod>(9);
+        check(!paying.submit(online), "unknown payment method rejected");
         cps::Scheduler deadlines;
         auto slow = order("later", 100), quick = order("urgent", 10);
         slow.deadlineMs = 100000; quick.deadlineMs = 1000;

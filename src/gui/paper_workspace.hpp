@@ -2,6 +2,7 @@
 
 #include "print_controller.hpp"
 #include "ui_theme.hpp"
+#include "view_text.hpp"
 #include <QPainterPath>
 #include <QPushButton>
 #include <QVariantAnimation>
@@ -165,10 +166,12 @@ protected:
         paper::text(p, {30, 87, copyWidth, 46}, job.id.isEmpty() ? QStringLiteral("让文档，有序抵达。") : job.title,
                     width() < 1180 ? 22 : 27, paper::ink, true);
         QString device;
+        const auto fleet = view_.shop.value("fleet").toArray();
         for (int i = 0; i < static_cast<int>(view_.printers.size()); ++i) if (!job.id.isEmpty() && view_.printers[i].jobId == job.id)
-            device = QStringLiteral(" · 打印机 0%1").arg(i + 1);
+            device = QStringLiteral(" · ") + text::deviceName(fleet[i].toObject(), i);
         paper::text(p, {30, 139, copyWidth, 27}, job.id.isEmpty() ? QStringLiteral("新建任务，开始一次轻盈的打印")
-            : QStringLiteral("%1 页 · 优先级 %2").arg(job.sheets).arg(job.priority) + device, 12, paper::muted);
+            : QStringLiteral("%1 页 · 优先级 %2").arg(job.sheets).arg(job.priority) + device +
+              (job.estimatedFinishMs >= 0 ? QStringLiteral(" · ") + job.detail : QString()), 12, paper::muted);
         const int percent = job.sheets > 0 ? job.printed * 100 / job.sheets : 0;
         const double bottom = height() - 113;
         paper::text(p, {30, bottom, copyWidth, 45}, job.id.isEmpty() ? QStringLiteral("准备好了") : QString::number(percent) + "%",
@@ -196,7 +199,8 @@ protected:
             paper::document(p, {row.left() + 2, row.top() + 11, 36, 47}, {}, 0, j.sheets, true);
             paper::text(p, {row.left() + 51, row.top() + 10, row.width() - 82, 28}, j.title, 13, paper::ink, true);
             paper::text(p, {row.left() + 51, row.top() + 36, row.width() - 61, 22},
-                        QStringLiteral("%1 页  ·  优先级 %2").arg(j.sheets).arg(j.priority), 11, paper::muted);
+                        QStringLiteral("%1 页  ·  ").arg(j.sheets) + (j.estimatedFinishMs < 0 ? QStringLiteral("优先级 %1").arg(j.priority)
+                            : view_.paused ? QStringLiteral("派发已暂停") : text::startsIn(j.estimatedStartMs - view_.nowMs)), 11, paper::muted);
             paper::text(p, {row.right() - 25, row.top() + 10, 25, 25}, QString("#%1").arg(i + 1), 11, paper::muted);
             p.setPen(QColor("#E7E9EE")); p.drawLine(row.bottomLeft(), row.bottomRight());
         }
@@ -250,15 +254,19 @@ protected:
         paper::text(p, {left, 0, activeWidth, 24}, QStringLiteral("当前执行 · 实时页数"), 11, paper::muted);
         paper::text(p, {left + activeWidth + 25, 0, right - left - activeWidth - 25, 24},
                     QStringLiteral("待派发顺序 · 完成后分配空闲设备"), 10, paper::muted);
+        const auto fleet = view_.shop.value("fleet").toArray();
         for (int i = 0; i < static_cast<int>(view_.printers.size()); ++i) {
             const auto& device = view_.printers[i]; const double y = 34 + i * 76;
+            const auto profile = fleet[i].toObject();
+            const bool idle = device.jobId.isEmpty(), accepting = profile.value("online").toBool(true);
             p.setPen(QColor("#E8ECF3")); p.drawLine(QPointF(24, y), QPointF(right, y));
             paper::printer(p, {30, y + 15, 62, 47});
-            paper::text(p, {107, y + 13, 99, 25}, QStringLiteral("打印机 0%1").arg(i + 1), 12, paper::ink, true);
-            paper::text(p, {107, y + 38, 99, 22}, device.jobId.isEmpty() ? QStringLiteral("空闲 · 等待任务") : device.status,
-                        10, device.jobId.isEmpty() ? paper::muted : paper::blue);
-            paper::text(p, {left, y + 12, activeWidth - 20, 26}, device.jobId.isEmpty()
-                ? QStringLiteral("准备接收下一份文档") : device.title, 12, paper::ink, true);
+            paper::text(p, {107, y + 13, 99, 25}, text::deviceName(profile, i), 12, paper::ink, true);
+            paper::text(p, {107, y + 38, 99, 22}, !accepting ? (idle ? QStringLiteral("暂停接单") : device.status + QStringLiteral(" · 暂停接单"))
+                : idle ? QStringLiteral("空闲 · 等待任务") : device.status,
+                        10, !accepting ? QColor("#A77D43") : idle ? paper::muted : paper::blue);
+            paper::text(p, {left, y + 12, activeWidth - 20, 26}, idle
+                ? (accepting ? QStringLiteral("准备接收下一份文档") : QStringLiteral("已暂停接单，不会分配新订单")) : device.title, 12, paper::ink, true);
             const double ratio = device.total > 0 ? std::clamp(double(device.printed) / device.total, 0., 1.) : 0;
             QRectF bar(left, y + 48, activeWidth - 74, 5);
             p.setPen(Qt::NoPen); p.setBrush(QColor("#E5E9F1")); p.drawRoundedRect(bar, 2.5, 2.5);

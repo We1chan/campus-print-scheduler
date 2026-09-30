@@ -1,4 +1,5 @@
 #include "print_controller.hpp"
+#include "view_text.hpp"
 #include "cps/runtime/job_io.hpp"
 #include "cps/runtime/state_store.hpp"
 #include "cps/runtime/shop_io.hpp"
@@ -120,40 +121,50 @@ QJsonObject PrintController::request(const QString& type, QJsonObject payload) {
     disconnected(); return {};
 }
 
-void PrintController::mutate(const QString& type, QJsonObject payload) {
+QJsonObject PrintController::mutate(const QString& type, QJsonObject payload) {
     const auto response = request(type, std::move(payload));
     if (response.value("type").toString() == "accepted")
         emit feedback(QStringLiteral("后台已确认操作并保存状态。"));
     else if (response.isEmpty())
-        emit feedback(QStringLiteral("未收到后台确认，请重连后核对队列；未自动重发操作。"));
-    else emit feedback(QStringLiteral("后台拒绝操作：") + response.value("reason").toString());
+        emit feedback(QStringLiteral("未收到后台确认，请重连后核对队列；未自动重发操作。"), true);
+    else emit feedback(QStringLiteral("后台拒绝操作：") + response.value("reason").toString(), true);
     refresh();
+    return response;
 }
 
 void PrintController::submit(const QString& title, int pages, int copies, int priority) {
     if (title.trimmed().isEmpty() || title.trimmed().size() > 200 || pages < 1 || pages > 1000 ||
         copies < 1 || copies > 100 || pages * copies > 10000 || priority < 0 || priority > 100) {
-        emit feedback(QStringLiteral("提交失败：名称须为 1–200 字符，总页数不得超过 10000。")); return;
+        emit feedback(QStringLiteral("提交失败：名称须为 1–200 字符，总页数不得超过 10000。"), true); return;
     }
     mutate("submit", {{"job", QJsonObject{{"job_id", QUuid::createUuid().toString(QUuid::WithoutBraces)},
         {"title", title.trimmed()}, {"pages", pages}, {"copies", copies}, {"priority", priority}}}});
 }
 
 void PrintController::submitOrder(QJsonObject order) {
-    order.insert("job_id", QUuid::createUuid().toString(QUuid::WithoutBraces));
-    mutate("submit", {{"job", order}});
+    const auto id = QUuid::createUuid().toString(QUuid::WithoutBraces);
+    order.insert("job_id", id);
+    const auto response = mutate("submit", {{"job", order}});
+    const bool accepted = response.value("type").toString() == "accepted";
+    emit orderResult(accepted, id, accepted ? QString() : response.isEmpty()
+        ? QStringLiteral("未收到后台确认，请在订单列表核对后再操作。") : response.value("reason").toString());
+}
+void PrintController::requestQuote(QJsonObject order, int token) {
+    // A quote never enters the queue; the id only has to satisfy validation.
+    order.insert("job_id", QStringLiteral("quote-preview"));
+    emit quoteReady(token, request("quote", {{"job", order}}));
 }
 void PrintController::shopCommand(const QString& type, QJsonObject payload) { mutate(type, std::move(payload)); }
 
 void PrintController::importFile(const QString& path) {
     QFile file(path);
     if (!file.open(QIODevice::ReadOnly) || file.size() > 4 * 1024 * 1024) {
-        emit feedback(QStringLiteral("导入失败：文件无法读取或超过 4 MiB。")); return;
+        emit feedback(QStringLiteral("导入失败：文件无法读取或超过 4 MiB。"), true); return;
     }
     QJsonParseError error;
     const auto doc = QJsonDocument::fromJson(file.readAll(), &error);
     if (error.error != QJsonParseError::NoError || !doc.isArray() || doc.array().isEmpty() || doc.array().size() > 10000) {
-        emit feedback(QStringLiteral("导入失败：需要 1–10000 条任务的 JSON 数组，未导入任何任务。")); return;
+        emit feedback(QStringLiteral("导入失败：需要 1–10000 条任务的 JSON 数组，未导入任何任务。"), true); return;
     }
     QJsonArray jobs;
     for (const auto& item : doc.array()) {
@@ -167,7 +178,7 @@ void PrintController::importFile(const QString& path) {
         if (!item.isObject() || title.isEmpty() || title.size() > 200 || !valid("pages", 1, 1000, -1) ||
             !valid("copies", 1, 100, 1) || !valid("priority", 0, 100, 0) ||
             job.value("pages").toInt() * job.value("copies").toInt() > 10000) {
-            emit feedback(QStringLiteral("导入失败：存在无效字段，未导入任何任务。")); return;
+            emit feedback(QStringLiteral("导入失败：存在无效字段，未导入任何任务。"), true); return;
         }
         QJsonObject input{{"job_id", QUuid::createUuid().toString(QUuid::WithoutBraces)},
             {"title", title}, {"pages", job.value("pages")}, {"copies", job.value("copies")}, {"priority", job.value("priority")}};
@@ -195,6 +206,10 @@ bool PrintController::applySnapshot(const QJsonObject& snapshot) {
     ViewState next;
     next.printers.resize(static_cast<std::size_t>(snapshot.value("printers").toInt()));
     next.shop = snapshot;
+    next.nowMs = static_cast<TimeMs>(snapshot.value("now_ms").toDouble());
+    next.queueClearMs = snapshot.value("queue_clear_ms").isDouble()
+        ? static_cast<TimeMs>(snapshot.value("queue_clear_ms").toDouble()) : -1;
+    const bool paused = snapshot.value("paused").toBool();
     for (const auto& row : snapshot.value("jobs").toArray()) {
         Job job; QString error;
         if (!row.isObject() || !cps::jobSnapshotFromJson(row.toObject(), job, error)) return false;
@@ -202,33 +217,35 @@ bool PrintController::applySnapshot(const QJsonObject& snapshot) {
         const auto title = QString::fromUtf8(job.title.data(), static_cast<qsizetype>(job.title.size()));
         const bool recovering = object.value("recovering").toBool();
         const int printed = object.value("printed_sheets").toInt();
-        QString detail = recovering ? QStringLiteral("后台正在核对旧执行结果") :
-            QStringLiteral("执行次数 %1").arg(job.attempts);
-        if (job.state == JobState::Queued && snapshot.value("shop_enabled").toBool()) {
-            const int stock = snapshot.value(job.paper == PaperSize::A3 ? "stock_a3" : "stock_a4").toInt();
-            bool online = false;
-            for (const auto& p : snapshot.value("fleet").toArray()) {
-                Printer device; if (printerFromJson(p.toObject(), device) && compatible(job, device)) online = true;
-            }
-            if (job.attempts == 0 && stock < job.paperSheets()) detail = QStringLiteral("纸张不足，等待补货");
-            else if (!online) detail = QStringLiteral("兼容设备暂停接单");
-            else detail = QStringLiteral("等待兼容设备 · 已锁定报价");
-        }
-        const auto spec = QString(job.paper == PaperSize::A3 ? "A3" : "A4") +
+        JobView item;
+        item.id = id; item.title = title; item.sheets = job.sheets(); item.priority = job.priority; item.state = job.state;
+        item.printed = printed; item.controlReady = true; item.quotedCents = job.quotedCents;
+        item.specification = QString(job.paper == PaperSize::A3 ? "A3" : "A4") +
             (job.color ? QStringLiteral(" 彩色") : QStringLiteral(" 黑白")) +
             (job.duplex ? QStringLiteral(" 双面") : QStringLiteral(" 单面"));
-        const auto deadline = job.deadlineMs > 0 ? QDateTime::fromMSecsSinceEpoch(job.deadlineMs).toString("MM-dd HH:mm") : QStringLiteral("—");
-        next.jobs.append({id, title, job.sheets(), job.priority, job.state, printed, detail, true, spec, job.quotedCents, deadline});
+        item.deadline = job.deadlineMs > 0 ? QDateTime::fromMSecsSinceEpoch(job.deadlineMs).toString("MM-dd HH:mm") : QStringLiteral("—");
+        if (object.value("estimated_finish_ms").isDouble()) {
+            item.estimatedStartMs = static_cast<TimeMs>(object.value("estimated_start_ms").toDouble());
+            item.estimatedFinishMs = static_cast<TimeMs>(object.value("estimated_finish_ms").toDouble());
+        }
+        item.blocked = object.value("estimate_blocked").toString(); item.ahead = object.value("jobs_ahead").toInt();
+        item.customer = QString::fromUtf8(job.customer.data(), static_cast<qsizetype>(job.customer.size()));
+        item.payment = job.payment; item.refundCents = job.refundCents; item.printer = job.assignedPrinter;
+        // The forecast comes from the backend's own dispatch rules; the GUI only words it.
+        const auto forecast = recovering ? QString() : text::forecast(item, next.nowMs, paused);
+        item.detail = recovering ? QStringLiteral("后台正在核对旧执行结果") : !forecast.isEmpty() ? forecast :
+            QStringLiteral("执行次数 %1").arg(job.attempts);
+        next.jobs.append(item);
         const int slot = object.value("slot").toInt(-1);
         if (slot >= 0 && slot < static_cast<int>(next.printers.size())) next.printers[slot] = {id, title,
             recovering ? QStringLiteral("恢复核对中") : job.state == JobState::Cancelling ? QStringLiteral("取消中") : QStringLiteral("打印中"),
-            printed, job.sheets(), QStringLiteral("后台已连接")};
+            printed, job.sheets(), QStringLiteral("后台已连接"), item.estimatedFinishMs, item.customer};
     }
     for (const auto& id : snapshot.value("waiting_order").toArray()) next.waitingOrder.append(id.toString());
     const auto policy = cps::policyFromName(snapshot.value("policy").toString());
     if (!policy) return false;
     next.policyIndex = static_cast<int>(*policy);
-    next.paused = snapshot.value("paused").toBool();
+    next.paused = paused;
     const auto m = snapshot.value("metrics").toObject();
     auto& stats = next.metrics;
     stats.submitted = static_cast<std::size_t>(m.value("submitted").toDouble());
@@ -271,7 +288,7 @@ void PrintController::log(const QString& line) {
 }
 void PrintController::exportReport(const QString& path) {
     refresh();
-    if (!available_) { emit feedback(QStringLiteral("报表未导出：无法获取后台最新快照。")); return; }
+    if (!available_) { emit feedback(QStringLiteral("报表未导出：无法获取后台最新快照。"), true); return; }
     auto report = snapshot_.value("metrics").toObject();
     report.insert("schema_version", 1); report.insert("mode", "persistent_simulation");
     report.insert("policy", snapshot_.value("policy"));
@@ -280,11 +297,11 @@ void PrintController::exportReport(const QString& path) {
     report.insert("window_end_ms", snapshot_.value("now_ms"));
     report.insert("printers", snapshot_.value("printers")); report.insert("page_ms", snapshot_.value("page_ms"));
     report.insert("jobs", snapshot_.value("jobs"));
-    for (const auto* key : {"fleet", "shop_enabled", "shop_metrics", "stock_a4", "stock_a3", "supplied_a4", "supplied_a3"})
+    for (const auto* key : {"fleet", "shop_enabled", "shop_metrics", "stock_a4", "stock_a3", "supplied_a4", "supplied_a3", "queue_clear_ms", "blocked_orders"})
         report.insert(key, snapshot_.value(key));
     const auto data = QJsonDocument(report).toJson(); QSaveFile file(path);
     if (!file.open(QIODevice::WriteOnly) || file.write(data) != data.size() || !file.commit())
-        emit feedback(QStringLiteral("报表写入失败：") + file.errorString());
+        emit feedback(QStringLiteral("报表写入失败：") + file.errorString(), true);
     else emit feedback(QStringLiteral("报表已保存：") + path);
 }
 void PrintController::runExperiments(const QString& path, int customers) {
@@ -306,12 +323,12 @@ void PrintController::runExperiments(const QString& path, int customers) {
                 }
                 emit experimentReady({{"runs", summaries}, {"path", path}});
                 emit feedback(QStringLiteral("实验完成，完整输入与派发记录已保存：") + path);
-            } else emit feedback(QStringLiteral("实验失败：") + QString::fromUtf8(process->readAllStandardError()).left(300));
+            } else emit feedback(QStringLiteral("实验失败：") + QString::fromUtf8(process->readAllStandardError()).left(300), true);
             experiments_ = nullptr; process->deleteLater();
         });
     connect(process, &QProcess::errorOccurred, this, [this, process](QProcess::ProcessError error) {
         if (error == QProcess::FailedToStart) {
-            emit feedback(QStringLiteral("实验程序无法启动：") + process->errorString());
+            emit feedback(QStringLiteral("实验程序无法启动：") + process->errorString(), true);
             experiments_ = nullptr; process->deleteLater();
         }
     });

@@ -13,7 +13,9 @@ bool validTerms(const Job& j) {
         j.deadlineMs >= 0 && j.deadlineMs <= MaxTimeMs && (j.deadlineMs == 0 || j.deadlineMs >= j.submittedMs) &&
         j.baseCents >= 0 && j.baseCents <= 3000000 && j.quotedCents >= 0 && j.quotedCents <= j.baseCents &&
         j.costCents >= 0 && j.costCents <= 3000000 && j.refundCents >= 0 && j.refundCents <= j.quotedCents &&
-        (j.refundCents == 0 || j.state == JobState::Completed) && j.assignedPrinter >= -1 && j.assignedPrinter < 64;
+        (j.refundCents == 0 || j.state == JobState::Completed) && j.assignedPrinter >= -1 && j.assignedPrinter < 64 &&
+        (j.payment == PaymentMethod::Counter || j.payment == PaymentMethod::Wechat ||
+         j.payment == PaymentMethod::Alipay || j.payment == PaymentMethod::CampusCard) && j.customer.size() <= 256;
 }
 bool validPrinter(const Printer& p) {
     return !p.name.empty() && p.name.size() <= 200 && p.monoPageMs >= 10 && p.monoPageMs <= 5000 &&
@@ -71,10 +73,12 @@ ShopMetrics shopMetrics(const std::vector<Job>& jobs, TimeMs start, TimeMs end) 
         if (j.state == JobState::Completed && j.finishedMs && *j.finishedMs >= start && *j.finishedMs <= end) {
             ++m.completed;
             m.grossCents += j.quotedCents; m.refundCents += j.refundCents; m.costCents += j.costCents;
+            m.paidCents[static_cast<std::size_t>(j.payment)] += j.quotedCents - j.refundCents;
             if (j.deadlineMs > 0) { if (*j.finishedMs <= j.deadlineMs) ++m.onTime; else ++m.late; }
         }
         if (j.submittedMs <= end && (j.state == JobState::Queued || j.state == JobState::Running || j.state == JobState::Cancelling)) {
             m.pendingCents += j.quotedCents;
+            if (j.payment != PaymentMethod::Counter) m.prepaidCents += j.quotedCents;
             if (j.deadlineMs > 0 && j.deadlineMs < end) ++m.overdue;
         }
     }

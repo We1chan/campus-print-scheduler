@@ -1,3 +1,4 @@
+#include "cps/core/estimate.hpp"
 #include "cps/core/scheduler.hpp"
 #include "cps/metrics/statistics.hpp"
 #include "cps/platform/daemon.hpp"
@@ -183,6 +184,7 @@ private:
     };
 
     bool persist(QString& error) {
+        ++revision_;
         state_.savedAtMs = scheduler_->nowMs();
         state_.jobs = scheduler_->snapshot();
         return cps::writePersistentState(statePath_, state_, error);
@@ -343,8 +345,57 @@ private:
             for (auto p : state_.fleet) { p.online = true; supported |= cps::compatible(job, p); }
             if (!supported) return false;
             cps::quote(job);
-        } else if (job.paper != cps::PaperSize::A4 || job.color || job.duplex) return false;
+        } else if (job.paper != cps::PaperSize::A4 || job.color || job.duplex ||
+                   job.payment != cps::PaymentMethod::Counter || !job.customer.empty()) return false;
         return true;
+    }
+
+    static QString blockName(cps::WaitBlock block) {
+        switch (block) {
+        case cps::WaitBlock::None: return {};
+        case cps::WaitBlock::NoDevice: return QStringLiteral("no_device");
+        case cps::WaitBlock::NoPaper: return QStringLiteral("no_paper");
+        case cps::WaitBlock::Horizon: return QStringLiteral("horizon");
+        }
+        return {};
+    }
+
+    // Forecasts replay the scheduler on a copy; they never touch the real queue.
+    std::vector<cps::WaitEstimate> estimate(const std::vector<cps::Job>& jobs, cps::TimeMs now) const {
+        cps::EstimateOptions options;
+        options.policy = state_.policy; options.scheduler = state_.schedulerOptions;
+        options.fleet = state_.fleet; options.supplied = state_.supplied;
+        options.printers = state_.printers; options.pageMs = pageMs_;
+        for (auto it = active_.begin(); it != active_.end(); ++it)
+            options.printed.emplace_back(it.key().toStdString(), it->printed);
+        try {
+            return cps::estimateWaits(jobs, now, options);
+        } catch (const std::exception&) {
+            return {};
+        }
+    }
+
+    static void insertEstimate(QJsonObject& object, const cps::WaitEstimate& e) {
+        object.insert("estimate_blocked", blockName(e.blocked));
+        if (e.blocked != cps::WaitBlock::None) return;
+        object.insert("jobs_ahead", e.ahead);
+        object.insert("estimated_start_ms", static_cast<double>(e.startMs));
+        object.insert("estimated_finish_ms", static_cast<double>(e.finishMs));
+    }
+
+    // Snapshots are polled several times per second, so reuse a forecast until the
+    // persisted state changes or it is a second old. A forecast that was expensive
+    // (a very long queue) is reused longer, so it cannot starve the event loop.
+    const QHash<QString, cps::WaitEstimate>& forecast(const std::vector<cps::Job>& jobs, cps::TimeMs now) const {
+        const auto age = now - forecastAtMs_;
+        if (age < 0 || age >= 1000 ||
+            (forecastRevision_ != revision_ && age >= std::min<cps::TimeMs>(1000, 10 * forecastCostMs_))) {
+            QElapsedTimer cost; cost.start();
+            forecast_.clear();
+            for (const auto& e : estimate(jobs, now)) forecast_.insert(QString::fromStdString(e.id), e);
+            forecastRevision_ = revision_; forecastAtMs_ = now; forecastCostMs_ = cost.elapsed();
+        }
+        return forecast_;
     }
 
     QJsonObject snapshot() const {
@@ -352,10 +403,19 @@ private:
         const auto now = scheduler_->nowMs();
         auto start = now;
         QJsonArray rows, order;
+        const auto& estimates = forecast(jobs, now);
+        cps::TimeMs clear = -1;
+        int blocked = 0;
         for (const auto& job : jobs) {
             start = std::min(start, job.submittedMs);
             const auto id = QString::fromStdString(job.id);
             auto row = cps::jobSnapshotToJson(job);
+            const auto e = estimates.constFind(id);
+            if (e != estimates.constEnd() && (job.state == cps::JobState::Queued || job.state == cps::JobState::Running)) {
+                insertEstimate(row, *e);
+                if (e->blocked == cps::WaitBlock::None) clear = std::max(clear, e->finishMs);
+                else ++blocked;
+            }
             row.insert("slot", slots_.value(id, -1));
             row.insert("recovering", recovering_.contains(id));
             row.insert("printed_sheets", job.state == cps::JobState::Completed ? job.sheets() :
@@ -376,6 +436,8 @@ private:
             {"coordinator_pid", static_cast<double>(QCoreApplication::applicationPid())},
             {"aging_interval_ms", static_cast<double>(state_.schedulerOptions.agingIntervalMs)},
             {"window_start_ms", static_cast<double>(start)}, {"now_ms", static_cast<double>(now)},
+            {"queue_clear_ms", clear < 0 ? QJsonValue(QJsonValue::Null) : QJsonValue(static_cast<double>(clear))},
+            {"blocked_orders", blocked},
             {"jobs", rows}, {"waiting_order", order}, {"metrics", metrics}};
     }
 
@@ -403,14 +465,26 @@ private:
 
         if (type == "quote") {
             cps::Job job;
+            const auto now = scheduler_->nowMs();
             if (state_.fleet.empty() || !command.value("job").isObject() ||
-                !parseSubmission(command.value("job").toObject(), scheduler_->nowMs(), job)) {
+                !parseSubmission(command.value("job").toObject(), now, job)) {
                 commandError(socket, requestId, "invalid order or no compatible device"); return;
             }
             auto result = cps::orderTermsToJson(job);
             result.insert("type", "quote"); result.insert("paper_sheets", job.paperSheets());
-            const auto stock = cps::availablePaper(scheduler_->snapshot(), state_.supplied);
+            auto jobs = scheduler_->snapshot();
+            const auto stock = cps::availablePaper(jobs, state_.supplied);
             result.insert("stock_sufficient", job.paperSheets() <= (job.paper == cps::PaperSize::A3 ? stock.a3 : stock.a4));
+            // Forecast as if this order joined the queue now. The probe id cannot collide
+            // with a real job_id, and nothing is queued or reserved.
+            job.id = "?quote"; job.queuedSinceMs = now; job.lastChangedMs = now;
+            jobs.push_back(job);
+            for (const auto& e : estimate(jobs, now)) {
+                if (e.id != job.id) continue;
+                insertEstimate(result, e);
+                if (e.blocked == cps::WaitBlock::None) result.insert("estimated_wait_ms", static_cast<double>(e.startMs - now));
+            }
+            result.insert("now_ms", static_cast<double>(now)); result.insert("paused", state_.paused);
             reply(socket, requestId, result); return;
         }
         if (type == "set_printer" || type == "restock" || type == "refund") {
@@ -797,6 +871,11 @@ private:
     int dispatchBackoffMs_ = 0;
     QSet<QString> recovering_;
     QHash<QString, int> recoveryMisses_;
+    quint64 revision_ = 1;
+    mutable quint64 forecastRevision_ = 0;
+    mutable cps::TimeMs forecastAtMs_ = 0;
+    mutable cps::TimeMs forecastCostMs_ = 0;
+    mutable QHash<QString, cps::WaitEstimate> forecast_;
     QTimer recoveryTimer_;
     bool stopping_ = false;
     QHash<QString, int> slots_;

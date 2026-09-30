@@ -16,16 +16,19 @@
 - 五种策略：FCFS、SJF、优先级老化、交付期限优先、营业收入导向。
 - 库存预留和补货、完成结算、模拟退款、实收/成本/贡献利润/超时统计。
 - 经营页一键运行 21 组可复现实验，区分固定订单的调度比较与潜在客户的优惠选择。
+- 两个界面：老板后台（系统状态、设备、营收）与学生端（上传文件、报价、模拟支付、我的订单、排队情况），连接同一后台。
+- 预计等待时间：后台按当前策略、设备与库存重放派发规则，给出每个订单的预计开始和完成时间，以及“此刻下单”的预计。
 
 [经营规则与演示说明](docs/shop.md) · [实验结果](docs/shop-results.md) · [协议契约](docs/interfaces.md)
 
 ```sh
 cmake --preset dev
 cmake --build --preset dev --parallel 4
-./build/dev/bin/campus-print --demo-mode --demo-workload --data-dir runtime/shop-demo
+./build/dev/bin/campus-print --demo-mode --demo-workload --data-dir runtime/shop-demo   # 老板后台
+./build/dev/bin/campus-print --role student --data-dir runtime/shop-demo                # 学生端，另一个终端
 ```
 
-使用新的经营数据目录；原有目录不会被自动覆盖。新快照为 schema 2，支持读取原版 schema 1。以下是继续沿用的后台与课程基础：
+使用新的经营数据目录；原有目录不会被自动覆盖。新快照为 schema 3，支持读取 schema 1 / 2。预计时间是估算而非承诺，支付与学号均为模拟。以下是继续沿用的后台与课程基础：
 
 | 功能 | 状态 |
 | --- | --- |

@@ -39,8 +39,8 @@ class Processes(unittest.TestCase):
         return [str(executable), "--job", str(self.job), "--output-dir", str(self.output),
                 "--page-ms", "20", *extra]
 
-    def run_command(self, command):
-        return subprocess.run(command, capture_output=True, encoding="utf-8", timeout=20)
+    def run_command(self, command, env=None):
+        return subprocess.run(command, capture_output=True, encoding="utf-8", timeout=20, env=env)
 
     def test_worker_unicode_and_atomic_output(self):
         result = self.run_command(self.command(ARGS.worker))
@@ -220,6 +220,34 @@ class Processes(unittest.TestCase):
             while (self.root / "gui-smoke" / ".coordinator.lock").exists() and time.monotonic() < deadline:
                 time.sleep(0.05)
             self.assertFalse((self.root / "gui-smoke" / ".coordinator.lock").exists())
+
+    def test_student_client_offscreen_startup(self):
+        env = dict(os.environ, QT_QPA_PLATFORM="offscreen")
+        data = self.root / "student-smoke"
+        coordinator = ARGS.gui.with_name("print-coordinator" + (".exe" if os.name == "nt" else ""))
+        for arguments in (["--role", "teacher"], ["--role", "student", "--legacy-mode"]):
+            rejected = self.run_command([str(ARGS.gui), *arguments, "--smoke-test", "--data-dir", str(data)], env=env)
+            self.assertEqual(rejected.returncode, 64, rejected.stderr)
+        self.assertFalse(data.exists(), "rejected options must not create a data directory")
+        # The student client is a second front end for the same coordinator and may start it.
+        process = subprocess.Popen([str(ARGS.gui), "--role", "student", "--student", "2024000001", "--smoke-test",
+                                    "--data-dir", str(data)], env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        try:
+            _, stderr = process.communicate(timeout=15)
+            self.assertEqual(process.returncode, 0, stderr.decode("utf-8", errors="replace"))
+            snapshot = self.run_command([str(coordinator), "--state-dir", str(data), "--request", json.dumps({"type": "snapshot"})])
+            self.assertEqual(snapshot.returncode, 0, snapshot.stderr)
+            self.assertTrue(json.loads(snapshot.stdout)["shop_enabled"])
+        finally:
+            if process.poll() is None:
+                process.kill()
+            stopped = self.run_command([str(coordinator), "--state-dir", str(data), "--request", json.dumps({"type": "shutdown"})])
+            process.communicate(timeout=5)
+            self.assertEqual(stopped.returncode, 0, stopped.stderr)
+            deadline = time.monotonic() + 5
+            while (data / ".coordinator.lock").exists() and time.monotonic() < deadline:
+                time.sleep(0.05)
+            self.assertFalse((data / ".coordinator.lock").exists())
 
     @unittest.skipIf(os.name == "nt", "POSIX daemon mode; Windows uses foreground supervision")
     def test_posix_daemon(self):

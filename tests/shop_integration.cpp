@@ -28,10 +28,29 @@ int main(int argc, char** argv) {
         require(snap.value("printers").toInt() == 6 && snap.value("fleet").toArray().size() == 6, "six heterogeneous devices");
         accepted(client.request("set_paused", {{"paused", true}}));
         QJsonObject order{{"job_id", "color-a3"}, {"title", QStringLiteral("彩色 双面海报")}, {"pages", 3}, {"copies", 2},
-            {"paper", "a3"}, {"color", true}, {"duplex", true}, {"service", "flexible"}, {"quoted_cents", 1}};
+            {"paper", "a3"}, {"color", true}, {"duplex", true}, {"service", "flexible"}, {"quoted_cents", 1},
+            {"payment", "wechat"}, {"customer", QStringLiteral("2024000001")}};
         const auto quote = client.request("quote", {{"job", order}});
         require(quote.value("quoted_cents").toInt() == 1530 && quote.value("paper_sheets").toInt() == 4, "server quote");
+        // 6 colour A3 sides on the 40 ms device: 6 * 40 * 2. Paused dispatch is forecast as if resumed now.
+        require(quote.value("estimate_blocked").toString().isEmpty() && quote.value("jobs_ahead").toInt() == 0 &&
+                quote.value("estimated_wait_ms").toDouble() == 0 && quote.value("paused").toBool() &&
+                quote.value("estimated_finish_ms").toDouble() - quote.value("estimated_start_ms").toDouble() == 480, "quote forecasts an idle device");
         accepted(client.request("submit", {{"job", order}}));
+        auto probe = order; probe.insert("job_id", "quote-only");
+        const auto second = client.request("quote", {{"job", probe}});
+        require(second.value("jobs_ahead").toInt() == 1 && second.value("estimated_wait_ms").toDouble() == 480, "quote waits behind the queued order");
+        snap = client.request("snapshot");
+        auto row = snap.value("jobs").toArray()[0].toObject();
+        require(snap.value("jobs").toArray().size() == 1 && row.value("payment") == "wechat" && row.value("customer") == "2024000001" &&
+                row.value("estimate_blocked").toString().isEmpty() && row.value("jobs_ahead").toInt() == 0 &&
+                row.value("estimated_finish_ms").toDouble() - row.value("estimated_start_ms").toDouble() == 480 &&
+                snap.value("queue_clear_ms").toDouble() == row.value("estimated_finish_ms").toDouble(), "snapshot carries the forecast and payment");
+        require(snap.value("shop_metrics").toObject().value("prepaid_cents").toInt() == 1530, "online payment is held as prepayment");
+        auto unpaid = order; unpaid.insert("job_id", "bad-payment"); unpaid.insert("payment", "bitcoin");
+        require(client.request("submit", {{"job", unpaid}}).value("type").toString() == "error", "unknown payment method rejected");
+        unpaid.insert("payment", "alipay"); unpaid.insert("customer", QString(65, 'x'));
+        require(client.request("submit", {{"job", unpaid}}).value("type").toString() == "error", "oversized customer rejected");
         auto bad = order; bad.insert("job_id", "invalid"); bad.insert("paper", "a2");
         auto valid = order; valid.insert("job_id", "must-not-submit");
         require(client.request("submit_batch", {{"jobs", QJsonArray{valid, bad}}}).value("type").toString() == "error", "atomic invalid batch");
@@ -39,6 +58,10 @@ int main(int argc, char** argv) {
         accepted(client.request("set_paused", {{"paused", false}}));
         snap = client.request("snapshot");
         require(snap.value("jobs").toArray().size() == 1 && snap.value("jobs").toArray()[0].toObject().value("state") == "queued", "offline A3 device blocks compatible order");
+        row = snap.value("jobs").toArray()[0].toObject();
+        require(row.value("estimate_blocked") == "no_device" && !row.contains("estimated_start_ms") &&
+                snap.value("blocked_orders").toInt() == 1 && snap.value("queue_clear_ms").isNull(), "blocked order has no forecast");
+        require(client.request("quote", {{"job", probe}}).value("estimate_blocked") == "no_device", "quote reports the blocked device");
         accepted(client.request("set_printer", {{"index", 5}, {"online", true}}));
         timer.restart();
         while (timer.elapsed() < 10000) {
@@ -51,6 +74,9 @@ int main(int argc, char** argv) {
         require(job.value("quoted_cents").toInt() == 1530, "client cannot override price");
         require(snap.value("stock_a3").toInt() == 2996, "duplex paper consumption");
         require(snap.value("shop_metrics").toObject().value("cost_cents").toInt() == 564, "paper and toner cost");
+        require(snap.value("shop_metrics").toObject().value("prepaid_cents").toInt() == 0 &&
+                snap.value("shop_metrics").toObject().value("paid_cents").toObject().value("wechat").toInt() == 1530 &&
+                !job.contains("estimate_blocked"), "completed order settles into its payment channel");
         QFile output(QDir(root.path()).filePath("output/color-a3.txt")); require(output.open(QIODevice::ReadOnly), "output exists");
         const auto text = output.readAll(); require(text.contains("paper=a3") && text.contains("physical_sheets=4"), "output specification");
         accepted(client.request("refund", {{"job_id", "color-a3"}, {"cumulative_cents", 1530}}));
@@ -62,8 +88,18 @@ int main(int argc, char** argv) {
         cps::PersistentState state; QString error;
         require(cps::readPersistentState(QDir(root.path()).filePath("state.json"), state, error), "read shop snapshot");
         require(state.fleet.size() == 6 && state.jobs[0].refundCents == 1530, "commercial persistence");
+        require(state.jobs[0].payment == cps::PaymentMethod::Wechat && state.jobs[0].customer == "2024000001", "payment persistence");
         QFile original(QDir(root.path()).filePath("state.json")); require(original.open(QIODevice::ReadOnly), "read saved JSON");
         auto damaged = QJsonDocument::fromJson(original.readAll()).object(); auto rows = damaged.value("jobs").toArray();
+        require(damaged.value("schema_version").toInt() == 3, "payment fields use persistent schema 3");
+        // A v0.2 (schema 2) file has no payment fields and must still load as a counter order.
+        auto older = damaged; auto olderRow = rows[0].toObject(); olderRow.remove("payment"); olderRow.remove("customer");
+        older.insert("schema_version", 2); older.insert("jobs", QJsonArray{olderRow});
+        QFile olderFile(QDir(root.path()).filePath("schema2-state.json")); require(olderFile.open(QIODevice::WriteOnly), "write schema 2 snapshot");
+        olderFile.write(QJsonDocument(older).toJson()); olderFile.close();
+        cps::PersistentState upgraded;
+        require(cps::readPersistentState(olderFile.fileName(), upgraded, error) && upgraded.jobs[0].customer.empty() &&
+                upgraded.jobs[0].payment == cps::PaymentMethod::Counter, "schema 2 shop state remains readable");
         auto missingPrice = rows[0].toObject(); missingPrice.remove("quoted_cents"); rows[0] = missingPrice; damaged.insert("jobs", rows);
         QFile badFile(QDir(root.path()).filePath("bad-state.json")); require(badFile.open(QIODevice::WriteOnly), "write invalid snapshot");
         badFile.write(QJsonDocument(damaged).toJson()); badFile.close();

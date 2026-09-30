@@ -201,7 +201,7 @@ bool writePersistentState(const QString& path, const PersistentState& state, QSt
     QJsonArray jobs;
     for (const auto& job : state.jobs) jobs.append(jobSnapshotToJson(job));
     QJsonObject object{
-        {"schema_version", state.fleet.empty() ? 1 : 2},
+        {"schema_version", state.fleet.empty() ? 1 : 3},
         {"kind", QStringLiteral("campus-print-state")},
         {"saved_at_ms", static_cast<double>(state.savedAtMs)},
         {"policy", policyName(state.policy)},
@@ -242,7 +242,7 @@ bool readPersistentState(const QString& path, PersistentState& state, QString& e
     qint64 aging = 0;
     int printers = 0;
     const auto policy = policyFromName(object.value("policy").toString());
-    if (!integerValue(object.value("schema_version"), 1, 2, schema) ||
+    if (!integerValue(object.value("schema_version"), 1, 3, schema) ||
         object.value("kind").toString() != QLatin1String("campus-print-state") ||
         !integerValue(object.value("saved_at_ms"), 0, MaxTimeMs, saved) ||
         !integerValue(object.value("aging_interval_ms"), 1, MaxTimeMs, aging) ||
@@ -269,7 +269,8 @@ bool readPersistentState(const QString& path, PersistentState& state, QString& e
         parsed.jobs.push_back(std::move(job));
     }
 
-    if ((schema == 2) != object.contains("shop")) { error = "Shop state version mismatch"; return false; }
+    // Schema 3 adds payment/customer to shop orders; schema 2 files upgrade on the next save.
+    if ((schema >= 2) != object.contains("shop")) { error = "Shop state version mismatch"; return false; }
     if (object.contains("shop")) {
         const auto shop = object.value("shop").toObject();
         if (shop.value("version").toDouble() != 1 || !shop.value("fleet").isArray() ||

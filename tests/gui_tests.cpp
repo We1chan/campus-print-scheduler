@@ -1,5 +1,6 @@
 #include "event_stream.hpp"
 #include "print_window.hpp"
+#include "student_window.hpp"
 #include "paper_workspace.hpp"
 #include "coordinator_test_client.hpp"
 #include "cps/runtime/job_io.hpp"
@@ -45,8 +46,22 @@ private slots:
         QVERIFY(QTest::qWaitForWindowExposed(&window));
         auto* fleet = window.findChild<QTableWidget*>("fleetTable");
         QTRY_COMPARE(fleet->rowCount(), 6);
-        auto* summary = window.findChild<QLabel*>("shopSummary");
-        QVERIFY(summary->text().contains(QStringLiteral("实收营业额")));
+        auto* revenue = window.findChild<QLabel*>("shopMetric0");
+        auto* completed = window.findChild<QLabel*>("ordersCompleted");
+        QTRY_COMPARE(revenue->text(), QStringLiteral("¥0.00"));
+        QCOMPARE(completed->text(), QStringLiteral("0 单"));
+        // Device actions follow the selected row instead of acting on nothing.
+        auto* toggle = window.findChild<QPushButton*>("togglePrinter");
+        auto* edit = window.findChild<QPushButton*>("editPrinter");
+        QVERIFY(!toggle->isEnabled() && !edit->isEnabled());
+        fleet->selectRow(0);
+        QTRY_VERIFY(toggle->isEnabled() && edit->isEnabled());
+        QCOMPARE(toggle->text(), QStringLiteral("暂停接单"));
+        toggle->click();
+        QTRY_COMPARE(fleet->item(0, 3)->text(), QStringLiteral("暂停接单"));
+        QTRY_COMPARE(toggle->text(), QStringLiteral("恢复接单"));
+        toggle->click();
+        QTRY_COMPARE(fleet->item(0, 3)->text(), QStringLiteral("接单中"));
         openForm(window);
         window.findChild<QSpinBox*>("jobPages")->setValue(3);
         window.findChild<QSpinBox*>("jobCopies")->setValue(2);
@@ -60,7 +75,17 @@ private slots:
         QTRY_COMPARE(table->model()->rowCount(), 1);
         QTRY_COMPARE(table->model()->index(0, 3).data().toString(), QStringLiteral("已完成"));
         QCOMPARE(table->model()->index(0, 8).data().toString(), QStringLiteral("¥15.30"));
-        QTRY_VERIFY(summary->text().contains("15.30"));
+        QTRY_COMPARE(revenue->text(), QStringLiteral("¥15.30"));
+        QCOMPARE(window.findChild<QLabel*>("paid_counter")->text(), QStringLiteral("¥15.30"));
+        QCOMPARE(completed->text(), QStringLiteral("1 单"));
+        QCOMPARE(window.findChild<QLabel*>("ordersOnTime")->text(), QStringLiteral("1 单"));
+        // Search narrows the records; clearing it brings the order back.
+        auto* search = window.findChild<QLineEdit*>("queueSearch");
+        search->setText(QStringLiteral("没有这样的订单"));
+        QCOMPARE(table->model()->rowCount(), 0);
+        search->setText(QStringLiteral("实验报告"));
+        QCOMPARE(table->model()->rowCount(), 1);
+        search->clear();
         auto* policies = window.findChild<QComboBox*>("schedulingPolicy");
         policies->setCurrentIndex(4); QTRY_COMPARE(policies->currentIndex(), 4);
         window.experimentRequested(root.path() + "/experiments.json", 30);
@@ -77,6 +102,21 @@ private slots:
             QVERIFY(window.findChild<QDialog*>("submissionDialog")->grab().save(QDir(evidence).filePath("shop-order.png")));
             window.findChild<QDialog*>("submissionDialog")->reject();
         }
+        // A refund needs a selected completed order and an explicit confirmation.
+        auto* refund = window.findChild<QPushButton*>("refundOrder");
+        window.findChild<QPushButton*>("navHistory")->click();
+        QVERIFY(!refund->isEnabled());
+        table->selectRow(0);
+        QTRY_VERIFY(refund->isEnabled());
+        refund->click();
+        auto* confirmRefund = window.findChild<QDialog*>("refundDialog");
+        QVERIFY(confirmRefund && confirmRefund->isVisible());
+        QCOMPARE(revenue->text(), QStringLiteral("¥15.30")); // nothing happens before the confirmation
+        if (!evidence.isEmpty()) QVERIFY(confirmRefund->grab().save(QDir(evidence).filePath("shop-refund.png")));
+        confirmRefund->findChild<QPushButton*>("confirmAction")->click();
+        QTRY_COMPARE(revenue->text(), QStringLiteral("¥0.00"));
+        QCOMPARE(window.findChild<QLabel*>("ledgerRefund")->text(), QStringLiteral("¥15.30"));
+        QTRY_VERIFY(!refund->isEnabled()); // already refunded in full
         window.close(); QTRY_VERIFY(!window.isVisible());
     }
 
@@ -504,6 +544,177 @@ private slots:
         QVERIFY(QDir(root.path() + "/output").entryList({"*.txt"}, QDir::Files).isEmpty());
         window.close();
         QTRY_VERIFY(!window.isVisible());
+    }
+
+    void ownerConsoleShowsForecast() {
+        BackendDirectory root;
+        PrintWindow window({root.path(), 40, false}); window.show();
+        window.pauseRequested(true);
+        for (int i = 0; i < 3; ++i) window.submitRequested(QStringLiteral("预计 %1").arg(i), 100, 1, 0);
+        auto* table = window.findChild<QTableView*>("jobsTable");
+        QTRY_COMPARE(table->model()->rowCount(), 3);
+        QTRY_VERIFY(table->model()->index(2, 5).data().toString().contains(QStringLiteral("派发已暂停")));
+        CoordinatorClient client(root.path());
+        const auto rows = client.request("snapshot").value("jobs").toArray();
+        QCOMPARE(rows.size(), 3);
+        // Two printers at 40 ms per page: the third order starts when the first one ends.
+        const auto first = rows[0].toObject(), third = rows[2].toObject();
+        QCOMPARE(third.value("jobs_ahead").toInt(), 2);
+        QCOMPARE(third.value("estimated_start_ms").toDouble() - first.value("estimated_start_ms").toDouble(), 4000.0);
+        QCOMPARE(third.value("estimated_finish_ms").toDouble() - third.value("estimated_start_ms").toDouble(), 4000.0);
+        window.pauseRequested(false);
+        QTRY_COMPARE(table->model()->index(0, 3).data().toString(), QStringLiteral("打印中"));
+        QTRY_VERIFY(table->model()->index(0, 5).data().toString().startsWith(QStringLiteral("预计")));
+        QTRY_VERIFY(table->model()->index(2, 5).data().toString().contains(QStringLiteral("前面 0 单")));
+        const auto evidence = qEnvironmentVariable("CPS_GUI_EVIDENCE_DIR");
+        if (!evidence.isEmpty()) {
+            QVERIFY(QDir().mkpath(evidence));
+            window.resize(1280, 820); QTest::qWait(500);
+            QVERIFY(window.grab().save(QDir(evidence).filePath("owner-forecast-workspace.png")));
+            window.findChild<QPushButton*>("navHistory")->click(); QTest::qWait(80);
+            QVERIFY(window.grab().save(QDir(evidence).filePath("owner-forecast-records.png")));
+        }
+        window.pauseRequested(true); // keep teardown from dispatching the waiting order
+        window.close(); QTRY_VERIFY(!window.isVisible());
+    }
+
+    void studentOrderPaymentAndForecast() {
+        BackendDirectory root(QDir::tempPath() + QStringLiteral("/学生 自助-XXXXXX"));
+        QVERIFY(root.isValid());
+        const auto pdfPath = root.path() + QStringLiteral("/实验 报告.pdf");
+        const auto textPath = root.path() + QStringLiteral("/笔记.txt");
+        {
+            QFile pdf(pdfPath); QVERIFY(pdf.open(QIODevice::WriteOnly));
+            pdf.write("%PDF-1.4\n1 0 obj<</Type/Pages/Count 2/Kids[2 0 R 3 0 R]>>endobj\n"
+                      "2 0 obj<</Type /Page/Parent 1 0 R>>endobj\n3 0 obj<</Type/Page/Parent 1 0 R>>endobj\n");
+            QFile notes(textPath); QVERIFY(notes.open(QIODevice::WriteOnly));
+            notes.write(QByteArray("line\n").repeated(120));
+        }
+        QCOMPARE(inspectDocument(pdfPath).pages, 2);
+        QCOMPARE(inspectDocument(textPath).pages, 3);
+        QVERIFY(!inspectDocument(root.path() + "/missing.pdf").error.isEmpty());
+
+        const auto evidence = qEnvironmentVariable("CPS_GUI_EVIDENCE_DIR");
+        auto screenshot = [&](QWidget* widget, const QString& name) {
+            return evidence.isEmpty() || (QDir().mkpath(evidence) && widget->grab().save(QDir(evidence).filePath(name)));
+        };
+        StudentWindow student({root.path(), 20, false, true}, QStringLiteral("2024000001"));
+        student.resize(1180, 820); student.show();
+        QVERIFY(QTest::qWaitForWindowExposed(&student));
+        auto* pay = student.findChild<QPushButton*>("payOrder");
+        auto* eta = student.findChild<QLabel*>("quoteEta");
+        auto* price = student.findChild<QLabel*>("quotePrice");
+        auto* feedback = student.findChild<QLabel*>("feedback");
+        auto* orders = student.findChild<QTableWidget*>("myOrders");
+        auto* identity = student.findChild<QLineEdit*>("studentId");
+        QVERIFY(pay && eta && price && feedback && orders && identity);
+        QTRY_VERIFY(eta->text().contains(QStringLiteral("可立即开始")));
+        QVERIFY(!pay->isEnabled()); // nothing uploaded yet
+        auto* hint = student.findChild<QLabel*>("payHint");
+        QVERIFY(hint->isVisible() && hint->text().contains(QStringLiteral("选择要打印的文件")));
+        QVERIFY(screenshot(&student, "student-00-empty.png"));
+
+        student.setDocument(pdfPath);
+        QCOMPARE(student.findChild<QSpinBox*>("orderPages")->value(), 2);
+        QCOMPARE(student.findChild<QLineEdit*>("orderTitle")->text(), QStringLiteral("实验 报告.pdf"));
+        student.findChild<QSpinBox*>("orderCopies")->setValue(3);
+        student.findChild<QCheckBox*>("orderColor")->setChecked(true);
+        student.findChild<QPushButton*>("serviceFlexible")->click();
+        QCOMPARE(price->text(), QStringLiteral("¥7.65")); // 6 colour sides at 1.50, 85%
+        QTRY_VERIFY(pay->isEnabled());
+        QVERIFY(!hint->isVisible());
+        QTest::qWait(80); // let the layout settle before the evidence screenshot
+        QVERIFY(screenshot(&student, "student-01-order.png"));
+        student.findChild<QPushButton*>("pay_alipay")->click();
+        pay->click();
+        auto* dialog = student.findChild<QDialog*>("paymentDialog");
+        QVERIFY(dialog && dialog->isVisible());
+        QVERIFY(screenshot(dialog, "student-02-payment.png"));
+        dialog->findChild<QPushButton*>("confirmPayment")->click();
+        QTRY_COMPARE(orders->rowCount(), 1);
+        QTRY_VERIFY(feedback->text().contains(QStringLiteral("支付成功")));
+        QTRY_VERIFY(!student.findChild<QDialog*>("paymentDialog"));
+        QCOMPARE(orders->currentRow(), 0); // the order just paid for is selected
+        QCOMPARE(orders->item(0, 2)->text(), QStringLiteral("¥7.65 · 支付宝已支付"));
+        QTRY_COMPARE_WITH_TIMEOUT(orders->item(0, 3)->text(), QStringLiteral("已完成"), 10000);
+        QCOMPARE(orders->item(0, 6)->text().size(), 6);
+        QVERIFY(!pay->isEnabled()); // the next order needs its own upload
+
+        CoordinatorClient client(root.path());
+        auto snapshot = client.request("snapshot");
+        const auto paid = snapshot.value("jobs").toArray()[0].toObject();
+        QCOMPARE(paid.value("payment").toString(), QString("alipay"));
+        QCOMPARE(paid.value("customer").toString(), QString("2024000001"));
+        QCOMPARE(paid.value("quoted_cents").toInt(), 765);
+
+        // A paused shop still quotes and accepts orders; the estimate is relative to resuming.
+        QCOMPARE(client.request("set_paused", {{"paused", true}}).value("type").toString(), QString("accepted"));
+        student.findChild<QPushButton*>("navOrder")->click();
+        QTRY_VERIFY(eta->text().contains(QStringLiteral("店铺暂停派发")));
+        student.findChild<QPushButton*>("pay_wechat")->click();
+        for (int count = 2; count <= 3; ++count) {
+            student.setDocument(textPath);
+            QCOMPARE(student.findChild<QSpinBox*>("orderPages")->value(), 3);
+            QTRY_VERIFY(pay->isEnabled());
+            pay->click();
+            auto* confirm = student.findChild<QPushButton*>("confirmPayment");
+            QVERIFY(confirm);
+            confirm->click();
+            QTRY_COMPARE(orders->rowCount(), count);
+            QTRY_VERIFY(!student.findChild<QDialog*>("paymentDialog"));
+        }
+        // Newest first: row 0 is the last order, row 1 the one placed before it.
+        QTRY_VERIFY(orders->item(1, 4)->text().contains(QStringLiteral("派发已暂停")));
+        QCOMPARE(orders->item(0, 2)->text(), QStringLiteral("¥11.48 · 微信已支付"));
+        QVERIFY(screenshot(&student, "student-03-orders.png"));
+        auto* waiting = student.findChild<QTableWidget*>("shopQueue");
+        student.findChild<QPushButton*>("navQueue")->click();
+        QTRY_COMPARE(waiting->rowCount(), 2);
+        QVERIFY(waiting->item(0, 1)->text().startsWith(QStringLiteral("我的订单")));
+        QCOMPARE(student.findChild<QTableWidget*>("shopDevices")->rowCount(), 6);
+        QVERIFY(screenshot(&student, "student-04-queue.png"));
+        identity->setText(QStringLiteral("2024000002"));
+        QCOMPARE(orders->rowCount(), 0); // another student sees no titles and no orders
+        QCOMPARE(waiting->item(0, 1)->text(), QStringLiteral("其他订单"));
+        identity->setText(QStringLiteral("2024000001"));
+        QCOMPARE(orders->rowCount(), 3);
+
+        student.findChild<QPushButton*>("navMine")->click();
+        auto* cancel = student.findChild<QPushButton*>("cancelOrder");
+        orders->selectRow(1);
+        QTRY_VERIFY(cancel->isEnabled());
+        cancel->click();
+        auto* confirmCancel = student.findChild<QDialog*>("cancelDialog");
+        QVERIFY(confirmCancel && confirmCancel->isVisible());
+        QCOMPARE(orders->item(1, 3)->text(), QStringLiteral("等待中")); // still queued until confirmed
+        QVERIFY(screenshot(confirmCancel, "student-06-cancel.png"));
+        confirmCancel->findChild<QPushButton*>("confirmAction")->click();
+        QTRY_COMPARE(orders->item(1, 3)->text(), QStringLiteral("已取消"));
+        QVERIFY(orders->item(1, 2)->text().contains(QStringLiteral("已原路退款")));
+        QTRY_VERIFY(feedback->text().contains(QStringLiteral("已提交取消")));
+        QVERIFY(!cancel->isEnabled());
+        QCOMPARE(client.request("set_paused", {{"paused", false}}).value("type").toString(), QString("accepted"));
+        QTRY_COMPARE_WITH_TIMEOUT(orders->item(0, 3)->text(), QStringLiteral("已完成"), 10000);
+        QTRY_COMPARE(student.findChild<QLabel*>("studentMetric3")->text(), QStringLiteral("2 单"));
+
+        // The owner console reads the same coordinator state.
+        PrintWindow boss({root.path(), 20, false, true}); boss.resize(1200, 800); boss.show();
+        auto* table = boss.findChild<QTableView*>("jobsTable");
+        QTRY_COMPARE(table->model()->rowCount(), 3);
+        QCOMPARE(table->model()->index(0, 8).data().toString(), QStringLiteral("¥7.65 · 支付宝"));
+        QTRY_COMPARE(boss.findChild<QLabel*>("paid_wechat")->text(), QStringLiteral("¥11.48"));
+        QCOMPARE(boss.findChild<QLabel*>("paid_alipay")->text(), QStringLiteral("¥7.65"));
+        // The counter finds a student's order by the pickup code shown in the student client.
+        boss.findChild<QLineEdit*>("queueSearch")->setText(orders->item(2, 6)->text().toLower());
+        QCOMPARE(table->model()->rowCount(), 1);
+        QCOMPARE(table->model()->index(0, 8).data().toString(), QStringLiteral("¥7.65 · 支付宝"));
+        boss.findChild<QLineEdit*>("queueSearch")->clear();
+        QCOMPARE(boss.findChild<QLabel*>("shopMetric0")->text(), QStringLiteral("¥19.13"));
+        QCOMPARE(boss.findChild<QLabel*>("shopMetric3")->text(), QStringLiteral("0 / 6 台打印中"));
+        QVERIFY(boss.findChild<QPushButton*>("openStudent"));
+        QVERIFY(screenshot(&boss, "student-05-owner.png"));
+        boss.close(); QTRY_VERIFY(!boss.isVisible());
+        student.close(); QTRY_VERIFY(!student.isVisible());
     }
 
     void demoControlsAbsentInNormalMode() {

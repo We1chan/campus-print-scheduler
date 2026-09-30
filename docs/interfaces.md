@@ -191,7 +191,7 @@ GUI 自动创建的是独立本地协调进程，不是 Windows Service；POSIX 
 
 ### 持久格式
 
-经营目录顶层 `schema_version: 2`，旧同构目录仍为 1；读取器支持二者。v2 必须包含 `shop`：
+经营目录顶层 `schema_version: 3`（v0.2 写出的是 2，见文末 v0.3），旧同构目录仍为 1；读取器支持三者。v2/v3 必须包含 `shop`：
 
 ```json
 {"version":1,"fleet":[{"name":"黑白快印 01","a3":false,"color":false,"duplex":true,"online":true,"mono_page_ms":150,"color_page_ms":150}],"supplied_a4":10000,"supplied_a3":3000}
@@ -220,3 +220,42 @@ snapshot 新增 shop_enabled、fleet、stock_a4/stock_a3、supplied_a4/supplied_
 shop_metrics 包含 gross_cents/refund_cents/revenue_cents/cost_cents/contribution_cents/pending_cents、completed/on_time/late/overdue。金额是完成订单口径，退款按观察时点累计归属原订单，不是会计期间现金流水。
 
 worker Job JSON 仍为 1，新增可选 paper/color/duplex 字段；输出增加 paper/color/duplex/physical_sheets，原有 sheet 与进度字段继续表示打印面，保持原解析器兼容。
+
+## 学生端、预计等待与模拟支付 v0.3（2026-09-30）
+
+界面拆成老板后台与学生端两个客户端，连接同一个 coordinator。IPC 信封仍为 schema_version 1，下列字段均为新增，旧客户端可忽略。
+
+### 核心模型
+
+`Job` 新增 `payment`（`PaymentMethod`：Counter/Wechat/Alipay/CampusCard，默认 Counter）与 `customer`（学号等自助账户标识，柜台订单为空）。二者只记录来源，不参与排序、匹配和计价。在线支付均为模拟：下单即视为已付，未完成前计入预收；取消或最终失败的订单不结算，视为原路退回。
+
+`ShopMetrics` 新增 `prepaidCents`（在线支付且尚未完成的订单报价之和，是 pendingCents 的子集）与 `paidCents[4]`（窗口内完成订单按支付渠道的实收，已扣该订单累计退款）。
+
+`estimateWaits(jobs, now, EstimateOptions)` 位于 `include/cps/core/estimate.hpp`，纯 C++。它把当前快照恢复到一个临时 Scheduler，按事件推进模拟时间并调用真实的 `claim` / `claimFor`，因此与实际派发共用策略排序、设备兼容、设备占用和库存规则；不修改真实队列。返回每个 Queued / Running 订单的 `WaitEstimate`：
+
+- `startMs` / `finishMs`：预计派发与完成时间；Running 订单的 startMs 是已记录的开始时间，剩余时长按 `printed`（已输出面数）折算，未知进度按整单计。
+- `printer`：预计设备；`ahead`：在它之前预计派发的排队订单数。
+- `blocked`：`NoDevice`（没有在线的兼容设备）、`NoPaper`（库存不足）、`Horizon`（超过 `maxDispatches`，默认 256，用于限制长队列的计算量）；此时没有时间。
+- 同构旧队列用 `printers` 与 `pageMs`；经营模式用 `fleet` 与 `supplied`。Cancelling 订单视为即将释放设备和纸张，不参与预计。
+
+预计是**估算，不是承诺**：假设派发未暂停，之后没有新订单、失败、重试、取消和配置变化。非 FCFS 策略下，后到的订单可以排到前面。没有新到订单时，预计结果与 `replayShop` 的实际派发逐项一致（见 `tests/estimate_tests.cpp`）。非法参数或不一致的快照抛出 invalid_argument。
+
+### 持久格式
+
+经营目录写 `schema_version: 3`；schema 2 文件仍可读取，缺省为柜台支付、无 customer，下次保存时升级为 3。v0.2 程序拒绝 schema 3，避免丢弃支付字段后覆盖数据。订单 JSON 新增 `payment`（`counter/wechat/alipay/campus_card`）与 `customer`；默认值（柜台支付、空 customer）不写出，读取时缺省即默认。同构旧目录仍为 schema 1，且不接受非默认的 payment/customer。
+
+### IPC 增量
+
+| 请求 | 新增内容 |
+| --- | --- |
+| submit / submit_batch | job 可带 `payment` 与 `customer`（去除首尾空白后不超过 64 个可打印字符）。未知支付方式或超长 customer 拒绝整个请求；同构旧队列只接受默认值 |
+| quote | 回复增加“此刻下单”的预计：`estimate_blocked`（空串、`no_device`、`no_paper`、`horizon`），可预计（空串）时还有 `jobs_ahead`、`estimated_start_ms`、`estimated_finish_ms`、`estimated_wait_ms`；另有 `now_ms` 与 `paused`。预计不入队、不预留 |
+| snapshot | Queued / Running 订单增加 `estimate_blocked`，可预计时还有 `jobs_ahead`、`estimated_start_ms`、`estimated_finish_ms`；非默认的 `payment`、`customer` 随订单给出；顶层增加 `queue_clear_ms`（可预计订单的最晚完成时间，没有时为 null）与 `blocked_orders` |
+
+shop_metrics 增加 `prepaid_cents` 与 `paid_cents`（对象，键为四种支付方式）。
+
+预计时间与 `now_ms` 在同一持久时间轴上。派发暂停时仍按“现在恢复”计算，客户端应结合 `paused` 展示为相对时长。snapshot 中的预计在持久状态未变化时最多缓存 1 秒；队列很长、单次计算较慢时，状态变化后也会复用至多 1 秒（间隔为上次计算耗时的 10 倍），因此新订单的预计可能晚一次刷新出现。quote 每次重新计算。客户端只展示后台给出的预计，不得自行按策略重算。
+
+### 客户端
+
+`campus-print --role boss`（默认）打开老板后台，`--role student [--student <学号>]` 打开学生端；`--role student` 与 `--legacy-mode`、`--demo-workload` 组合，或未知角色，返回 64。两个客户端都只持有快照并发送命令，任一方都可以在后台不存在时启动它。学生端按 `customer` 等于当前学号筛选“我的订单”，排队页不显示其他订单的标题；这是界面层的隐私处理，本地 IPC 没有身份认证，任何本机客户端仍能读取完整快照。学生端的“上传”只读取文件名、大小和页数，不保存也不传输文件内容。

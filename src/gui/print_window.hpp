@@ -4,6 +4,7 @@
 #include <QMainWindow>
 #include <QThread>
 #include <QWidget>
+#include <array>
 class QLabel;
 class QPushButton;
 class QProgressBar;
@@ -47,6 +48,7 @@ signals:
     void backendReady();
     void submitRequested(const QString& title, int pages, int copies, int priority);
     void orderRequested(QJsonObject order);
+    void quoteRequested(QJsonObject order, int token);
     void experimentRequested(const QString& path, int customers);
     void shopRequested(const QString& type, QJsonObject payload);
     void importRequested(const QString& path);
@@ -60,9 +62,12 @@ signals:
     void disconnectRequested(const QString& id);
 protected:
     void closeEvent(QCloseEvent* event) override;
+    bool eventFilter(QObject* watched, QEvent* event) override;
 private:
     void applyView(const ViewState& view);
     void updateSelection();
+    void updateDeviceActions();
+    void fitTitleColumn();
     QThread backendThread_;
     PrintController* controller_ = nullptr;
     JobTableModel* model_ = nullptr;
@@ -75,13 +80,22 @@ private:
     std::array<QLabel*, 4> metricValues_{};
     std::array<QLabel*, 4> metricHints_{};
     QTableWidget* fleetTable_ = nullptr;
+    QLabel* fleetSummary_ = nullptr;
+    QPushButton* toggleDevice_ = nullptr;
+    QPushButton* editDevice_ = nullptr;
     QLabel* shopSummary_ = nullptr;
-    QLabel* stockSummary_ = nullptr;
+    QLabel* shopForecast_ = nullptr;
+    std::array<QLabel*, 4> shopValues_{};
+    std::array<QLabel*, 4> shopHints_{};
+    std::array<QLabel*, 12> ledger_{}; // money, then takings per channel, then fulfilment counts
+    std::array<QLabel*, 2> stock_{};   // A4, A3
+    int quoteToken_ = 0;
     QJsonObject shopSnapshot_;
     QLabel* queueSummary_ = nullptr;
     QWidget* emptyState_ = nullptr;
     QToolButton* logToggle_ = nullptr;
     QPushButton* cancel_ = nullptr;
+    QPushButton* refund_ = nullptr;
     QPushButton* fault_ = nullptr;
     QPushButton* disconnect_ = nullptr;
     QPlainTextEdit* log_ = nullptr;
@@ -89,5 +103,6 @@ private:
     bool closeApproved_ = false;
     bool demoAvailable_ = false;
     bool closePending_ = false;
+    bool shopReady_ = false;  // connected to a coordinator that runs the shop mode
 };
 } // namespace cps::gui
