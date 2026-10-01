@@ -16,8 +16,10 @@ class QSpinBox;
 class QStackedWidget;
 class QTableWidget;
 class QTimer;
+class QBoxLayout;
 
 namespace cps::gui {
+class PrintProof;
 struct DocumentInfo {
     QString name;
     qint64 bytes = 0;
@@ -48,6 +50,7 @@ protected:
     void dragEnterEvent(QDragEnterEvent* event) override;
     void dragLeaveEvent(QDragLeaveEvent* event) override;
     void dropEvent(QDropEvent* event) override;
+    void resizeEvent(QResizeEvent* event) override;
 private:
     QJsonObject order() const;
     QString student() const;
@@ -57,11 +60,16 @@ private:
     void applyOrderResult(bool accepted, const QString& id, const QString& message);
     void updateActions();
     void clearDocument();
+    void updateProof();
     void showPayment();
     QThread backendThread_;
     PrintController* controller_ = nullptr;
     ViewState view_;
     QStackedWidget* pages_ = nullptr;
+    PrintProof* proof_ = nullptr;
+    QPushButton* flipProof_ = nullptr;
+    QBoxLayout* orderColumns_ = nullptr;
+    QBoxLayout* settingsDock_ = nullptr;
     QLineEdit* student_ = nullptr;
     QFrame* drop_ = nullptr;
     QLabel* fileName_ = nullptr;

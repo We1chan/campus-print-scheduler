@@ -21,6 +21,8 @@
 
 [经营规则与演示说明](docs/shop.md) · [实验结果](docs/shop-results.md) · [协议契约](docs/interfaces.md)
 
+本分支提供「纸间」前端：中央可翻面、展开的纸叠连接打印规格和后台报价。见 [设计与验证说明](docs/print-studio.md)；Windows 构建后可双击 `start-studio-demo.cmd` 打开两端演示。
+
 ```sh
 cmake --preset dev
 cmake --build --preset dev --parallel 4

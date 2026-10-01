@@ -1,5 +1,7 @@
 #include "student_window.hpp"
 #include "ui_theme.hpp"
+#include "studio_shell.hpp"
+#include "print_proof.hpp"
 #include "view_text.hpp"
 #include "cps/core/shop.hpp"
 #include "cps/runtime/shop_io.hpp"
@@ -97,16 +99,20 @@ DocumentInfo inspectDocument(const QString& path) {
 }
 
 StudentWindow::StudentWindow(WindowOptions options, const QString& studentId, QWidget* parent) : QMainWindow(parent) {
-    setWindowTitle(QStringLiteral("校园打印 · 学生自助下单"));
+    setWindowTitle(QStringLiteral("纸间 · 学生自助打印"));
     setMinimumSize(920, 640);
     const auto available = screen()->availableGeometry();
-    resize(std::min(1180, available.width() - 40), std::min(820, available.height() - 60));
+    resize(std::min(1440, available.width() - 40), std::min(820, available.height() - 60));
     setAcceptDrops(true);
     ui::applyTheme(*this);
     auto* central = new QWidget(this); central->setObjectName("workspace");
-    auto* layout = new QVBoxLayout(central); layout->setContentsMargins(24, 10, 24, 12); layout->setSpacing(12);
+    const auto shell = ui::studioShell(central, QStringLiteral("学生自助打印"));
+    auto* layout = shell.content;
     auto* header = new QHBoxLayout; header->setSpacing(10);
-    header->addWidget(ui::brand(ui::Icon::Printer, QStringLiteral("校园打印"), QStringLiteral("学生自助下单"))); header->addSpacing(20);
+    auto* pageTitle = label(QStringLiteral("从屏幕，到纸面。"), "studioTitle");
+    pageTitle->setObjectName("studentPageTitle");
+    auto* heading = new QVBoxLayout; heading->setSpacing(4); heading->addWidget(pageTitle);
+    heading->addWidget(label(QStringLiteral("选好规格，印出你的下一份作品。"), "atelierSubtitle")); header->addLayout(heading);
     auto* navigation = new QButtonGroup(this); navigation->setExclusive(true);
     pages_ = new QStackedWidget; pages_->setObjectName("studentPages");
     const QStringList names{QStringLiteral("下单打印"), QStringLiteral("我的订单"), QStringLiteral("排队情况")};
@@ -114,20 +120,24 @@ StudentWindow::StudentWindow(WindowOptions options, const QString& studentId, QW
     for (int i = 0; i < 3; ++i) {
         auto* button = new QPushButton(names[i]); button->setObjectName(navIds[i]); button->setProperty("role", "nav");
         button->setCheckable(true); button->setChecked(i == 0); button->setToolTip(QStringLiteral("Ctrl+%1").arg(i + 1));
-        navigation->addButton(button, i); header->addWidget(button);
+        navigation->addButton(button, i); shell.navigation->addWidget(button);
         connect(button, &QPushButton::clicked, this, [this, i] { pages_->setCurrentIndex(i); });
         connect(new QShortcut(QKeySequence(QStringLiteral("Ctrl+%1").arg(i + 1)), this), &QShortcut::activated, this, [this, i] { pages_->setCurrentIndex(i); });
     }
-    connect(pages_, &QStackedWidget::currentChanged, this, [navigation](int index) { navigation->button(index)->setChecked(true); });
+    ui::finishRail(shell.navigation);
+    connect(pages_, &QStackedWidget::currentChanged, this, [navigation, pageTitle](int index) {
+        navigation->button(index)->setChecked(true);
+        pageTitle->setText(QStringList{QStringLiteral("从屏幕，到纸面。"), QStringLiteral("你的文档，走到哪一步了？"), QStringLiteral("看看店里现在忙不忙。")}.value(index));
+    });
     header->addStretch();
-    header->addWidget(label(QStringLiteral("学号"), "muted"));
+    shell.navigation->addWidget(label(QStringLiteral("学号"), "muted"));
     student_ = new QLineEdit(studentId.trimmed().isEmpty() ? QStringLiteral("2024000001") : studentId.trimmed().left(32));
     student_->setObjectName("studentId"); student_->setMaxLength(32); student_->setFixedWidth(150);
     student_->setPlaceholderText(QStringLiteral("填写学号"));
     student_->setToolTip(QStringLiteral("订单按学号归属；换一个学号只能看到那个学号的订单。"));
-    header->addWidget(student_); layout->addLayout(header);
+    shell.navigation->addWidget(student_); layout->addLayout(header);
 
-    auto* metrics = new QHBoxLayout;
+    auto* metricsBox = new QWidget; auto* metrics = new QHBoxLayout(metricsBox); metrics->setContentsMargins(0, 0, 0, 0);
     const QStringList metricTitles{QStringLiteral("当前排队"), QStringLiteral("预计清空队列"), QStringLiteral("我的进行中订单"), QStringLiteral("可取件")};
     for (int i = 0; i < 4; ++i) {
         auto* box = card("metric"); auto* m = new QVBoxLayout(box); m->setContentsMargins(18, 10, 18, 10);
@@ -135,27 +145,31 @@ StudentWindow::StudentWindow(WindowOptions options, const QString& studentId, QW
         metricValues_[i] = label("—", "metricValue"); metricValues_[i]->setObjectName(QStringLiteral("studentMetric%1").arg(i)); m->addWidget(metricValues_[i]);
         metricHints_[i] = label({}, "metricHint"); m->addWidget(metricHints_[i]); metrics->addWidget(box);
     }
-    layout->addLayout(metrics);
+    metricsBox->hide(); layout->addWidget(metricsBox);
+    connect(pages_, &QStackedWidget::currentChanged, metricsBox, [metricsBox](int index) { metricsBox->setVisible(index != 0); });
 
     // Page 1: upload, options, price with estimated wait, simulated payment.
     auto* orderArea = new QScrollArea; orderArea->setObjectName("orderScroll");
     orderArea->setWidgetResizable(true); orderArea->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
     auto* orderPage = new QWidget; orderPage->setObjectName("queueContent");
-    auto* columns = new QHBoxLayout(orderPage); columns->setContentsMargins(0, 0, 0, 0); columns->setSpacing(14);
-    auto* documentCard = card(); auto* form = new QVBoxLayout(documentCard); form->setContentsMargins(22, 18, 22, 18); form->setSpacing(10);
-    form->addWidget(label(QStringLiteral("① 上传文件"), "step"));
-    drop_ = card("drop"); drop_->setObjectName("dropZone"); drop_->setMinimumHeight(86);
-    auto* dropLayout = new QHBoxLayout(drop_); dropLayout->setContentsMargins(16, 14, 16, 14); dropLayout->setSpacing(12);
-    auto* sheet = new QLabel; sheet->setPixmap(ui::icon(ui::Icon::Document, QColor("#6F8FD8")).pixmap(30, 30)); dropLayout->addWidget(sheet);
+    auto* pageBody = new QVBoxLayout(orderPage); pageBody->setContentsMargins(0, 0, 0, 0); pageBody->setSpacing(16);
+    auto* columns = new QHBoxLayout; columns->setSpacing(24); pageBody->addLayout(columns, 1);
+    orderColumns_ = columns;
+    if (width() < 1120) columns->setDirection(QBoxLayout::TopToBottom);
+    auto* documentCard = card("atelierForm"); documentCard->setMinimumWidth(220);
+    auto* form = new QVBoxLayout(documentCard); form->setContentsMargins(0, 16, 0, 16); form->setSpacing(10);
+    form->addWidget(label(QStringLiteral("选择你的文档"), "section"));
+    drop_ = card("drop"); drop_->setObjectName("dropZone"); drop_->setMinimumHeight(86); drop_->setMaximumHeight(120);
+    auto* dropLayout = new QVBoxLayout(drop_); dropLayout->setContentsMargins(16, 14, 16, 14); dropLayout->setSpacing(6);
     auto* fileLines = new QVBoxLayout; fileLines->setSpacing(3); fileLines->addStretch();
     // Ignored width: a long file name is shortened instead of widening the window.
     fileName_ = label({}, "fileName"); fileName_->setObjectName("fileName"); fileName_->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
     fileLines->addWidget(fileName_);
     file_ = label({}, "muted"); file_->setObjectName("fileInfo"); file_->setWordWrap(true); fileLines->addWidget(file_);
     fileLines->addStretch(); dropLayout->addLayout(fileLines, 1);
-    remove_ = new QPushButton(QStringLiteral("移除")); remove_->setObjectName("removeFile"); remove_->setProperty("role", "quiet"); dropLayout->addWidget(remove_);
+    remove_ = new QPushButton(QStringLiteral("移除")); remove_->setObjectName("removeFile"); remove_->setProperty("role", "quiet"); auto* fileActions = new QHBoxLayout; fileActions->addWidget(remove_);
     choose_ = new QPushButton(QStringLiteral("选择文件")); choose_->setObjectName("chooseFile"); choose_->setIcon(ui::icon(ui::Icon::Import));
-    choose_->setToolTip(QStringLiteral("Ctrl+O")); dropLayout->addWidget(choose_); form->addWidget(drop_);
+    choose_->setToolTip(QStringLiteral("Ctrl+O")); fileActions->addStretch(); fileActions->addWidget(choose_); dropLayout->addLayout(fileActions); form->addWidget(drop_);
     form->addWidget(label(QStringLiteral("文档名称"), "muted"));
     title_ = new QLineEdit; title_->setObjectName("orderTitle"); title_->setMaxLength(200);
     title_->setPlaceholderText(QStringLiteral("选择文件后自动填写")); form->addWidget(title_);
@@ -166,13 +180,27 @@ StudentWindow::StudentWindow(WindowOptions options, const QString& studentId, QW
         auto* field = new QVBoxLayout; field->addWidget(label(caption, "muted")); field->addWidget(input); numbers->addLayout(field);
     }
     form->addLayout(numbers);
-    form->addSpacing(6); form->addWidget(label(QStringLiteral("② 打印设置"), "step"));
+    auto* dock = card("atelierDock"); auto* dockLayout = new QHBoxLayout(dock);
+    settingsDock_ = dockLayout;
+    if (width() < 1120) dockLayout->setDirection(QBoxLayout::TopToBottom);
+    dockLayout->setContentsMargins(18, 14, 18, 14); dockLayout->setSpacing(20);
+    pageBody->addWidget(dock);
     auto* specification = new QHBoxLayout; specification->setSpacing(16);
-    paper_ = new ui::SelectInput; paper_->setObjectName("orderPaper"); paper_->addItems({"A4", "A3"}); specification->addWidget(paper_, 1);
+    paper_ = new ui::SelectInput(dock); paper_->setObjectName("orderPaper"); paper_->addItems({"A4", "A3"}); paper_->hide();
+    specification->addWidget(label(QStringLiteral("纸张"), "muted"));
+    auto* paperChoices = new QButtonGroup(this); paperChoices->setExclusive(true);
+    for (int i = 0; i < 2; ++i) {
+        auto* button = new QPushButton(i == 0 ? "A4" : "A3"); button->setObjectName(i == 0 ? "paperA4" : "paperA3");
+        button->setProperty("role", "choice"); button->setCheckable(true); button->setChecked(i == 0);
+        paperChoices->addButton(button, i); specification->addWidget(button);
+    }
+    connect(paperChoices, &QButtonGroup::idClicked, paper_, &QComboBox::setCurrentIndex);
+    connect(paper_, &QComboBox::currentIndexChanged, this, [paperChoices](int index) { paperChoices->button(index)->setChecked(true); });
     color_ = new ui::CheckBox(QStringLiteral("彩色打印")); color_->setObjectName("orderColor"); specification->addWidget(color_);
     duplex_ = new ui::CheckBox(QStringLiteral("双面打印")); duplex_->setObjectName("orderDuplex"); specification->addWidget(duplex_);
-    form->addLayout(specification);
-    form->addWidget(label(QStringLiteral("取件期限与优惠：愿意多等一会儿，价格更低"), "muted"));
+    dockLayout->addLayout(specification, 3);
+    auto* serviceOptions = new QVBoxLayout; serviceOptions->setSpacing(5);
+    serviceOptions->addWidget(label(QStringLiteral("取件期限 · 愿意多等一会儿，价格更低"), "muted"));
     service_ = new QButtonGroup(this); service_->setExclusive(true);
     auto* tiers = new QHBoxLayout;
     const QStringList tierIds{"serviceExpress", "serviceStandard", "serviceFlexible"};
@@ -180,18 +208,54 @@ StudentWindow::StudentWindow(WindowOptions options, const QString& studentId, QW
         auto* button = new QPushButton; button->setObjectName(tierIds[i]); button->setProperty("role", "choice");
         button->setCheckable(true); button->setChecked(i == 1); service_->addButton(button, i); tiers->addWidget(button);
     }
-    form->addLayout(tiers); form->addStretch(); columns->addWidget(documentCard, 3);
+    serviceOptions->addLayout(tiers); dockLayout->addLayout(serviceOptions, 4);
+    auto* guide = label(QStringLiteral("选择文件后，中央纸叠会显示你的打印规格。可翻面、展开纸叠并逐张检查。"), "atelierHint");
+    guide->setWordWrap(true); form->addWidget(guide);
+    form->addStretch(); columns->addWidget(documentCard, 3);
 
-    auto* payCard = card(); auto* pay = new QVBoxLayout(payCard); pay->setContentsMargins(22, 18, 22, 18); pay->setSpacing(10);
-    pay->addWidget(label(QStringLiteral("③ 费用与预计时间"), "step"));
-    price_ = label(QStringLiteral("¥0.00"), "price"); price_->setObjectName("quotePrice"); pay->addWidget(price_);
+    auto* stage = card("atelierStage"); auto* stageLayout = new QVBoxLayout(stage); stageLayout->setContentsMargins(0, 0, 0, 0); stageLayout->setSpacing(10);
+    columns->addWidget(stage, 5);
+    auto* payCard = card("atelierReceipt"); payCard->setMinimumWidth(250);
+    auto* pay = new QVBoxLayout(payCard); pay->setContentsMargins(20, 16, 0, 16); pay->setSpacing(14);
+    pay->addWidget(label(QStringLiteral("本次打印"), "section"));
+    auto* proofHead = new QHBoxLayout;
+    proofHead->addWidget(label(QStringLiteral("印前看看"), "cardTitle")); proofHead->addStretch();
+    auto* motion = new QPushButton(QStringLiteral("减少动效")); motion->setObjectName("studentReduceMotion");
+    motion->setProperty("role", "quiet"); motion->setCheckable(true); proofHead->addWidget(motion);
+    stageLayout->addLayout(proofHead);
+    proof_ = new PrintProof; stageLayout->addWidget(proof_, 1);
+    flipProof_ = new QPushButton(QStringLiteral("翻到背面")); flipProof_->setObjectName("flipProof");
+    flipProof_->setProperty("role", "quiet");
+    auto* unfold = new QPushButton(QStringLiteral("展开\n纸叠")); unfold->setObjectName("unfoldProof"); unfold->setCheckable(true); unfold->setProperty("role", "quiet");
+    proof_->attachActions(flipProof_, unfold);
+    connect(unfold, &QPushButton::toggled, this, [this, unfold](bool open) { proof_->setExpanded(open); unfold->setText(open ? QStringLiteral("收起\n纸叠") : QStringLiteral("展开\n纸叠")); });
+    auto* pageActions = new QHBoxLayout;
+    auto* previous = new QPushButton(QStringLiteral("上一张")); previous->setObjectName("proofPrevious"); previous->setProperty("role", "quiet");
+    auto* next = new QPushButton(QStringLiteral("下一张")); next->setObjectName("proofNext"); next->setProperty("role", "quiet");
+    pageActions->addStretch(); pageActions->addWidget(previous); pageActions->addWidget(next); pageActions->addStretch(); stageLayout->addLayout(pageActions);
+    connect(previous, &QPushButton::clicked, this, [this] { proof_->stepPage(-1); });
+    connect(next, &QPushButton::clicked, this, [this] { proof_->stepPage(1); });
+    proof_->changed = [this, previous, next] {
+        previous->setEnabled(proof_->currentSheet() > 1);
+        next->setEnabled(proof_->currentSheet() < proof_->sheetCount());
+        flipProof_->setText(proof_->showingBack() ? QStringLiteral("查看\n正面") : QStringLiteral("翻到\n背面"));
+    };
+    connect(motion, &QPushButton::toggled, this, [this](bool reduced) { proof_->setMotion(!reduced); });
+    connect(flipProof_, &QPushButton::clicked, this, [this] {
+        proof_->setBack(!proof_->showingBack());
+        flipProof_->setText(proof_->showingBack() ? QStringLiteral("查看\n正面") : QStringLiteral("翻到\n背面"));
+    });
+    auto* priceLine = new QHBoxLayout;
+    priceLine->addWidget(label(QStringLiteral("预计费用"), "step")); priceLine->addStretch();
+    price_ = label(QStringLiteral("¥0.00"), "price"); price_->setObjectName("quotePrice"); priceLine->addWidget(price_);
+    pay->addLayout(priceLine);
     priceDetail_ = label({}, "muted"); priceDetail_->setObjectName("quoteDetail"); priceDetail_->setWordWrap(true); pay->addWidget(priceDetail_);
     auto* forecast = card("summary"); auto* forecastLayout = new QVBoxLayout(forecast); forecastLayout->setContentsMargins(14, 10, 14, 10); forecastLayout->setSpacing(4);
     forecastLayout->addWidget(label(QStringLiteral("现在下单"), "muted"));
     eta_ = label(QStringLiteral("正在连接店铺…"), "eta"); eta_->setObjectName("quoteEta"); eta_->setWordWrap(true); forecastLayout->addWidget(eta_);
     deadline_ = label({}, "muted"); deadline_->setObjectName("quoteDeadline"); deadline_->setWordWrap(true); forecastLayout->addWidget(deadline_);
     pay->addWidget(forecast);
-    pay->addSpacing(6); pay->addWidget(label(QStringLiteral("④ 支付方式（模拟）"), "step"));
+    pay->addWidget(label(QStringLiteral("支付方式（模拟，不会扣款）"), "step"));
     payment_ = new QButtonGroup(this); payment_->setExclusive(true);
     auto* methods = new QHBoxLayout;
     for (const auto method : {PaymentMethod::Wechat, PaymentMethod::Alipay, PaymentMethod::CampusCard}) {
@@ -204,8 +268,8 @@ StudentWindow::StudentWindow(WindowOptions options, const QString& studentId, QW
     pay->addWidget(pay_);
     // Says what is still missing, so a disabled button never leaves the student guessing.
     payHint_ = label({}, "muted"); payHint_->setObjectName("payHint"); payHint_->setWordWrap(true); tone(payHint_, "waiting"); pay->addWidget(payHint_);
-    auto* payNote = label(QStringLiteral("不会产生真实扣款。订单取消或打印失败时按原路退款（同样为模拟）。"), "muted");
-    payNote->setWordWrap(true); pay->addWidget(payNote); pay->addStretch(); columns->addWidget(payCard, 2);
+    pay_->setToolTip(QStringLiteral("模拟支付；取消或失败时按原路退款，不会产生真实扣款。"));
+    pay->addStretch(); columns->addWidget(payCard, 3);
     orderArea->setWidget(orderPage); pages_->addWidget(orderArea);
 
     // Page 2: only this student's orders.
@@ -262,7 +326,7 @@ StudentWindow::StudentWindow(WindowOptions options, const QString& studentId, QW
     connect(color_, &QCheckBox::toggled, this, &StudentWindow::updatePrice);
     connect(duplex_, &QCheckBox::toggled, this, &StudentWindow::updatePrice);
     connect(service_, &QButtonGroup::idClicked, this, &StudentWindow::updatePrice);
-    connect(title_, &QLineEdit::textChanged, this, &StudentWindow::updateActions);
+    connect(title_, &QLineEdit::textChanged, this, [this] { updateProof(); updateActions(); });
     connect(student_, &QLineEdit::textChanged, this, [this] { applyView(view_); });
     connect(choose_, &QPushButton::clicked, this, [this] {
         const auto path = QFileDialog::getOpenFileName(this, QStringLiteral("选择要打印的文件"), {},
@@ -343,14 +407,16 @@ void StudentWindow::setDocument(const QString& path) {
 }
 void StudentWindow::clearDocument() {
     documentChosen_ = false;
-    fileName_->setText(QStringLiteral("把文件拖进窗口，或点击右侧选择")); fileName_->setToolTip({});
-    file_->setText(QStringLiteral("模拟上传：只登记文件名、大小和页数，不保存也不传输文件内容。"));
+    fileName_->setText(QStringLiteral("拖入文件，或点击选择")); fileName_->setToolTip({});
+    file_->setText(QStringLiteral("仅登记信息，不传输文件内容"));
     choose_->setText(QStringLiteral("选择文件")); remove_->hide(); ui::restyle(drop_, "state", "");
     title_->clear();
+    updateProof();
     updateActions();
 }
 // The local price is only an instant preview; the backend quote that follows is authoritative.
 void StudentWindow::updatePrice() {
+    updateProof();
     const bool valid = pageCount_->value() * copies_->value() <= 10000;
     Job job; job.pages = pageCount_->value(); job.copies = copies_->value();
     job.paper = paper_->currentIndex() == 1 ? PaperSize::A3 : PaperSize::A4;
@@ -377,6 +443,19 @@ void StudentWindow::updatePrice() {
     quotePending_ = true;
     quoteDelay_->start();
     updateActions();
+}
+void StudentWindow::updateProof() {
+    if (!proof_) return;
+    proof_->setSpecification(title_->text(), pageCount_->value(), copies_->value(), paper_->currentIndex() == 1,
+        color_->isChecked(), duplex_->isChecked(), documentChosen_);
+    flipProof_->setEnabled(duplex_->isChecked());
+    flipProof_->setText(proof_->showingBack() ? QStringLiteral("查看\n正面") : QStringLiteral("翻到\n背面"));
+    flipProof_->setToolTip(duplex_->isChecked() ? QStringLiteral("翻面检查双面打印规格；此图不展示文件内容") : QStringLiteral("选择双面打印后可查看背面"));
+}
+void StudentWindow::resizeEvent(QResizeEvent* event) {
+    QMainWindow::resizeEvent(event);
+    if (orderColumns_) orderColumns_->setDirection(width() < 1120 ? QBoxLayout::TopToBottom : QBoxLayout::LeftToRight);
+    if (settingsDock_) settingsDock_->setDirection(width() < 1120 ? QBoxLayout::TopToBottom : QBoxLayout::LeftToRight);
 }
 void StudentWindow::applyQuote(int token, const QJsonObject& quote) {
     if (token != quoteToken_) return;

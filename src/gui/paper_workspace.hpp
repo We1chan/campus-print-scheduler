@@ -4,6 +4,7 @@
 #include "ui_theme.hpp"
 #include "view_text.hpp"
 #include <QPainterPath>
+#include <QMouseEvent>
 #include <QPushButton>
 #include <QVariantAnimation>
 #include <QWidget>
@@ -12,7 +13,7 @@
 
 namespace cps::gui {
 namespace paper {
-inline const QColor ink("#202737"), muted("#718095"), blue("#3569ED");
+inline const QColor ink("#24273B"), muted("#62687D"), blue("#4548E8");
 inline void text(QPainter& p, QRectF r, const QString& value, int size = 13,
                  QColor color = ink, bool bold = false, int align = Qt::AlignLeft | Qt::AlignVCenter) {
     QFont f = p.font(); f.setPixelSize(size); f.setWeight(bold ? QFont::DemiBold : QFont::Normal);
@@ -80,6 +81,7 @@ public:
     explicit PaperWorkspace(QWidget* parent = nullptr) : QWidget(parent), animation_(this) {
         setMinimumHeight(375); setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
         setObjectName("paperWorkspace");
+        setMouseTracking(true);
         setAccessibleName(QStringLiteral("文档预览与等待队列"));
         animation_.setDuration(430); animation_.setEasingCurve(QEasingCurve::OutCubic);
         connect(&animation_, &QVariantAnimation::valueChanged, this, [this](const QVariant& v) {
@@ -98,7 +100,7 @@ public:
     }
     void setMotion(bool enabled) {
         motion_ = enabled;
-        if (!enabled) { animation_.stop(); phase_ = 1; positionButtons(); update(); }
+        if (!enabled) { animation_.stop(); phase_ = 1; tilt_ = 0; positionButtons(); update(); }
     }
     void select(const QString& id) {
         if (id == selected_) return;
@@ -140,12 +142,16 @@ public:
     }
     std::function<void(const QString&)> selectJob;
 protected:
+    void mouseMoveEvent(QMouseEvent* event) override {
+        if (motion_) { tilt_ = std::clamp((event->position().x() / width() - .35) * 6., -2., 2.); update(); }
+    }
+    void leaveEvent(QEvent*) override { tilt_ = 0; update(); }
     void resizeEvent(QResizeEvent* event) override { QWidget::resizeEvent(event); positionButtons(); }
     void paintEvent(QPaintEvent*) override {
         QPainter p(this); p.setRenderHint(QPainter::Antialiasing);
-        const double split = width() * .685;
-        p.fillRect(QRectF(0, 0, split, height()), QColor("#F0F3FC"));
-        p.fillRect(QRectF(split, 0, width() - split, height()), QColor("#FDFCFA"));
+        const double split = width() * .66;
+        p.fillRect(QRectF(0, 0, split, height()), QColor("#F0F1FB"));
+        p.fillRect(QRectF(split, 0, width() - split, height()), QColor("#FFFFFF"));
         p.setPen(QColor("#E3E8F0")); p.drawLine(QPointF(split, 0), QPointF(split, height()));
         const JobView job = find(selected_);
         QString state = QStringLiteral("准备就绪");
@@ -160,30 +166,34 @@ protected:
             }
         }
         const QColor statusColor = job.state == JobState::Failed ? QColor("#C35B55") : paper::blue;
-        const double copyWidth = split * .44 - 40;
+        const double copyWidth = split * .48 - 44;
         p.setPen(Qt::NoPen); p.setBrush(statusColor); p.drawEllipse(QRectF(30, 46, 7, 7));
         paper::text(p, {45, 34, copyWidth, 30}, state, 13, statusColor, true);
-        paper::text(p, {30, 87, copyWidth, 46}, job.id.isEmpty() ? QStringLiteral("让文档，有序抵达。") : job.title,
+        paper::text(p, {30, 87, copyWidth, 46}, job.id.isEmpty() ? QStringLiteral("从这里，开始成稿。") : job.title,
                     width() < 1180 ? 22 : 27, paper::ink, true);
         QString device;
         const auto fleet = view_.shop.value("fleet").toArray();
         for (int i = 0; i < static_cast<int>(view_.printers.size()); ++i) if (!job.id.isEmpty() && view_.printers[i].jobId == job.id)
             device = QStringLiteral(" · ") + text::deviceName(fleet[i].toObject(), i);
-        paper::text(p, {30, 139, copyWidth, 27}, job.id.isEmpty() ? QStringLiteral("新建任务，开始一次轻盈的打印")
+        paper::text(p, {30, 139, copyWidth, 27}, job.id.isEmpty() ? QStringLiteral("柜台下单，或从学生端提交文档")
             : QStringLiteral("%1 页 · 优先级 %2").arg(job.sheets).arg(job.priority) + device +
               (job.estimatedFinishMs >= 0 ? QStringLiteral(" · ") + job.detail : QString()), 12, paper::muted);
         const int percent = job.sheets > 0 ? job.printed * 100 / job.sheets : 0;
+        if (!job.id.isEmpty()) {
+            paper::text(p, {30, 181, copyWidth, 22}, job.detail, 12, paper::muted);
+            paper::text(p, {30, 207, copyWidth, 22}, QStringLiteral("当前选择 · ") + text::pickupCode(job.id), 11, paper::muted);
+        }
         const double bottom = height() - 113;
         paper::text(p, {30, bottom, copyWidth, 45}, job.id.isEmpty() ? QStringLiteral("准备好了") : QString::number(percent) + "%",
                     job.id.isEmpty() ? 22 : 35, paper::ink, true);
-        p.setPen(Qt::NoPen); p.setBrush(QColor("#DDE3F0"));
+        p.setPen(Qt::NoPen); p.setBrush(QColor("#CFDFD9"));
         p.drawRoundedRect(QRectF(30, bottom + 54, copyWidth - 10, 5), 2.5, 2.5);
         if (percent > 0) { p.setBrush(paper::blue); p.drawRoundedRect(QRectF(30, bottom + 54, (copyWidth - 10) * percent / 100., 5), 2.5, 2.5); }
         paper::text(p, {30, bottom + 66, copyWidth, 23}, job.id.isEmpty() ? QStringLiteral("支持批量导入与多设备调度")
             : QStringLiteral("已输出 %1 / %2 页").arg(job.printed).arg(job.sheets), 11, paper::muted);
-        const double paperHeight = std::min(double(height() - 56), (split * .51 - 25) * 302 / 230.);
-        QRectF sheet(split * .49, (height() - paperHeight) / 2., paperHeight * 230 / 302., paperHeight);
-        p.save(); p.translate(sheet.center()); p.rotate(-5 + (1 - phase_) * 2); p.translate(-sheet.center());
+        const double paperHeight = std::min(double(height() - 88), (split * .45 - 25) * 302 / 230.);
+        QRectF sheet(split * .54, (height() - paperHeight) / 2., paperHeight * 230 / 302., paperHeight);
+        p.save(); p.translate(sheet.center()); p.rotate(-6 + tilt_ + (1 - phase_) * 9); p.translate(-sheet.center());
         p.setPen(QColor("#E0E4EB")); p.setBrush(QColor("#F7F8FA"));
         p.drawRect(sheet.translated(17, 9)); p.setBrush(QColor("#FCFCFD")); p.drawRect(sheet.translated(8, 4));
         paper::document(p, sheet.translated(0, (1 - phase_) * 9), job.title, job.printed, job.sheets); p.restore();
@@ -195,7 +205,7 @@ protected:
         }
         for (int i = 0; i < waiting_.size(); ++i) {
             const auto& j = waiting_[i]; QRectF row = queueRect(i);
-            if (j.id == selected_) p.fillRect(row.adjusted(-9, 0, 9, 0), QColor("#EAF0FD"));
+            if (j.id == selected_) p.fillRect(row.adjusted(-9, 0, 9, 0), QColor("#EEEEFC"));
             paper::document(p, {row.left() + 2, row.top() + 11, 36, 47}, {}, 0, j.sheets, true);
             paper::text(p, {row.left() + 51, row.top() + 10, row.width() - 82, 28}, j.title, 13, paper::ink, true);
             paper::text(p, {row.left() + 51, row.top() + 36, row.width() - 61, 22},
@@ -218,7 +228,7 @@ private:
         return {};
     }
     QRectF queueRect(int i) const {
-        const double split = width() * .685, h = std::min(78., (height() - 92.) / 4.);
+        const double split = width() * .66, h = std::min(78., (height() - 92.) / 4.);
         const int old = previousOrder_.indexOf(waiting_[i].id);
         const double from = old >= 0 ? old : i + .4;
         return {split + 26, 66 + (from + (i - from) * phase_) * h, width() - split - 52, h};
@@ -237,6 +247,7 @@ private:
     std::array<QPushButton*, 4> rows_{};
     QVariantAnimation animation_;
     qreal phase_ = 1;
+    qreal tilt_ = 0;
     bool motion_ = true;
 };
 

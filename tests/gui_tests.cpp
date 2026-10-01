@@ -2,6 +2,7 @@
 #include "print_window.hpp"
 #include "student_window.hpp"
 #include "paper_workspace.hpp"
+#include "print_proof.hpp"
 #include "coordinator_test_client.hpp"
 #include "cps/runtime/job_io.hpp"
 #include <QProcess>
@@ -24,6 +25,7 @@
 #include <QTableView>
 #include <QToolButton>
 #include <QScrollArea>
+#include <QScrollBar>
 #include <QTemporaryDir>
 #include <QTest>
 #include <QElapsedTimer>
@@ -40,6 +42,88 @@ class GuiTests : public QObject {
         QVERIFY(dialog && dialog->isVisible());
     }
 private slots:
+    void printProofRespondsToSettingsAndKeyboard() {
+        BackendDirectory root;
+        StudentWindow student({root.path(), 20, false, true}); student.resize(1180, 820); student.show();
+        QVERIFY(QTest::qWaitForWindowExposed(&student));
+        auto* proof = dynamic_cast<PrintProof*>(student.findChild<QWidget*>("printProof"));
+        auto* flip = student.findChild<QPushButton*>("flipProof");
+        auto* reduced = student.findChild<QPushButton*>("studentReduceMotion");
+        QVERIFY(proof && flip && reduced);
+        QVERIFY(!flip->isEnabled());
+        reduced->click(); QVERIFY(!proof->motionEnabled());
+        const auto mono = proof->grab().toImage();
+        student.findChild<QCheckBox*>("orderColor")->setChecked(true);
+        QVERIFY(proof->specification().contains(QStringLiteral("彩色")));
+        QVERIFY(mono != proof->grab().toImage());
+        student.findChild<QComboBox*>("orderPaper")->setCurrentIndex(1);
+        QVERIFY(proof->specification().startsWith("A3"));
+        student.findChild<QCheckBox*>("orderDuplex")->setChecked(true);
+        QVERIFY(flip->isEnabled());
+        flip->setFocus(); QTest::keyClick(flip, Qt::Key_Space);
+        QVERIFY(proof->showingBack());
+        QCOMPARE(flip->text(), QStringLiteral("查看\n正面"));
+        student.findChild<QSpinBox*>("orderPages")->setValue(1);
+        QVERIFY(proof->specification().contains(QStringLiteral("1 页")));
+        const auto evidence = qEnvironmentVariable("CPS_GUI_EVIDENCE_DIR");
+        if (!evidence.isEmpty()) {
+            QVERIFY(QDir().mkpath(evidence));
+            QVERIFY(student.grab().save(QDir(evidence).filePath("studio-proof-back.png")));
+            // Capture actual native frames for visual inspection of the transition.
+            reduced->click(); QVERIFY(proof->motionEnabled());
+            proof->setBack(false); QTest::qWait(400);
+            flip->click();
+            for (int frame = 0; frame < 12; ++frame) {
+                QVERIFY(proof->grab().save(QDir(evidence).filePath(QStringLiteral("proof-turn-%1.png").arg(frame, 2, 10, QLatin1Char('0')))));
+                QTest::qWait(40);
+            }
+            QVERIFY(proof->showingBack());
+            reduced->click(); QVERIFY(!proof->motionEnabled());
+        }
+        student.findChild<QSpinBox*>("orderPages")->setValue(3);
+        QCOMPARE(proof->sheetCount(), 2);
+        auto* unfold = student.findChild<QPushButton*>("unfoldProof");
+        auto* next = student.findChild<QPushButton*>("proofNext");
+        auto* previous = student.findChild<QPushButton*>("proofPrevious");
+        QVERIFY(unfold && next && previous);
+        const auto stacked = proof->grab().toImage();
+        QTest::mouseClick(unfold, Qt::LeftButton); QVERIFY(proof->expanded());
+        QVERIFY(stacked != proof->grab().toImage());
+        QVERIFY(!previous->isEnabled() && next->isEnabled());
+        QTest::mouseClick(next, Qt::LeftButton); QCOMPARE(proof->currentSheet(), 2);
+        QVERIFY(!next->isEnabled() && previous->isEnabled());
+        QVERIFY(proof->specification().contains(QStringLiteral("背面留白")));
+        QTest::mouseClick(previous, Qt::LeftButton); QCOMPARE(proof->currentSheet(), 1);
+        if (!evidence.isEmpty()) {
+            QVERIFY(student.grab().save(QDir(evidence).filePath("atelier-expanded.png")));
+            student.findChild<QSpinBox*>("orderPages")->setValue(8);
+            proof->setBack(false);
+            reduced->click(); unfold->click(); QTest::qWait(500); unfold->click();
+            for (int frame = 0; frame < 16; ++frame) {
+                QVERIFY(proof->grab().save(QDir(evidence).filePath(QStringLiteral("proof-spread-%1.png").arg(frame, 2, 10, QLatin1Char('0')))));
+                QTest::qWait(40);
+            }
+            unfold->click();
+            for (int frame = 0; frame < 16; ++frame) {
+                QVERIFY(proof->grab().save(QDir(evidence).filePath(QStringLiteral("proof-close-%1.png").arg(frame, 2, 10, QLatin1Char('0')))));
+                QTest::qWait(40);
+            }
+            reduced->click();
+        }
+        student.findChild<QCheckBox*>("orderDuplex")->setChecked(false);
+        QVERIFY(!proof->showingBack() && !flip->isEnabled());
+        student.resize(920, 640); QTest::qWait(50);
+        auto* scroll = student.findChild<QScrollArea*>("orderScroll");
+        auto* pay = student.findChild<QPushButton*>("payOrder");
+        scroll->ensureWidgetVisible(pay);
+        QTRY_VERIFY(scroll->viewport()->rect().contains(QRect(pay->mapTo(scroll->viewport(), QPoint()), pay->size())));
+        QVERIFY(scroll->horizontalScrollBar()->maximum() == 0);
+        if (!evidence.isEmpty()) QVERIFY(student.grab().save(QDir(evidence).filePath("studio-student-compact.png")));
+        QTest::keyClick(&student, Qt::Key_2, Qt::ControlModifier);
+        QVERIFY(student.findChild<QPushButton*>("navMine")->isChecked());
+        QCOMPARE(student.findChild<QTableWidget*>("myOrders")->rowCount(), 0);
+        student.close(); QTRY_VERIFY(!student.isVisible());
+    }
     void shopWorkflow() {
         BackendDirectory root;
         PrintWindow window({root.path(), 10, true, true}); window.resize(1200, 800); window.show();
@@ -613,6 +697,20 @@ private slots:
         auto* hint = student.findChild<QLabel*>("payHint");
         QVERIFY(hint->isVisible() && hint->text().contains(QStringLiteral("选择要打印的文件")));
         QVERIFY(screenshot(&student, "student-00-empty.png"));
+
+        // Render the reference composition with a real metadata selection and backend quote.
+        if (!evidence.isEmpty()) {
+            student.setDocument(textPath);
+            student.findChild<QSpinBox*>("orderPages")->setValue(8);
+            student.findChild<QCheckBox*>("orderColor")->setChecked(true);
+            student.findChild<QCheckBox*>("orderDuplex")->setChecked(true);
+            student.resize(1440, 900);
+            QTRY_COMPARE(price->text(), QStringLiteral("¥11.40"));
+            QTRY_VERIFY(pay->isEnabled()); QTest::qWait(300);
+            QVERIFY(screenshot(&student, "atelier-reference-live.png"));
+            student.findChild<QCheckBox*>("orderDuplex")->setChecked(false);
+            student.resize(1180, 820);
+        }
 
         student.setDocument(pdfPath);
         QCOMPARE(student.findChild<QSpinBox*>("orderPages")->value(), 2);
