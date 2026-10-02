@@ -10,6 +10,8 @@ std::vector<WaitEstimate> estimateWaits(const std::vector<Job>& jobs, TimeMs now
         o.pageMs < 1 || o.pageMs > 10000 || o.maxDispatches < 0 || o.supplied.a4 < 0 || o.supplied.a3 < 0)
         throw std::invalid_argument("invalid estimate options");
     for (const auto& p : o.fleet) if (!validPrinter(p)) throw std::invalid_argument("invalid fleet");
+    for (const auto& p : o.printed)
+        if (p.atMs < 0 || p.atMs > now) throw std::invalid_argument("invalid progress time");
 
     // Finished orders only matter through the paper they consumed. A cancelling
     // order is about to release both its device and its reservation.
@@ -36,9 +38,12 @@ std::vector<WaitEstimate> estimateWaits(const std::vector<Job>& jobs, TimeMs now
         int device = shop ? j.assignedPrinter : -1;
         if (!shop) for (int i = 0; i < devices && device < 0; ++i) if (!busy[static_cast<std::size_t>(i)]) device = i;
         if (device < 0 || device >= devices) continue; // no slot to model; leave it out of the forecast
-        const auto done = std::find_if(o.printed.begin(), o.printed.end(), [&](const auto& p) { return p.first == j.id; });
-        const int printed = done == o.printed.end() ? 0 : std::clamp(done->second, 0, j.sheets());
-        const auto until = after(now, duration(j, device) * (j.sheets() - printed) / j.sheets());
+        const auto done = std::find_if(o.printed.begin(), o.printed.end(), [&](const auto& p) { return p.id == j.id; });
+        const int printed = done == o.printed.end() ? 0 : std::clamp(done->printed, 0, j.sheets());
+        const auto anchor = done == o.printed.end() ? j.runs.back().startedMs : done->atMs;
+        // Keep the completion anchored to the last actual progress. Adding the
+        // full remaining pages to every poll's `now` creates a sawtooth countdown.
+        const auto until = std::max(now, after(anchor, duration(j, device) * (j.sheets() - printed) / j.sheets()));
         busy[static_cast<std::size_t>(device)] = true;
         active.push_back({j.id, j.attempts, device, until});
         result.push_back({j.id, WaitBlock::None, j.runs.back().startedMs, until, device, 0});

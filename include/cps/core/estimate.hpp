@@ -12,6 +12,11 @@ struct WaitEstimate {
     int printer = -1;
     int ahead = 0;       // forecast dispatches that happen before this order
 };
+struct PrintProgress {
+    std::string id;
+    int printed = 0;
+    TimeMs atMs = 0;  // when this progress was observed, on the scheduler timeline
+};
 struct EstimateOptions {
     Policy policy = Policy::Fcfs;
     SchedulerOptions scheduler = {};
@@ -19,7 +24,7 @@ struct EstimateOptions {
     Inventory supplied = {};
     int printers = 2;
     TimeMs pageMs = 150;              // homogeneous queue only
-    std::vector<std::pair<std::string, int>> printed = {}; // sheets already output by running orders
+    std::vector<PrintProgress> printed = {}; // latest progress, including its observation time
     int maxDispatches = 256;          // bounds the cost on very long queues
 };
 // Forecast for every Queued and Running order at `now`. It replays the real claim

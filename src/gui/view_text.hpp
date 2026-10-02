@@ -54,6 +54,9 @@ inline QString startsIn(TimeMs wait) {
 inline QString afterResume(TimeMs wait) {
     return wait < 1000 ? QStringLiteral("恢复后立即开始") : QStringLiteral("恢复后再等") + duration(wait);
 }
+inline TimeMs forecastNow(const ViewState& view) {
+    return view.paused ? view.forecastAtMs : view.nowMs;
+}
 inline QString payment(PaymentMethod method) {
     switch (method) {
     case PaymentMethod::Counter: return QStringLiteral("柜台");

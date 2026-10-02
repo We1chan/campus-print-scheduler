@@ -814,7 +814,7 @@ void PrintWindow::applyView(const ViewState& view) {
     const int blockedOrders = view.shop.value("blocked_orders").toInt();
     const bool pending = view.metrics.queued + view.metrics.running + view.metrics.cancelling > 0;
     const auto clearing = view.queueClearMs < 0 ? (pending ? QStringLiteral("待完成订单暂无法预计") : QStringLiteral("当前没有待完成订单"))
-        : view.paused ? QStringLiteral("派发已暂停 · 恢复后%1清空当前队列").arg(text::duration(view.queueClearMs - view.nowMs))
+        : view.paused ? QStringLiteral("派发已暂停 · 恢复后%1清空当前队列").arg(text::duration(view.queueClearMs - text::forecastNow(view)))
         : QStringLiteral("预计 %1 清空当前队列（%2）").arg(text::clock(view.queueClearMs), text::duration(view.queueClearMs - view.nowMs));
     shopValues_[0]->setText(amount(business, "revenue_cents"));
     shopHints_[0]->setText(QStringLiteral("贡献利润 %1 · 完成 %2 单").arg(text::money(Money(business.value("contribution_cents").toDouble()))).arg(business.value("completed").toInt()));
@@ -825,7 +825,7 @@ void PrintWindow::applyView(const ViewState& view) {
     shopValues_[3]->setText(QStringLiteral("%1 / %2 台打印中").arg(busy).arg(count));
     shopHints_[3]->setText(QStringLiteral("A4 %1 张 · A3 %2 张").arg(view.shop.value("stock_a4").toInt()).arg(view.shop.value("stock_a3").toInt()) +
         (offline > 0 ? QStringLiteral(" · %1 台暂停接单").arg(offline) : QString()));
-    shopForecast_->setText(clearing + (blockedOrders > 0 ? QStringLiteral("\n%1 单因缺纸或设备暂停暂无法预计").arg(blockedOrders) : QString()));
+    shopForecast_->setText(clearing + (blockedOrders > 0 ? QStringLiteral("\n%1 单暂无法预计，请查看订单的等待原因").arg(blockedOrders) : QString()));
     tone(shopForecast_, blockedOrders > 0 || (view.paused && pending) ? "waiting" : "");
     const std::array<const char*, 2> stockKeys{"stock_a4", "stock_a3"};
     for (int i = 0; i < 2; ++i) {

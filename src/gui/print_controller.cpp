@@ -207,6 +207,7 @@ bool PrintController::applySnapshot(const QJsonObject& snapshot) {
     next.printers.resize(static_cast<std::size_t>(snapshot.value("printers").toInt()));
     next.shop = snapshot;
     next.nowMs = static_cast<TimeMs>(snapshot.value("now_ms").toDouble());
+    next.forecastAtMs = static_cast<TimeMs>(snapshot.value("forecast_at_ms").toDouble(double(next.nowMs)));
     next.queueClearMs = snapshot.value("queue_clear_ms").isDouble()
         ? static_cast<TimeMs>(snapshot.value("queue_clear_ms").toDouble()) : -1;
     const bool paused = snapshot.value("paused").toBool();
@@ -232,7 +233,7 @@ bool PrintController::applySnapshot(const QJsonObject& snapshot) {
         item.customer = QString::fromUtf8(job.customer.data(), static_cast<qsizetype>(job.customer.size()));
         item.payment = job.payment; item.refundCents = job.refundCents; item.printer = job.assignedPrinter;
         // The forecast comes from the backend's own dispatch rules; the GUI only words it.
-        const auto forecast = recovering ? QString() : text::forecast(item, next.nowMs, paused);
+        const auto forecast = recovering ? QString() : text::forecast(item, paused ? next.forecastAtMs : next.nowMs, paused);
         item.detail = recovering ? QStringLiteral("后台正在核对旧执行结果") : !forecast.isEmpty() ? forecast :
             QStringLiteral("执行次数 %1").arg(job.attempts);
         next.jobs.append(item);

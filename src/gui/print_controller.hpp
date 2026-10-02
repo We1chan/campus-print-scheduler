@@ -58,6 +58,7 @@ struct ViewState {
     QJsonObject shop;
     Statistics metrics;
     TimeMs nowMs = 0;        // backend clock of this snapshot
+    TimeMs forecastAtMs = 0; // reference clock for the cached forecast's paused durations
     TimeMs queueClearMs = -1;
     QString connection;
     bool paused = false;

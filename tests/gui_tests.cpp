@@ -554,6 +554,11 @@ private slots:
         auto* table = window.findChild<QTableView*>("jobsTable");
         QTRY_COMPARE(table->model()->rowCount(), 3);
         QTRY_VERIFY(table->model()->index(2, 5).data().toString().contains(QStringLiteral("派发已暂停")));
+        const auto pausedText = table->model()->index(2, 5).data().toString();
+        for (int i = 0; i < 6; ++i) {
+            QTest::qWait(250);
+            QCOMPARE(table->model()->index(2, 5).data().toString(), pausedText);
+        }
         CoordinatorClient client(root.path());
         const auto rows = client.request("snapshot").value("jobs").toArray();
         QCOMPARE(rows.size(), 3);

@@ -233,7 +233,7 @@ worker Job JSON 仍为 1，新增可选 paper/color/duplex 字段；输出增加
 
 `estimateWaits(jobs, now, EstimateOptions)` 位于 `include/cps/core/estimate.hpp`，纯 C++。它把当前快照恢复到一个临时 Scheduler，按事件推进模拟时间并调用真实的 `claim` / `claimFor`，因此与实际派发共用策略排序、设备兼容、设备占用和库存规则；不修改真实队列。返回每个 Queued / Running 订单的 `WaitEstimate`：
 
-- `startMs` / `finishMs`：预计派发与完成时间；Running 订单的 startMs 是已记录的开始时间，剩余时长按 `printed`（已输出面数）折算，未知进度按整单计。
+- `startMs` / `finishMs`：预计派发与完成时间；Running 订单的 startMs 是已记录的开始时间。`EstimateOptions::printed` 保存 `PrintProgress{id, printed, atMs}`，剩余时长以最后一次实际进度的观察时间为锚点；未知进度以本次 run 的开始时间为锚点。刷新期间扣除已经经过的时间，不重新加上完整的剩余页耗时。worker 重启重新建立锚点；超过估计时刻仍由实际成功状态确认完成。
 - `printer`：预计设备；`ahead`：在它之前预计派发的排队订单数。
 - `blocked`：`NoDevice`（没有在线的兼容设备）、`NoPaper`（库存不足）、`Horizon`（超过 `maxDispatches`，默认 256，用于限制长队列的计算量）；此时没有时间。
 - 同构旧队列用 `printers` 与 `pageMs`；经营模式用 `fleet` 与 `supplied`。Cancelling 订单视为即将释放设备和纸张，不参与预计。
@@ -250,7 +250,7 @@ worker Job JSON 仍为 1，新增可选 paper/color/duplex 字段；输出增加
 | --- | --- |
 | submit / submit_batch | job 可带 `payment` 与 `customer`（去除首尾空白后不超过 64 个可打印字符）。未知支付方式或超长 customer 拒绝整个请求；同构旧队列只接受默认值 |
 | quote | 回复增加“此刻下单”的预计：`estimate_blocked`（空串、`no_device`、`no_paper`、`horizon`），可预计（空串）时还有 `jobs_ahead`、`estimated_start_ms`、`estimated_finish_ms`、`estimated_wait_ms`；另有 `now_ms` 与 `paused`。预计不入队、不预留 |
-| snapshot | Queued / Running 订单增加 `estimate_blocked`，可预计时还有 `jobs_ahead`、`estimated_start_ms`、`estimated_finish_ms`；非默认的 `payment`、`customer` 随订单给出；顶层增加 `queue_clear_ms`（可预计订单的最晚完成时间，没有时为 null）与 `blocked_orders` |
+| snapshot | Queued / Running 订单增加 `estimate_blocked`，可预计时还有 `jobs_ahead`、`estimated_start_ms`、`estimated_finish_ms`；非默认的 `payment`、`customer` 随订单给出；顶层增加 `queue_clear_ms`（全部待派发/运行订单均可预计时的最晚完成时间；有缺失、阻塞、超出预测上限或没有活跃订单时为 null）、`blocked_orders`（尚无有效预估的待派发/运行订单数）与 `forecast_at_ms`（缓存预测的计算时间；暂停期间的相对时长以它为基准，避免缓存刷新造成倒计时回弹） |
 
 shop_metrics 增加 `prepaid_cents` 与 `paid_cents`（对象，键为四种支付方式）。
 

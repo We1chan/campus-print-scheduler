@@ -46,12 +46,12 @@ void runningProgressAndSettledOrders() {
     require(s.claim(Policy::Fcfs, 0)->id == "run", "claim running order");
     EstimateOptions o; o.pageMs = 100; o.printers = 1;
     auto e = estimateWaits(s.snapshot(), 300, o);
-    require(planned(find(e, "run"), 0, 1300, 0), "unknown progress assumes a full run from now");
-    o.printed = {{"run", 5}, {"unknown", 9}};
+    require(planned(find(e, "run"), 0, 1000, 0), "unknown progress uses the recorded run start");
+    o.printed = {{"run", 5, 300}, {"unknown", 9, 300}};
     e = estimateWaits(s.snapshot(), 300, o);
     require(planned(find(e, "run"), 0, 800, 0), "remaining sheets shorten the running order");
     require(planned(find(e, "next"), 800, 1200, 0) && planned(find(e, "stop"), 1200, 1500, 1), "queue follows the running order");
-    o.printed = {{"run", 99}};
+    o.printed = {{"run", 99, 300}};
     require(find(estimateWaits(s.snapshot(), 300, o), "next").startMs == 300, "overdue running order frees its device now");
 
     // Settled and cancelling orders are not forecast and do not hold a device.
@@ -64,6 +64,36 @@ void runningProgressAndSettledOrders() {
     const auto before = s.snapshot();
     estimateWaits(before, 500, o);
     require(s.snapshot().size() == 4 && s.snapshot()[2].state == JobState::Queued, "estimating never changes the real queue");
+}
+
+void progressDoesNotResetOnPoll() {
+    Scheduler s;
+    require(s.submit(job("run", 10)) && s.submit(job("next", 2)), "submit stability orders");
+    require(s.claim(Policy::Fcfs, 0)->id == "run", "start stability order");
+    EstimateOptions o; o.pageMs = 1000; o.printers = 1;
+    for (TimeMs now : {100, 500, 900})
+        require(find(estimateWaits(s.snapshot(), now, o), "run").finishMs == 10000, "polling before first progress keeps the ETA");
+    o.printed = {{"run", 5, 5000}};
+    for (TimeMs now : {5000, 5200, 5500, 5900}) {
+        const auto e = estimateWaits(s.snapshot(), now, o);
+        require(find(e, "run").finishMs == 10000 && find(e, "next").startMs == 10000,
+                "no-progress refresh keeps both running and waiting ETAs fixed");
+    }
+    o.printed = {{"run", 6, 6000}};
+    require(find(estimateWaits(s.snapshot(), 6500, o), "run").finishMs == 10000, "on-time progress keeps the ETA");
+    o.printed = {{"run", 7, 7250}};
+    require(find(estimateWaits(s.snapshot(), 7500, o), "run").finishMs == 10250, "real delay corrects the ETA");
+    o.printed = {{"run", 0, 8000}};
+    require(find(estimateWaits(s.snapshot(), 8500, o), "run").finishMs == 18000, "worker restart resets the progress anchor");
+    require(find(estimateWaits(s.snapshot(), 19000, o), "run").finishMs == 19000, "overdue progress cannot produce a past dispatch");
+    o.printed = {{"run", 1, 20000}};
+    test::throws<std::invalid_argument>([&] { estimateWaits(s.snapshot(), 19000, o); }, "future progress timestamp rejected");
+
+    o.printed.clear(); o.fleet = defaultFleet(1000); o.supplied = {100, 100};
+    Scheduler shop;
+    require(shop.submit(order("shop", 10)) && shop.claimFor(Policy::Fcfs, 0, o.fleet, {0}, o.supplied).has_value(), "start shop order");
+    o.printed = {{"shop", 5, 5000}};
+    require(find(estimateWaits(shop.snapshot(), 5700, o), "shop").finishMs == 10000, "heterogeneous shop uses the same progress anchor");
 }
 
 void shopMatchingAndBlocking() {
@@ -132,6 +162,7 @@ int main() {
     try {
         homogeneousQueue();
         runningProgressAndSettledOrders();
+        progressDoesNotResetOnPoll();
         shopMatchingAndBlocking();
         forecastMatchesReplay();
         invalidInput();

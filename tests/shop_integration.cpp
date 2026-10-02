@@ -7,8 +7,9 @@
 #include <stdexcept>
 namespace {
 void require(bool ok, const char* message) { if (!ok) throw std::runtime_error(message); }
-void accepted(const QJsonObject& response) {
-    if (response.value("type").toString() != "accepted") throw std::runtime_error(QJsonDocument(response).toJson().toStdString());
+void accepted(const QJsonObject& response, const char* context = "command") {
+    if (response.value("type").toString() != "accepted")
+        throw std::runtime_error(std::string(context) + ": " + QJsonDocument(response).toJson().toStdString());
 }
 }
 int main(int argc, char** argv) {
@@ -26,7 +27,7 @@ int main(int argc, char** argv) {
             snap = client.request("snapshot"); if (!snap.isEmpty()) break; QThread::msleep(50);
         }
         require(snap.value("printers").toInt() == 6 && snap.value("fleet").toArray().size() == 6, "six heterogeneous devices");
-        accepted(client.request("set_paused", {{"paused", true}}));
+        accepted(client.request("set_paused", {{"paused", true}}), "pause new shop");
         QJsonObject order{{"job_id", "color-a3"}, {"title", QStringLiteral("彩色 双面海报")}, {"pages", 3}, {"copies", 2},
             {"paper", "a3"}, {"color", true}, {"duplex", true}, {"service", "flexible"}, {"quoted_cents", 1},
             {"payment", "wechat"}, {"customer", QStringLiteral("2024000001")}};
@@ -36,7 +37,7 @@ int main(int argc, char** argv) {
         require(quote.value("estimate_blocked").toString().isEmpty() && quote.value("jobs_ahead").toInt() == 0 &&
                 quote.value("estimated_wait_ms").toDouble() == 0 && quote.value("paused").toBool() &&
                 quote.value("estimated_finish_ms").toDouble() - quote.value("estimated_start_ms").toDouble() == 480, "quote forecasts an idle device");
-        accepted(client.request("submit", {{"job", order}}));
+        accepted(client.request("submit", {{"job", order}}), "submit color order");
         auto probe = order; probe.insert("job_id", "quote-only");
         const auto second = client.request("quote", {{"job", probe}});
         require(second.value("jobs_ahead").toInt() == 1 && second.value("estimated_wait_ms").toDouble() == 480, "quote waits behind the queued order");
@@ -54,15 +55,15 @@ int main(int argc, char** argv) {
         auto bad = order; bad.insert("job_id", "invalid"); bad.insert("paper", "a2");
         auto valid = order; valid.insert("job_id", "must-not-submit");
         require(client.request("submit_batch", {{"jobs", QJsonArray{valid, bad}}}).value("type").toString() == "error", "atomic invalid batch");
-        accepted(client.request("set_printer", {{"index", 5}, {"online", false}}));
-        accepted(client.request("set_paused", {{"paused", false}}));
+        accepted(client.request("set_printer", {{"index", 5}, {"online", false}}), "disable A3 printer");
+        accepted(client.request("set_paused", {{"paused", false}}), "resume shop");
         snap = client.request("snapshot");
         require(snap.value("jobs").toArray().size() == 1 && snap.value("jobs").toArray()[0].toObject().value("state") == "queued", "offline A3 device blocks compatible order");
         row = snap.value("jobs").toArray()[0].toObject();
         require(row.value("estimate_blocked") == "no_device" && !row.contains("estimated_start_ms") &&
                 snap.value("blocked_orders").toInt() == 1 && snap.value("queue_clear_ms").isNull(), "blocked order has no forecast");
         require(client.request("quote", {{"job", probe}}).value("estimate_blocked") == "no_device", "quote reports the blocked device");
-        accepted(client.request("set_printer", {{"index", 5}, {"online", true}}));
+        accepted(client.request("set_printer", {{"index", 5}, {"online", true}}), "enable A3 printer");
         timer.restart();
         while (timer.elapsed() < 10000) {
             snap = client.request("snapshot");
@@ -79,18 +80,19 @@ int main(int argc, char** argv) {
                 !job.contains("estimate_blocked"), "completed order settles into its payment channel");
         QFile output(QDir(root.path()).filePath("output/color-a3.txt")); require(output.open(QIODevice::ReadOnly), "output exists");
         const auto text = output.readAll(); require(text.contains("paper=a3") && text.contains("physical_sheets=4"), "output specification");
-        accepted(client.request("refund", {{"job_id", "color-a3"}, {"cumulative_cents", 1530}}));
-        accepted(client.request("refund", {{"job_id", "color-a3"}, {"cumulative_cents", 1530}}));
-        accepted(client.request("restock", {{"paper", "a3"}, {"quantity", 100}}));
+        accepted(client.request("refund", {{"job_id", "color-a3"}, {"cumulative_cents", 1530}}), "refund order");
+        accepted(client.request("refund", {{"job_id", "color-a3"}, {"cumulative_cents", 1530}}), "repeat refund");
+        accepted(client.request("restock", {{"paper", "a3"}, {"quantity", 100}}), "restock A3");
         snap = client.request("snapshot");
         require(snap.value("stock_a3").toInt() == 3096 && snap.value("shop_metrics").toObject().value("revenue_cents").toInt() == 0, "restock and idempotent refund");
-        accepted(client.request("shutdown")); require(process.waitForFinished(5000), "clean shutdown"); client.disconnect();
+        accepted(client.request("shutdown"), "close original shop"); require(process.waitForFinished(5000), "clean shutdown"); client.disconnect();
         cps::PersistentState state; QString error;
         require(cps::readPersistentState(QDir(root.path()).filePath("state.json"), state, error), "read shop snapshot");
         require(state.fleet.size() == 6 && state.jobs[0].refundCents == 1530, "commercial persistence");
         require(state.jobs[0].payment == cps::PaymentMethod::Wechat && state.jobs[0].customer == "2024000001", "payment persistence");
         QFile original(QDir(root.path()).filePath("state.json")); require(original.open(QIODevice::ReadOnly), "read saved JSON");
         auto damaged = QJsonDocument::fromJson(original.readAll()).object(); auto rows = damaged.value("jobs").toArray();
+        original.close(); // Windows cannot replace a state file held open by the test.
         require(damaged.value("schema_version").toInt() == 3, "payment fields use persistent schema 3");
         // A v0.2 (schema 2) file has no payment fields and must still load as a counter order.
         auto older = damaged; auto olderRow = rows[0].toObject(); olderRow.remove("payment"); olderRow.remove("customer");
@@ -109,7 +111,20 @@ int main(int argc, char** argv) {
         timer.restart(); snap = {};
         while (timer.elapsed() < 10000) { snap = client.request("snapshot"); if (!snap.isEmpty()) break; QThread::msleep(50); }
         require(snap.value("stock_a3").toInt() == 3096 && snap.value("jobs").toArray().size() == 1, "stock and orders restored");
-        accepted(client.request("shutdown")); require(process.waitForFinished(5000), "stop reopened shop");
+        accepted(client.request("set_paused", {{"paused", true}}), "pause reopened shop");
+        QJsonArray longQueue;
+        for (int i = 0; i < 257; ++i)
+            longQueue.append(QJsonObject{{"job_id", QStringLiteral("horizon-%1").arg(i)}, {"title", "short order"}, {"pages", 1}, {"copies", 1}});
+        accepted(client.request("submit_batch", {{"jobs", longQueue}}), "submit long queue");
+        timer.restart();
+        while (timer.elapsed() < 5000) {
+            snap = client.request("snapshot");
+            if (snap.value("jobs").toArray().last().toObject().value("estimate_blocked") == "horizon") break;
+            QThread::msleep(30);
+        }
+        require(snap.value("blocked_orders").toInt() == 1 && snap.value("queue_clear_ms").isNull(),
+                "a partial forecast must not promise whole-queue clearance");
+        accepted(client.request("shutdown"), "stop reopened shop"); require(process.waitForFinished(5000), "stop reopened shop");
         std::cout << "Shop quote, order, device, stock, settlement and persistence workflow passed.\n";
     } catch (const std::exception& e) { std::cerr << e.what() << '\n'; return 1; }
 }

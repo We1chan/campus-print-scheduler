@@ -498,7 +498,7 @@ void StudentWindow::applyView(const ViewState& view) {
             const bool refunded = job.state == JobState::Cancelled || job.state == JobState::Failed;
             const auto paid = refunded ? QStringLiteral("已原路退款") : job.refundCents > 0
                 ? QStringLiteral("已退款 %1").arg(text::money(job.refundCents)) : text::payment(job.payment) + QStringLiteral("已支付");
-            QString progress = text::forecast(job, view_.nowMs, view_.paused);
+            QString progress = text::forecast(job, text::forecastNow(view_), view_.paused);
             if (job.state == JobState::Queued && job.estimatedFinishMs >= 0 && !view_.paused)
                 progress = QStringLiteral("第 %1 位 · %2 · 预计 %3 完成").arg(job.ahead + 1)
                     .arg(text::startsIn(job.estimatedStartMs - view_.nowMs), text::clock(job.estimatedFinishMs));
@@ -558,7 +558,7 @@ void StudentWindow::applyView(const ViewState& view) {
         const QList<ui::Cell> cells{{QString::number(row + 1), "", -1, "muted"},
             {own ? QStringLiteral("我的订单 · ") + job.title : QStringLiteral("其他订单"), "", -1, own ? "accent" : ""},
             job.specification + QStringLiteral(" · %1 面").arg(job.sheets),
-            !known ? text::blocked(job.blocked) : view_.paused ? text::afterResume(job.estimatedStartMs - view_.nowMs)
+            !known ? text::blocked(job.blocked) : view_.paused ? text::afterResume(job.estimatedStartMs - text::forecastNow(view_))
                 : text::clock(job.estimatedStartMs),
             known && !view_.paused ? text::clock(job.estimatedFinishMs) : QStringLiteral("—")};
         for (int column = 0; column < cells.size(); ++column) ui::setCell(queue_, row, column, cells[column]);
@@ -566,7 +566,8 @@ void StudentWindow::applyView(const ViewState& view) {
 
     metricValues_[0]->setText(QStringLiteral("%1 单").arg(waiting.size()));
     metricHints_[0]->setText(QStringLiteral("%1 / %2 台设备正在打印").arg(printing).arg(view_.printers.size()));
-    metricValues_[1]->setText(view_.queueClearMs < 0 ? QStringLiteral("无需等待") : text::duration(view_.queueClearMs - view_.nowMs));
+    metricValues_[1]->setText(view_.queueClearMs < 0 ? (waiting.empty() && printing == 0 ? QStringLiteral("无需等待") : QStringLiteral("暂无法预计"))
+        : text::duration(view_.queueClearMs - text::forecastNow(view_)));
     metricHints_[1]->setText(view_.paused ? QStringLiteral("店铺暂停派发，恢复后开始计时") : QStringLiteral("按当前队列推算，不含新订单"));
     metricValues_[2]->setText(QStringLiteral("%1 单").arg(active));
     metricHints_[2]->setText(!soonest ? QStringLiteral("暂无可预计的进行中订单") : view_.paused ? QStringLiteral("店铺暂停派发，恢复后继续")

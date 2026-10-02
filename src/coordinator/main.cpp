@@ -181,6 +181,7 @@ private:
         QByteArray stdoutBuffer;
         QString cancelFile;
         int printed = 0;
+        cps::TimeMs progressAtMs = 0;
     };
 
     bool persist(QString& error) {
@@ -367,7 +368,7 @@ private:
         options.fleet = state_.fleet; options.supplied = state_.supplied;
         options.printers = state_.printers; options.pageMs = pageMs_;
         for (auto it = active_.begin(); it != active_.end(); ++it)
-            options.printed.emplace_back(it.key().toStdString(), it->printed);
+            options.printed.push_back({it.key().toStdString(), it->printed, it->progressAtMs});
         try {
             return cps::estimateWaits(jobs, now, options);
         } catch (const std::exception&) {
@@ -411,10 +412,13 @@ private:
             const auto id = QString::fromStdString(job.id);
             auto row = cps::jobSnapshotToJson(job);
             const auto e = estimates.constFind(id);
-            if (e != estimates.constEnd() && (job.state == cps::JobState::Queued || job.state == cps::JobState::Running)) {
-                insertEstimate(row, *e);
-                if (e->blocked == cps::WaitBlock::None) clear = std::max(clear, e->finishMs);
-                else ++blocked;
+            if (job.state == cps::JobState::Queued || job.state == cps::JobState::Running) {
+                if (e == estimates.constEnd()) ++blocked;
+                else {
+                    insertEstimate(row, *e);
+                    if (e->blocked == cps::WaitBlock::None) clear = std::max(clear, e->finishMs);
+                    else ++blocked;
+                }
             }
             row.insert("slot", slots_.value(id, -1));
             row.insert("recovering", recovering_.contains(id));
@@ -436,7 +440,8 @@ private:
             {"coordinator_pid", static_cast<double>(QCoreApplication::applicationPid())},
             {"aging_interval_ms", static_cast<double>(state_.schedulerOptions.agingIntervalMs)},
             {"window_start_ms", static_cast<double>(start)}, {"now_ms", static_cast<double>(now)},
-            {"queue_clear_ms", clear < 0 ? QJsonValue(QJsonValue::Null) : QJsonValue(static_cast<double>(clear))},
+            {"forecast_at_ms", static_cast<double>(forecastAtMs_)},
+            {"queue_clear_ms", clear < 0 || blocked > 0 ? QJsonValue(QJsonValue::Null) : QJsonValue(static_cast<double>(clear))},
             {"blocked_orders", blocked},
             {"jobs", rows}, {"waiting_order", order}, {"metrics", metrics}};
     }
@@ -704,7 +709,7 @@ private:
             int slot = job->assignedPrinter >= 0 ? job->assignedPrinter : 0;
             while (slots_.values().contains(slot)) ++slot;
             slots_.insert(id, slot);
-            active_.insert(id, ActiveJob{process, job->attempts, {}, cancellation});
+            active_.insert(id, ActiveJob{process, job->attempts, {}, cancellation, 0, job->runs.back().startedMs});
 
             connect(process, &QProcess::readyReadStandardOutput, this, [this, id] {
                 auto it = active_.find(id);
@@ -722,8 +727,14 @@ private:
                         if (event.value("job_id").toString() != id) continue;
                         event.insert("claim_attempt", it->attempt);
                         const auto kind = event.value("type").toString();
-                        if (kind == "progress") it->printed = event.value("printed_sheets").toInt();
-                        if (kind == "worker_restarting") it->printed = 0;
+                        if (kind == "progress" && event.value("printed_sheets").toInt() != it->printed) {
+                            it->printed = event.value("printed_sheets").toInt();
+                            it->progressAtMs = scheduler_->nowMs();
+                        }
+                        if (kind == "worker_restarting" || kind == "worker_started") {
+                            it->printed = 0;
+                            it->progressAtMs = scheduler_->nowMs();
+                        }
                         broadcast(event);
                     }
                 }
