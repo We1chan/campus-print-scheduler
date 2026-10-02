@@ -38,7 +38,9 @@ jobs:
           cache: true
           archives: ${{ runner.os == 'Linux' && 'qtbase icu' || 'qtbase' }}
           cache-key-prefix: qt-with-linux-icu-v1
-      - name: Configure
+      - name: Install local PDF renderer
+        run: python tools/setup_pdfium.py
+      - name: Configure application
         run: cmake --preset ci
       - name: Build
         run: cmake --build --preset ci --parallel 2
@@ -50,7 +52,7 @@ jobs:
         if: runner.os != 'Linux'
         run: |
           python -c "from pathlib import Path; Path('runtime').mkdir(exist_ok=True)"
-          ./build/ci/bin/gui_tests${{ runner.os == 'Windows' && '.exe' || '' }} persistentPoliciesAndReport backendCrashDuringCancellation runningCancelFaultAndReconnect compactWindowKeepsControlsReachable -o runtime/native-gui-tests.txt,txt
+          ./build/ci/bin/gui_tests${{ runner.os == 'Windows' && '.exe' || '' }} editorialMotionRetargeting editorialAnimationFrameBudget editorialReceiptCodes editorialHoverSpreadsAndReturns editorialWindowChrome editorialDocumentPreview studentOrderPaymentAndForecast persistentPoliciesAndReport backendCrashDuringCancellation runningCancelFaultAndReconnect compactWindowKeepsControlsReachable -o runtime/native-gui-tests.txt,txt
         env:
           QT_QPA_PLATFORM: ${{ runner.os == 'Windows' && 'windows' || 'cocoa' }}
           CPS_GUI_EVIDENCE_DIR: ${{ github.workspace }}/runtime/native-gui-evidence

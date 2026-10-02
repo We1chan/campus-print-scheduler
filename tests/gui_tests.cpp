@@ -3,6 +3,7 @@
 #include "student_window.hpp"
 #include "paper_workspace.hpp"
 #include "print_proof.hpp"
+#include "payment_receipt.hpp"
 #include "coordinator_test_client.hpp"
 #include "cps/runtime/job_io.hpp"
 #include <QProcess>
@@ -31,8 +32,45 @@
 #include <QElapsedTimer>
 #include <QDialog>
 #include <QListWidget>
+#include <QPdfWriter>
+#include <QPainter>
 
 using namespace cps::gui;
+
+class TimedPrintProof : public PrintProof {
+public:
+    bool recording = false;
+    QVector<double> paints, intervals;
+    QElapsedTimer clock;
+    qint64 previous = 0;
+protected:
+    void paintEvent(QPaintEvent *event) override {
+        if (!clock.isValid()) clock.start();
+        const auto start = clock.nsecsElapsed();
+        PrintProof::paintEvent(event);
+        if (!recording) return;
+        paints.append((clock.nsecsElapsed() - start) / 1e6);
+        if (previous) intervals.append((start - previous) / 1e6);
+        previous = start;
+    }
+};
+
+class ProofFrameIntervals : public QObject {
+public:
+    QVector<double> intervals;
+    bool recording = false;
+    QElapsedTimer clock;
+    qint64 previous = 0;
+    bool eventFilter(QObject *, QEvent *event) override {
+        if (recording && event->type() == QEvent::Paint) {
+            if (!clock.isValid()) clock.start();
+            const auto now = clock.nsecsElapsed();
+            if (previous) intervals.append((now - previous) / 1e6);
+            previous = now;
+        }
+        return false;
+    }
+};
 
 class GuiTests : public QObject {
     Q_OBJECT
@@ -42,6 +80,321 @@ class GuiTests : public QObject {
         QVERIFY(dialog && dialog->isVisible());
     }
 private slots:
+    void editorialMotionRetargeting() {
+        PaperTransition motion(nullptr);
+        motion.retarget(0., 1.);
+        motion.setCurrentTime(80);
+        const qreal position = motion.currentValue().toReal(), velocity = motion.velocity();
+        QVERIFY(position > 0. && position < 1. && velocity > 0.);
+        motion.retarget(position, 0.);
+        QCOMPARE(motion.currentValue().toReal(), position);
+        QVERIFY(std::abs(motion.velocity() - velocity) < 1e-6);
+        motion.setCurrentTime(16);
+        QVERIFY(motion.currentValue().toReal() >= position); // decelerate before reversing
+        for (int t = 17; t <= motion.duration(); ++t) {
+            motion.setCurrentTime(t);
+            QVERIFY(motion.currentValue().toReal() >= 0. && motion.currentValue().toReal() <= 1.);
+        }
+        QCOMPARE(motion.currentValue().toReal(), 0.);
+        QCOMPARE(motion.velocity(), 0.);
+    }
+    void editorialAnimationFrameBudget() {
+        BackendDirectory root; QVERIFY(root.isValid());
+        StudentWindow resources({root.path(), 20, false, true});
+        TimedPrintProof proof;
+        proof.resize(1218, 788); proof.show();
+        QVERIFY(QTest::qWaitForWindowExposed(&proof));
+        // Measure a real event loop, rather than QtTest's intermittent polling
+        // sleeps, which can themselves postpone animation timer delivery.
+        const auto transition = [](PrintProof &scene, bool open) {
+            QEventLoop loop;
+            QTimer watchdog;
+            watchdog.setSingleShot(true);
+            QObject::connect(&watchdog, &QTimer::timeout, &loop, &QEventLoop::quit);
+            auto *animation = scene.findChildren<QVariantAnimation *>().front();
+            QObject::connect(animation, &QVariantAnimation::finished, &loop, &QEventLoop::quit);
+            scene.setExpanded(open);
+            watchdog.start(3000);
+            loop.exec();
+            QCOMPARE(scene.expansionProgress(), open ? 1. : 0.);
+        };
+        proof.setExpanded(true); QTRY_COMPARE(proof.expansionProgress(), 1.);
+        proof.setExpanded(false); QTRY_COMPARE(proof.expansionProgress(), 0.);
+        for (int round = 0; round < 3; ++round) {
+            proof.previous = 0; proof.recording = true;
+            transition(proof, true);
+            proof.recording = false;
+            proof.previous = 0; proof.recording = true;
+            transition(proof, false);
+            proof.recording = false;
+        }
+        QVERIFY(proof.paints.size() >= 12);
+        const auto percentile = [](QVector<double> values, double ratio) {
+            std::sort(values.begin(), values.end());
+            return values[qMin(values.size() - 1, qsizetype(values.size() * ratio))];
+        };
+        qInfo().noquote() << QStringLiteral("Animation: %1 frames, paint p50=%2ms p95=%3ms, frame interval p95=%4ms")
+            .arg(proof.paints.size()).arg(percentile(proof.paints, .5), 0, 'f', 2)
+            .arg(percentile(proof.paints, .95), 0, 'f', 2).arg(percentile(proof.intervals, .95), 0, 'f', 2);
+        const bool enforceBudget = qEnvironmentVariableIsSet("CPS_GUI_VERIFY_FRAME_BUDGET");
+        if (enforceBudget) {
+            QVERIFY2(percentile(proof.paints, .95) < 16.7, "Paper painting exceeds a 60Hz frame budget");
+            QVERIFY2(percentile(proof.intervals, .95) < 27., "Animation frames have visible stalls");
+        }
+        proof.close();
+        resources.resize(1420, 820); resources.show();
+        QVERIFY(QTest::qWaitForWindowExposed(&resources));
+        auto *scene = dynamic_cast<PrintProof *>(resources.findChild<QWidget *>("printProof"));
+        QVERIFY(scene);
+        ProofFrameIntervals frames;
+        scene->installEventFilter(&frames);
+        const auto measureScene = [&](const QString &name) {
+            transition(*scene, true); transition(*scene, false); // warm the visible pages
+            frames.intervals.clear();
+            for (int round = 0; round < 3; ++round) {
+                for (bool open : {true, false}) {
+                    frames.previous = 0; frames.recording = true;
+                    transition(*scene, open);
+                    frames.recording = false;
+                }
+            }
+            QVERIFY(frames.intervals.size() >= 12);
+            qInfo().noquote() << name << "full-window frame interval p95=" << percentile(frames.intervals, .95);
+            if (enforceBudget) QVERIFY2(percentile(frames.intervals, .95) < 27., "Full application has animation stalls");
+        };
+        measureScene("Sample");
+        const QString path = QDir(root.path()).filePath("motion.pdf");
+        {
+            QPdfWriter pdf(path); pdf.setResolution(96);
+            QPainter p(&pdf);
+            for (int page = 0; page < 4; ++page) {
+                if (page) QVERIFY(pdf.newPage());
+                p.fillRect(QRect(0, 0, 800, 1100), QColor::fromHsv(page * 75, 160, 200));
+                p.drawText(QRect(20, 20, 750, 100), Qt::AlignCenter, "PDF animation test");
+            }
+        }
+        resources.setDocument(path);
+        resources.findChild<QCheckBox *>("orderColor")->setChecked(false);
+        measureScene("Grayscale PDF");
+        resources.close();
+    }
+    void editorialReceiptCodes() {
+        QTemporaryDir root; QVERIFY(root.isValid());
+        ReceiptCodePanel panel(root.path());
+        panel.setMethod("wechat");
+        auto *code = panel.findChild<QLabel *>("paymentReceiptCode");
+        auto *title = panel.findChild<QLabel *>("paymentReceiptTitle");
+        QVERIFY(code && title);
+        QVERIFY(!code->property("configured").toBool());
+        QCOMPARE(title->text(), QStringLiteral("微信收款码"));
+        QImage wechat(80, 120, QImage::Format_RGB32); wechat.fill(Qt::green);
+        QImage alipay(120, 80, QImage::Format_RGB32); alipay.fill(Qt::blue);
+        QVERIFY(wechat.save(root.filePath("wechat.png")));
+        QVERIFY(alipay.save(root.filePath("alipay.png")));
+        panel.setMethod("wechat");
+        QVERIFY(code->property("configured").toBool());
+        QCOMPARE(code->pixmap().toImage().pixelColor(20, 20), QColor(Qt::green));
+        QVERIFY(code->pixmap().height() > code->pixmap().width()); // preserve the full image
+        panel.setMethod("alipay");
+        QCOMPARE(title->text(), QStringLiteral("支付宝收款码"));
+        QCOMPARE(code->pixmap().toImage().pixelColor(20, 20), QColor(Qt::blue));
+        QVERIFY(code->pixmap().width() > code->pixmap().height());
+        panel.setMethod("campus_card");
+        QVERIFY(!code->property("configured").toBool());
+        QVERIFY(code->property("sourcePath").toString().isEmpty());
+        QCOMPARE(title->text(), QStringLiteral("校园卡支付"));
+        { QFile broken(root.filePath("wechat.png")); QVERIFY(broken.open(QIODevice::WriteOnly)); broken.write("invalid image"); }
+        panel.setMethod("wechat");
+        QVERIFY(!code->property("configured").toBool()); // never leave another provider's image on screen
+        QVERIFY(QFile::remove(root.filePath("wechat.png")));
+        QVERIFY(wechat.save(root.filePath("wechat.jpg")));
+        panel.setMethod("wechat");
+        QVERIFY(code->property("configured").toBool());
+        QVERIFY(code->property("sourcePath").toString().endsWith("wechat.jpg"));
+        panel.show();
+        panel.findChild<QPushButton *>("paymentReceiptEnlarge")->click();
+        auto *enlarged = panel.findChild<QDialog *>("receiptCodeDialog");
+        QVERIFY(enlarged && enlarged->isVisible());
+        QVERIFY(enlarged->windowFlags().testFlag(Qt::FramelessWindowHint));
+        auto *full = enlarged->findChild<QLabel *>("receiptCodeFullImage");
+        QVERIFY(full && !full->pixmap().isNull());
+        QVERIFY(full->pixmap().height() > full->pixmap().width());
+        enlarged->close();
+        const QString actualDirectory = qEnvironmentVariable("CPS_GUI_RECEIPT_DIRECTORY");
+        if (!actualDirectory.isEmpty()) {
+            ReceiptCodePanel actual(actualDirectory);
+            actual.resize(540, 190); actual.show();
+            for (const QString &method : {QString("wechat"), QString("alipay")}) {
+                actual.setMethod(method);
+                QVERIFY(actual.findChild<QLabel *>("paymentReceiptCode")->property("configured").toBool());
+                actual.findChild<QPushButton *>("paymentReceiptEnlarge")->click();
+                auto *preview = actual.findChild<QDialog *>("receiptCodeDialog");
+                QVERIFY(preview && preview->isVisible());
+                QVERIFY(preview->findChild<QLabel *>("receiptCodeFullImage")->pixmap().height() > 400);
+                const QString evidence = qEnvironmentVariable("CPS_GUI_EVIDENCE_DIR");
+                if (!evidence.isEmpty()) {
+                    QVERIFY(QDir().mkpath(evidence));
+                    QVERIFY(preview->grab().save(QDir(evidence).filePath(method + "-receipt-native.png")));
+                }
+                preview->close();
+                QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+            }
+        }
+    }
+    void editorialHoverSpreadsAndReturns() {
+        BackendDirectory root; QVERIFY(root.isValid());
+        StudentWindow student({root.path(), 20, false, true});
+        student.resize(1420, 888); student.show();
+        QVERIFY(QTest::qWaitForWindowExposed(&student));
+        student.raise(); student.activateWindow();
+        QVERIFY(QTest::qWaitForWindowActive(&student));
+        auto *proof = dynamic_cast<PrintProof*>(student.findChild<QWidget*>("printProof"));
+        auto *pin = student.findChild<QPushButton*>("unfoldProof");
+        auto *motion = student.findChild<QPushButton*>("studentReduceMotion");
+        QVERIFY(proof && pin && motion);
+        const QPoint title(qRound(proof->width() * 40. / 1218), qRound(proof->height() * 60. / 788));
+        const QPoint paper(proof->width() / 2, proof->height() / 2);
+        // Inject through the window-system event path instead of moving the
+        // shared desktop cursor; the app reads the event's global position.
+        const auto moveMouse = [&student](QWidget *widget, QPoint point) {
+            QTest::mouseMove(student.windowHandle(), widget->mapTo(&student, point));
+        };
+        moveMouse(proof, title); QTest::qWait(500);
+        QVERIFY(!proof->hoverExpanded() && !proof->expanded());
+        const auto closed = proof->grab().toImage();
+        const auto evidence = qEnvironmentVariable("CPS_GUI_EVIDENCE_DIR");
+        if (!evidence.isEmpty()) { QVERIFY(QDir().mkpath(evidence)); QVERIFY(proof->grab().save(QDir(evidence).filePath("hover-closed.png"))); }
+        moveMouse(proof, paper);
+        QTRY_VERIFY(proof->hoverExpanded());
+        QVERIFY(!pin->isChecked()); // hovering does not latch the manual control
+        QTRY_VERIFY(proof->expansionProgress() > 0.);
+        QVERIFY(proof->expansionProgress() < 1.);
+        const auto middle = proof->grab().toImage();
+        QVERIFY(middle != closed);
+        if (!evidence.isEmpty()) QVERIFY(proof->grab().save(QDir(evidence).filePath("hover-moving.png")));
+        QTRY_COMPARE(proof->expansionProgress(), 1.);
+        const auto opened = proof->grab().toImage();
+        QVERIFY(opened != closed && opened != middle);
+        if (!evidence.isEmpty()) QVERIFY(proof->grab().save(QDir(evidence).filePath("hover-open.png")));
+        moveMouse(pin, pin->rect().center());
+        QTRY_VERIFY(proof->hoverExpanded()); // tools over the paper do not collapse it
+        moveMouse(proof, title);
+        QTRY_VERIFY(!proof->hoverExpanded());
+        QTRY_COMPARE(proof->expansionProgress(), 0.);
+        QTRY_COMPARE(proof->grab().toImage(), closed);
+        // Reversing before the opening finishes returns to the same resting pose.
+        moveMouse(proof, paper); QTest::qWait(40);
+        moveMouse(proof, title);
+        QTRY_COMPARE(proof->expansionProgress(), 0.);
+        QTRY_COMPARE(proof->grab().toImage(), closed);
+        pin->click(); QTRY_COMPARE(proof->expansionProgress(), 1.);
+        moveMouse(proof, paper); moveMouse(proof, title);
+        QVERIFY(proof->expanded() && pin->isChecked());
+        QVERIFY(proof->grab().toImage() != closed);
+        pin->click();
+        QVERIFY(!proof->expanded() && !proof->hoverExpanded());
+        QTRY_COMPARE(proof->expansionProgress(), 0.);
+        if (!evidence.isEmpty()) QVERIFY(proof->grab().save(QDir(evidence).filePath("hover-returned.png")));
+        QCOMPARE(proof->grab().toImage(), closed);
+        moveMouse(proof, paper); QTRY_VERIFY(proof->hoverExpanded());
+        motion->click();
+        QVERIFY(!proof->motionEnabled() && !proof->hoverExpanded());
+        moveMouse(proof, title); moveMouse(proof, paper);
+        QVERIFY(!proof->hoverExpanded());
+        QCOMPARE(proof->grab().toImage(), closed);
+        pin->click(); QVERIFY(proof->expanded()); // reduced motion keeps explicit controls usable
+        QVERIFY(proof->grab().toImage() != closed);
+        student.close();
+    }
+    void editorialWindowChrome() {
+        BackendDirectory root; QVERIFY(root.isValid());
+        StudentWindow student({root.path(), 20, false, true});
+        student.resize(1180, 820); student.show();
+        QVERIFY(QTest::qWaitForWindowExposed(&student));
+        QVERIFY(student.windowFlags().testFlag(Qt::FramelessWindowHint));
+        QVERIFY(!student.windowIcon().isNull());
+        auto *maximize = student.findChild<QPushButton*>("windowMaximize");
+        auto *minimize = student.findChild<QPushButton*>("windowMinimize");
+        auto *close = student.findChild<QPushButton*>("windowClose");
+        QVERIFY(maximize && minimize && close);
+        const QRect original = student.geometry();
+        QTest::mouseClick(maximize, Qt::LeftButton); QTRY_VERIFY(student.isMaximized());
+        QTest::mouseClick(maximize, Qt::LeftButton); QTRY_VERIFY(!student.isMaximized());
+        QTRY_COMPARE(student.size(), original.size());
+        QTest::mouseClick(minimize, Qt::LeftButton); QTRY_VERIFY(student.isMinimized());
+        student.showNormal();
+        student.findChild<QPushButton*>("navMine")->click();
+        QVERIFY(student.findChild<QPushButton*>("navMine")->isChecked());
+        student.findChild<QPushButton*>("navOrder")->click();
+        QTest::mouseClick(close, Qt::LeftButton); QTRY_VERIFY(!student.isVisible());
+    }
+    void editorialDocumentPreview() {
+        BackendDirectory root; QVERIFY(root.isValid());
+        const QString pdfPath=QDir(root.path()).filePath(QStringLiteral("中文 文件 预览.pdf"));
+        {
+            QPdfWriter writer(pdfPath);writer.setResolution(96);writer.setPageSize(QPageSize(QPageSize::A4));
+            QPainter painter(&writer);painter.fillRect(QRect(0,0,500,700),Qt::red);
+            QVERIFY(writer.newPage());painter.fillRect(QRect(0,0,500,700),Qt::blue);
+        }
+        StudentWindow student({root.path(),20,false,true});student.resize(1420,888);student.show();
+        QVERIFY(QTest::qWaitForWindowExposed(&student));
+        auto* proof=dynamic_cast<PrintProof*>(student.findChild<QWidget*>("printProof"));QVERIFY(proof);
+        auto* reduced=student.findChild<QPushButton*>("studentReduceMotion");reduced->click();
+        const auto evidence=qEnvironmentVariable("CPS_GUI_EVIDENCE_DIR");
+        QTRY_VERIFY(student.findChild<QLabel*>("quoteEta")->toolTip().contains(QStringLiteral("可立即开始")));
+        QVERIFY(student.findChild<QLabel*>("quoteEta")->text().contains(QStringLiteral("可取件")));
+        if(!evidence.isEmpty()){QVERIFY(QDir().mkpath(evidence));QTest::qWait(200);QVERIFY(student.grab().save(QDir(evidence).filePath("editorial-reference-native.png")));}
+        proof->openReader();
+        auto *sampleReader = student.findChild<QDialog*>("documentReader");
+        QVERIFY(sampleReader);
+        QTest::qWait(80);
+        if(!evidence.isEmpty())QVERIFY(sampleReader->grab().save(QDir(evidence).filePath("editorial-reader-fit.png")));
+        sampleReader->findChild<QPushButton*>("dialogMaximize")->click();
+        QTRY_VERIFY(sampleReader->isMaximized());
+        sampleReader->findChild<QPushButton*>("dialogMaximize")->click();
+        QTRY_VERIFY(!sampleReader->isMaximized());
+        sampleReader->findChild<QPushButton*>("dialogClose")->click();
+        QTRY_VERIFY(!student.findChild<QDialog*>("documentReader"));
+        student.setDocument(pdfPath);QCOMPARE(proof->documentPages(),2);QVERIFY(proof->previewError().isEmpty());
+        const QImage front=proof->renderedPage(0),back=proof->renderedPage(1);QVERIFY(!front.isNull()&&!back.isNull());
+        QVERIFY(front.pixelColor(100,100).red()>240);QVERIFY(back.pixelColor(100,100).blue()>240);QVERIFY(front!=back);
+        student.findChild<QCheckBox*>("orderDuplex")->setChecked(false);
+        student.findChild<QPushButton*>("proofNext")->click();QCOMPARE(proof->currentPage(),1);
+        QVERIFY(!student.findChild<QPushButton*>("proofNext")->isEnabled());
+        student.findChild<QPushButton*>("proofPrevious")->click();QCOMPARE(proof->currentPage(),0);
+        student.findChild<QCheckBox*>("orderDuplex")->setChecked(true);
+        student.findChild<QPushButton*>("flipProof")->click();QCOMPARE(proof->currentPage(),1);
+        auto* align=student.findChild<QPushButton*>("alignProof");QVERIFY(align);const auto loose=proof->grab().toImage();align->click();QVERIFY(proof->aligned());QVERIFY(loose!=proof->grab().toImage());
+        student.findChild<QPushButton*>("magnifyProof")->click();auto* reader=student.findChild<QDialog*>("documentReader");QVERIFY(reader&&reader->isVisible());
+        QVERIFY(reader->windowFlags().testFlag(Qt::FramelessWindowHint));
+        QVERIFY(!reader->windowIcon().isNull());
+        auto* readerImage=reader->findChild<QLabel*>("readerImage");QVERIFY(readerImage);QVERIFY(readerImage->pixmap().toImage().pixelColor(100,100).blue()>240);
+        reader->findChild<QPushButton*>("readerPrevious")->click();QVERIFY(readerImage->pixmap().toImage().pixelColor(100,100).red()>240);
+        reader->findChild<QPushButton*>("readerZoom")->click();QCOMPARE(readerImage->pixmap().width(),1000);
+        if(!evidence.isEmpty())QVERIFY(reader->grab().save(QDir(evidence).filePath("editorial-pdf-reader.png")));
+        reader->findChild<QPushButton*>("readerFit")->click();
+        QTRY_VERIFY(readerImage->pixmap().width() < 1000);
+        reader->findChild<QPushButton*>("dialogClose")->click();
+        QTRY_VERIFY(!student.findChild<QDialog*>("documentReader"));
+        const QString imagePath=QDir(root.path()).filePath(QStringLiteral("图片.png"));QImage original(220,150,QImage::Format_RGB32);original.fill(Qt::green);QVERIFY(original.save(imagePath));
+        student.setDocument(imagePath);QCOMPARE(proof->documentPages(),1);QVERIFY(proof->renderedPage(0).pixelColor(10,10).green()>240);
+        // The reverse of a one-page duplex file is blank, including in the reader.
+        proof->setBack(true);
+        student.findChild<QPushButton*>("magnifyProof")->click();
+        auto* blankReader=student.findChild<QDialog*>("documentReader");QVERIFY(blankReader);
+        QCOMPARE(blankReader->findChild<QLabel*>("readerImage")->text(),QStringLiteral("背面留白"));
+        QVERIFY(!blankReader->findChild<QPushButton*>("readerNext")->isEnabled());
+        blankReader->findChild<QPushButton*>("readerPrevious")->click();
+        QVERIFY(!blankReader->findChild<QLabel*>("readerImage")->pixmap().isNull());
+        const QString notesPath=QDir(root.path()).filePath("notes.txt");{QFile f(notesPath);QVERIFY(f.open(QIODevice::WriteOnly));for(int i=0;i<120;++i)f.write(QByteArray::number(i)+" Actual document content.\n");}
+        student.setDocument(notesPath);QVERIFY(proof->documentPages()>1);QVERIFY(proof->renderedPage(0)!=proof->renderedPage(1));
+        QVERIFY(!blankReader->isVisible()); // changing documents closes the stale reader
+        QVERIFY(student.findChild<QLabel*>("fileInfo")->text().contains(QString::number(proof->documentPages())));
+        const auto oldPages=proof->documentPages();student.setDocument(QDir(root.path()).filePath("absent.pdf"));QCOMPARE(proof->documentPages(),oldPages);
+        if(!evidence.isEmpty()){student.resize(920,640);QTest::qWait(100);QVERIFY(student.grab().save(QDir(evidence).filePath("editorial-compact-native.png")));}
+        student.findChild<QPushButton*>("removeFile")->click();QCOMPARE(proof->documentPages(),0);
+        student.close();QTRY_VERIFY(!student.isVisible());
+    }
     void printProofRespondsToSettingsAndKeyboard() {
         BackendDirectory root;
         StudentWindow student({root.path(), 20, false, true}); student.resize(1180, 820); student.show();
@@ -50,6 +403,8 @@ private slots:
         auto* flip = student.findChild<QPushButton*>("flipProof");
         auto* reduced = student.findChild<QPushButton*>("studentReduceMotion");
         QVERIFY(proof && flip && reduced);
+        student.findChild<QCheckBox*>("orderDuplex")->setChecked(false);
+        student.findChild<QCheckBox*>("orderColor")->setChecked(false);
         QVERIFY(!flip->isEnabled());
         reduced->click(); QVERIFY(!proof->motionEnabled());
         const auto mono = proof->grab().toImage();
@@ -62,7 +417,7 @@ private slots:
         QVERIFY(flip->isEnabled());
         flip->setFocus(); QTest::keyClick(flip, Qt::Key_Space);
         QVERIFY(proof->showingBack());
-        QCOMPARE(flip->text(), QStringLiteral("查看\n正面"));
+        QVERIFY(flip->text().contains(QStringLiteral("正面")));
         student.findChild<QSpinBox*>("orderPages")->setValue(1);
         QVERIFY(proof->specification().contains(QStringLiteral("1 页")));
         const auto evidence = qEnvironmentVariable("CPS_GUI_EVIDENCE_DIR");
@@ -86,6 +441,7 @@ private slots:
         auto* next = student.findChild<QPushButton*>("proofNext");
         auto* previous = student.findChild<QPushButton*>("proofPrevious");
         QVERIFY(unfold && next && previous);
+        if(proof->expanded())unfold->click();
         const auto stacked = proof->grab().toImage();
         QTest::mouseClick(unfold, Qt::LeftButton); QVERIFY(proof->expanded());
         QVERIFY(stacked != proof->grab().toImage());
@@ -115,10 +471,11 @@ private slots:
         student.resize(920, 640); QTest::qWait(50);
         auto* scroll = student.findChild<QScrollArea*>("orderScroll");
         auto* pay = student.findChild<QPushButton*>("payOrder");
-        scroll->ensureWidgetVisible(pay);
-        QTRY_VERIFY(scroll->viewport()->rect().contains(QRect(pay->mapTo(scroll->viewport(), QPoint()), pay->size())));
+        QTRY_VERIFY(student.centralWidget()->rect().contains(QRect(pay->mapTo(student.centralWidget(), QPoint()), pay->size())));
         QVERIFY(scroll->horizontalScrollBar()->maximum() == 0);
         if (!evidence.isEmpty()) QVERIFY(student.grab().save(QDir(evidence).filePath("studio-student-compact.png")));
+        student.raise();student.activateWindow();
+        QVERIFY(QTest::qWaitForWindowActive(&student));
         QTest::keyClick(&student, Qt::Key_2, Qt::ControlModifier);
         QVERIFY(student.findChild<QPushButton*>("navMine")->isChecked());
         QCOMPARE(student.findChild<QTableWidget*>("myOrders")->rowCount(), 0);
@@ -684,6 +1041,7 @@ private slots:
         };
         StudentWindow student({root.path(), 20, false, true}, QStringLiteral("2024000001"));
         student.resize(1180, 820); student.show();
+        student.findChild<QCheckBox*>("orderDuplex")->setChecked(false);
         QVERIFY(QTest::qWaitForWindowExposed(&student));
         auto* pay = student.findChild<QPushButton*>("payOrder");
         auto* eta = student.findChild<QLabel*>("quoteEta");
@@ -692,7 +1050,7 @@ private slots:
         auto* orders = student.findChild<QTableWidget*>("myOrders");
         auto* identity = student.findChild<QLineEdit*>("studentId");
         QVERIFY(pay && eta && price && feedback && orders && identity);
-        QTRY_VERIFY(eta->text().contains(QStringLiteral("可立即开始")));
+        QTRY_VERIFY(eta->toolTip().contains(QStringLiteral("可立即开始")));
         QVERIFY(!pay->isEnabled()); // nothing uploaded yet
         auto* hint = student.findChild<QLabel*>("payHint");
         QVERIFY(hint->isVisible() && hint->text().contains(QStringLiteral("选择要打印的文件")));
@@ -727,8 +1085,25 @@ private slots:
         pay->click();
         auto* dialog = student.findChild<QDialog*>("paymentDialog");
         QVERIFY(dialog && dialog->isVisible());
+        QVERIFY(dialog->windowFlags().testFlag(Qt::FramelessWindowHint));
+        QVERIFY(!dialog->windowIcon().isNull());
+        for (const auto *method : {"wechat", "alipay", "campus_card"}) {
+            auto *button = dialog->findChild<QPushButton*>(QStringLiteral("paymentMethod_") + method);
+            QVERIFY(button && !button->icon().isNull());
+            button->click();
+            QCOMPARE(dialog->findChild<QFrame *>("paymentReceipt")->property("method").toString(), QString(method));
+        }
+        dialog->findChild<QPushButton*>("paymentMethod_wechat")->click();
+        QVERIFY(screenshot(dialog, "student-02-wechat.png"));
+        dialog->findChild<QPushButton*>("paymentMethod_alipay")->click();
+        QVERIFY(student.findChild<QPushButton*>("pay_alipay")->isChecked());
         QVERIFY(screenshot(dialog, "student-02-payment.png"));
         dialog->findChild<QPushButton*>("confirmPayment")->click();
+        QVERIFY(dialog->property("busy").toBool());
+        QVERIFY(!dialog->findChild<QPushButton*>("paymentMethod_wechat")->isEnabled());
+        QVERIFY(!dialog->findChild<QPushButton*>("dialogClose")->isEnabled());
+        QVERIFY(!dialog->close()); // a submitted payment must finish before dismissal
+        QVERIFY(dialog->isVisible());
         QTRY_COMPARE(orders->rowCount(), 1);
         QTRY_VERIFY(feedback->text().contains(QStringLiteral("支付成功")));
         QTRY_VERIFY(!student.findChild<QDialog*>("paymentDialog"));
@@ -736,6 +1111,22 @@ private slots:
         QCOMPARE(orders->item(0, 2)->text(), QStringLiteral("¥7.65 · 支付宝已支付"));
         QTRY_COMPARE_WITH_TIMEOUT(orders->item(0, 3)->text(), QStringLiteral("已完成"), 10000);
         QCOMPARE(orders->item(0, 6)->text().size(), 6);
+        QTest::qWait(80);
+        const auto tableImage = orders->viewport()->grab().toImage().scaled(orders->viewport()->size());
+        auto redPixels = [&](QRect area) {
+            int count = 0;
+            for (int y = area.top(); y <= area.bottom(); ++y)
+                for (int x = area.left(); x <= area.right(); ++x) {
+                    const auto c = tableImage.pixelColor(x, y);
+                    if (c.red() > 120 && c.red() > c.green() * 1.4 && c.red() > c.blue() * 1.4) ++count;
+                }
+            return count;
+        };
+        for (const int column : {3, 5, 6})
+            QVERIFY(redPixels(orders->visualItemRect(orders->item(0, column))) > 15);
+        const auto selected = tableImage.pixelColor(orders->visualItemRect(orders->item(0, 0)).topLeft() + QPoint(3, 3));
+        QVERIFY(selected.red() > selected.green() && selected.green() > selected.blue());
+        QVERIFY(screenshot(&student, "student-02-completed.png"));
         QVERIFY(!pay->isEnabled()); // the next order needs its own upload
 
         CoordinatorClient client(root.path());
@@ -752,7 +1143,11 @@ private slots:
         student.findChild<QPushButton*>("pay_wechat")->click();
         for (int count = 2; count <= 3; ++count) {
             student.setDocument(textPath);
-            QCOMPARE(student.findChild<QSpinBox*>("orderPages")->value(), 3);
+            auto* proof=dynamic_cast<PrintProof*>(student.findChild<QWidget*>("printProof"));
+            QVERIFY(proof);QCOMPARE(student.findChild<QSpinBox*>("orderPages")->value(),proof->documentPages());
+            // This pricing scenario deliberately requests three pages; actual
+            // text pagination now comes from the native document renderer.
+            student.findChild<QSpinBox*>("orderPages")->setValue(3);
             QTRY_VERIFY(pay->isEnabled());
             pay->click();
             auto* confirm = student.findChild<QPushButton*>("confirmPayment");

@@ -39,6 +39,16 @@ def main():
     destination.mkdir(parents=True, exist_ok=True)
     for name in names:
         shutil.copy2(source / (name + suffix), destination / (name + suffix))
+    pdfium_name = "pdfium.dll" if windows else "libpdfium.dylib"
+    pdfium = source / pdfium_name
+    if not pdfium.is_file():
+        parser.error("PDF preview renderer is missing; run tools/setup_pdfium.py, reconfigure and rebuild")
+    shutil.copy2(pdfium, destination / pdfium_name)
+    root = Path(__file__).resolve().parents[1]
+    license_dirs = list((root / ".tools" / "pdfium").glob("pypdfium2-*.dist-info/licenses"))
+    if not license_dirs:
+        parser.error("PDFium redistribution licenses are missing from .tools/pdfium")
+    shutil.copytree(license_dirs[0], output / "licenses" / "pdfium")
     env = dict(os.environ)
     env["PATH"] = str(qt_bin) + os.pathsep + env.get("PATH", "")
     if windows:
@@ -58,6 +68,23 @@ def main():
         subprocess.run(["/usr/bin/codesign", "--verify", "--deep", "--strict", str(bundle)], check=True)
     root = Path(__file__).resolve().parents[1]
     shutil.copy2(root / "docs" / "release.md", output / "README-release.md")
+    for name in ("student-handoff.md", "editorial-frontend.md", "interfaces.md", "team.md"):
+        shutil.copy2(root / "docs" / name, output / name)
+    # Keep the design evidence links usable in the redistributed document.
+    image_output = output / "images"
+    image_output.mkdir()
+    for path in sorted((root / "docs" / "images").glob("editorial-*.png")):
+        shutil.copy2(path, image_output / path.name)
+    if windows:
+        (output / "start-student.vbs").write_text('''Option Explicit
+Dim fs, shell, root
+Set fs = CreateObject("Scripting.FileSystemObject")
+Set shell = CreateObject("WScript.Shell")
+root = fs.GetParentFolderName(WScript.ScriptFullName)
+shell.CurrentDirectory = root
+shell.Run Chr(34) & fs.BuildPath(root, "campus-print.exe") & Chr(34) & " --role student", 1, False
+''', encoding="ascii")
+        shutil.copy2(root / "assets" / "editorial" / "paperroom.ico", output / "paperroom.ico")
     shutil.copy2(root / "docs" / "clean-up.md", output / "clean-up.md")
     shutil.copytree(root / "examples", output / "examples")
     commit = subprocess.run(["git", "rev-parse", "HEAD"], cwd=root, capture_output=True, text=True, check=True).stdout.strip()

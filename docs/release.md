@@ -3,9 +3,13 @@
 发布包包含 GUI、coordinator、supervisor、worker、回放工具，以及匹配的 Qt 运行库和 platform plugins。
 支持 Windows 与 macOS；三平台源码构建仍由 CI 验证。打包产物不提交 Git。
 
+学生端的模块、配置、代理交接和部署完成条件以 [student-handoff.md](student-handoff.md) 为入口；设计验收见 [editorial-frontend.md](editorial-frontend.md)。发布包也携带这两份文档。
+
 ## 生成与测试
 
 先完成 Release 构建和 CTest，再用**构建时同一套 Qt** 的部署工具：
+
+首次构建前执行 `python tools/setup_pdfium.py`，然后 configure/build；PDFium 原生库与许可证目录都须存在。打包记录当前提交和工作树状态，正式交付从已提交且 clean 的工作树生成。
 
 ```sh
 python tools/package_app.py --bin-dir build/ci/bin --qt-bin "<Qt目录>/bin" --output-dir dist/campus-print
@@ -30,6 +34,8 @@ Windows：
 ```powershell
 .\campus-print.exe --data-dir .\runtime
 ```
+
+上述默认打开老板端；学生端使用 `--role student`，或 Windows 双击包内 `start-student.vbs` 静默启动。两端传入相同 `--data-dir` 才共享队列。收款图片在该数据目录的 `payment-codes/` 下配置，不随通用发布包分发；真实码扫码转账与应用内模拟确认的边界见交接文档。
 
 macOS：
 

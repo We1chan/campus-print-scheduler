@@ -84,6 +84,7 @@ private:
     QCheckBox* duplex_ = nullptr;
     QButtonGroup* service_ = nullptr;
     QButtonGroup* payment_ = nullptr;
+    QLabel* summary_ = nullptr;
     QLabel* price_ = nullptr;
     QLabel* priceDetail_ = nullptr;
     QLabel* eta_ = nullptr;
@@ -103,6 +104,7 @@ private:
     std::array<QLabel*, 4> metricHints_{};
     QTimer* quoteDelay_ = nullptr;
     QPointer<QDialog> paymentDialog_;
+    QString paymentCodesDirectory_;
     QStringList orderIds_;
     QString successMessage_;
     QString pendingSelect_;  // order to select in "我的订单" once a snapshot lists it

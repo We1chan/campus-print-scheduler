@@ -21,7 +21,7 @@
 
 [经营规则与演示说明](docs/shop.md) · [实验结果](docs/shop-results.md) · [协议契约](docs/interfaces.md)
 
-本分支提供「纸间」前端：中央可翻面、展开的纸叠连接打印规格和后台报价。见 [设计与验证说明](docs/print-studio.md)；Windows 构建后可双击 `start-studio-demo.cmd` 打开两端演示。
+本分支提供「纸间」学生端：俯视纸张工作台、真实本地文档预览、无系统标题栏窗口、悬停展开、主题订单/队列与模拟支付。代理接手与部署先读 [学生端交接](docs/student-handoff.md)，视觉及性能证据见 [设计与验证](docs/editorial-frontend.md)。Windows 的学生入口为 `start-editorial.vbs` 或发布包 `start-student.vbs`；原 `start-studio-demo.cmd` 仍用于两端演示。
 
 ```sh
 cmake --preset dev
@@ -72,6 +72,7 @@ Windows 使用 **x64 Native Tools Command Prompt for VS 2022** 或 **Developer P
 git clone git@github.com:We1chan/campus-print-scheduler.git
 cd campus-print-scheduler
 # 将下行 Qt 路径替换为你自己机器上的安装目录：
+python tools/setup_pdfium.py
 cmake --preset dev -DCMAKE_PREFIX_PATH="<Qt安装目录>"
 cmake --build --preset dev --parallel 2
 ctest --preset dev

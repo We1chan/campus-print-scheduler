@@ -28,7 +28,19 @@ class Processes(unittest.TestCase):
         self.write_job()
 
     def tearDown(self):
-        self.temp.cleanup()
+        # The coordinator releases its QLockFile during destruction, before
+        # Windows releases the redirected log handle at process exit.
+        # Wait only for that specific sharing violation in our own temp tree;
+        # other cleanup failures, or a process that stays alive, remain errors.
+        deadline = time.monotonic() + 5
+        while True:
+            try:
+                self.temp.cleanup()
+                break
+            except PermissionError as error:
+                if os.name != "nt" or error.winerror != 32 or time.monotonic() >= deadline:
+                    raise
+                time.sleep(0.05)
 
     def write_job(self, **overrides):
         value = dict(schema_version=1, job_id="test-job", title="操作系统 测试", pages=4, copies=2)

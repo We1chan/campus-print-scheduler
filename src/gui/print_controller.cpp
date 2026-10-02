@@ -3,6 +3,7 @@
 #include "cps/runtime/job_io.hpp"
 #include "cps/runtime/state_store.hpp"
 #include "cps/runtime/shop_io.hpp"
+#include "cps/platform/process.hpp"
 
 #include <QDateTime>
 #include <QDir>
@@ -48,6 +49,7 @@ bool PrintController::connectBackend() {
         if (probe.tryLock(0)) {
             probe.unlock();
             QProcess backend;
+            cps::hideProcessConsole(backend);
             backend.setProgram(cps::siblingExecutable("print-coordinator"));
             QStringList args{"--state-dir", QDir(options_.stateDirectory).absolutePath(),
                 "--page-ms", QString::number(options_.pageMs)};
@@ -309,6 +311,7 @@ void PrintController::runExperiments(const QString& path, int customers) {
     if (customers < 1 || customers > 2000) return;
     experiments_ = new QProcess(this);
     auto* process = experiments_;
+    cps::hideProcessConsole(*process);
     process->setProgram(cps::siblingExecutable("shop-experiments"));
     process->setArguments({"--output", path, "--customers", QString::number(customers)});
     connect(process, &QProcess::readyReadStandardOutput, this, [process] { process->readAllStandardOutput(); });

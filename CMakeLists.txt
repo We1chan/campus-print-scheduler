@@ -75,18 +75,41 @@ if(CPS_BUILD_QT_APPS)
     target_link_libraries(print-coordinator PRIVATE cps_runtime Qt6::Network cps_options)
     # Flat executable layout is intentional in the development scaffold.
     # GUI and child programs live together in build/<preset>/bin on every OS.
-    add_library(cps_gui src/gui/event_stream.cpp src/gui/control_client.cpp src/gui/print_controller.cpp src/gui/print_window.cpp src/gui/student_window.cpp)
+    add_library(cps_gui src/gui/event_stream.cpp src/gui/control_client.cpp src/gui/print_controller.cpp src/gui/print_window.cpp src/gui/student_window.cpp src/gui/document_preview.cpp src/gui/editorial_chrome.cpp)
+    qt_add_resources(cps_gui editorial_assets PREFIX "/editorial" BASE "assets/editorial"
+        FILES assets/editorial/desk.png assets/editorial/campus.png
+        assets/editorial/brand-16.png assets/editorial/brand-24.png assets/editorial/brand-32.png
+        assets/editorial/brand-48.png assets/editorial/brand-64.png assets/editorial/brand-128.png
+        assets/editorial/brand-256.png)
+    find_file(CPS_PDFIUM_LIBRARY NAMES pdfium.dll libpdfium.so libpdfium.dylib
+        PATHS "${CMAKE_SOURCE_DIR}/.tools/pdfium/pypdfium2_raw"
+        DOC "PDFium shared library used for local document preview")
     set_target_properties(cps_gui PROPERTIES AUTOMOC ON)
     target_include_directories(cps_gui PUBLIC src/gui)
     target_link_libraries(cps_gui PUBLIC cps_runtime Qt6::Widgets Qt6::Network PRIVATE cps_options)
     add_executable(campus-print src/gui/main.cpp)
+    if(WIN32)
+        set_target_properties(campus-print PROPERTIES WIN32_EXECUTABLE TRUE)
+        configure_file(assets/editorial/app.rc.in editorial-icon.rc @ONLY)
+        target_sources(campus-print PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/editorial-icon.rc")
+    endif()
     target_link_libraries(campus-print PRIVATE cps_gui cps_options)
+    if(CPS_PDFIUM_LIBRARY)
+        add_custom_command(TARGET campus-print POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different "${CPS_PDFIUM_LIBRARY}" "$<TARGET_FILE_DIR:campus-print>")
+    else()
+        message(WARNING "PDF preview needs PDFium: run python tools/setup_pdfium.py and configure again")
+    endif()
 
     if(BUILD_TESTING)
         find_package(Qt6 6.5 REQUIRED COMPONENTS Test)
         add_executable(gui_tests tests/gui_tests.cpp)
         set_target_properties(gui_tests PROPERTIES AUTOMOC ON)
         target_link_libraries(gui_tests PRIVATE cps_gui Qt6::Test cps_options)
+        if(CPS_PDFIUM_LIBRARY)
+            add_custom_command(TARGET gui_tests POST_BUILD
+                COMMAND ${CMAKE_COMMAND} -E copy_if_different "${CPS_PDFIUM_LIBRARY}" "$<TARGET_FILE_DIR:gui_tests>")
+        endif()
         add_test(NAME gui COMMAND gui_tests -o "${CMAKE_BINARY_DIR}/gui-results.xml,junitxml" -o -,txt)
         set_tests_properties(gui PROPERTIES TIMEOUT 120 ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
 
