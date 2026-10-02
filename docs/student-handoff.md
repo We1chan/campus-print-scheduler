@@ -89,6 +89,10 @@ $env:CPS_GUI_EVIDENCE_DIR = (Join-Path (Get-Location) 'runtime/native-gui-eviden
 
 性能测试默认输出耗时，不绑定 CI 硬件速度；在原生本机验收设置 `CPS_GUI_VERIFY_FRAME_BUDGET=1` 启用绘制 p95 < 16.7ms、帧间隔 p95 < 27ms 的门槛。QtTest 使用窗口系统路径注入鼠标位置，避免共享桌面光标造成偶发失败。测试截图需要实际渲染，不能用设计图替代。
 
+性能采样至少执行 3 轮开合；若 CI 原生显示合并绘制事件，继续采集至至少 12 个真实帧间隔，最多 12 轮。未采足仍失败；此采样策略不改变本机验收门槛或生产动画。CI 虚拟桌面的时间只作为该环境观测，不能推断所有实体 Mac 的流畅度。
+
+性能用例直接驱动展开目标，在该用例的预览组件上关闭自动 hover 事件，防止操作者真实鼠标在窗口出现时改写动画目标；生产代码保持 hover，专门的 `editorialHoverSpreadsAndReturns` 验证完整悬停行为。原生 CI 日志同时写入标准输出与 evidence 文件，失败时可直接定位用例。
+
 `CPS_GUI_RECEIPT_DIRECTORY` 可让 `editorialReceiptCodes` 额外读取实际本地收款码；生成截图保存在被忽略的 `runtime/`，不用于公开 CI evidence。常规测试用临时目录的合成色块，分别覆盖图片源、缺失、损坏、比例和放大对话框。
 
 Windows 清理测试目录时，coordinator 的锁文件消失先于操作系统释放重定向日志句柄。`process_integration.py` 对本次临时目录的 WinError 32 做最多 5 秒的释放等待；其他错误立即失败，超过期限仍失败。不能用锁文件消失推断所有文件句柄已经关闭。

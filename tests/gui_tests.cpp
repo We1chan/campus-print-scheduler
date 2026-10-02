@@ -102,6 +102,9 @@ private slots:
         BackendDirectory root; QVERIFY(root.isValid());
         StudentWindow resources({root.path(), 20, false, true});
         TimedPrintProof proof;
+        // This benchmark drives the animation explicitly; the user's real
+        // pointer must not retarget it while the test window appears.
+        proof.setAttribute(Qt::WA_Hover, false);
         proof.resize(1218, 788); proof.show();
         QVERIFY(QTest::qWaitForWindowExposed(&proof));
         // Measure a real event loop, rather than QtTest's intermittent polling
@@ -120,7 +123,9 @@ private slots:
         };
         proof.setExpanded(true); QTRY_COMPARE(proof.expansionProgress(), 1.);
         proof.setExpanded(false); QTRY_COMPARE(proof.expansionProgress(), 0.);
-        for (int round = 0; round < 3; ++round) {
+        // Native CI displays can coalesce several animation updates into a
+        // single paint. Collect enough real samples, with a bounded retry.
+        for (int round = 0; round < 12 && (round < 3 || proof.paints.size() < 12 || proof.intervals.size() < 12); ++round) {
             proof.previous = 0; proof.recording = true;
             transition(proof, true);
             proof.recording = false;
@@ -129,6 +134,7 @@ private slots:
             proof.recording = false;
         }
         QVERIFY(proof.paints.size() >= 12);
+        QVERIFY(proof.intervals.size() >= 12);
         const auto percentile = [](QVector<double> values, double ratio) {
             std::sort(values.begin(), values.end());
             return values[qMin(values.size() - 1, qsizetype(values.size() * ratio))];
@@ -146,12 +152,13 @@ private slots:
         QVERIFY(QTest::qWaitForWindowExposed(&resources));
         auto *scene = dynamic_cast<PrintProof *>(resources.findChild<QWidget *>("printProof"));
         QVERIFY(scene);
+        scene->setAttribute(Qt::WA_Hover, false);
         ProofFrameIntervals frames;
         scene->installEventFilter(&frames);
         const auto measureScene = [&](const QString &name) {
             transition(*scene, true); transition(*scene, false); // warm the visible pages
             frames.intervals.clear();
-            for (int round = 0; round < 3; ++round) {
+            for (int round = 0; round < 12 && (round < 3 || frames.intervals.size() < 12); ++round) {
                 for (bool open : {true, false}) {
                     frames.previous = 0; frames.recording = true;
                     transition(*scene, open);
@@ -159,7 +166,8 @@ private slots:
                 }
             }
             QVERIFY(frames.intervals.size() >= 12);
-            qInfo().noquote() << name << "full-window frame interval p95=" << percentile(frames.intervals, .95);
+            qInfo().noquote() << name << "full-window frame intervals=" << frames.intervals.size()
+                             << "p95=" << percentile(frames.intervals, .95);
             if (enforceBudget) QVERIFY2(percentile(frames.intervals, .95) < 27., "Full application has animation stalls");
         };
         measureScene("Sample");
