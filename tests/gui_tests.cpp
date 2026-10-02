@@ -367,6 +367,7 @@ private slots:
         auto* align=student.findChild<QPushButton*>("alignProof");QVERIFY(align);const auto loose=proof->grab().toImage();align->click();QVERIFY(proof->aligned());QVERIFY(loose!=proof->grab().toImage());
         student.findChild<QPushButton*>("magnifyProof")->click();auto* reader=student.findChild<QDialog*>("documentReader");QVERIFY(reader&&reader->isVisible());
         QVERIFY(reader->windowFlags().testFlag(Qt::FramelessWindowHint));
+        QCOMPARE(reader->windowModality(), Qt::WindowModal);
         QVERIFY(!reader->windowIcon().isNull());
         auto* readerImage=reader->findChild<QLabel*>("readerImage");QVERIFY(readerImage);QVERIFY(readerImage->pixmap().toImage().pixelColor(100,100).blue()>240);
         reader->findChild<QPushButton*>("readerPrevious")->click();QVERIFY(readerImage->pixmap().toImage().pixelColor(100,100).red()>240);

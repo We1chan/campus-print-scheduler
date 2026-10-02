@@ -169,6 +169,8 @@ class PrintProof : public QWidget {
     void openReader() {
         closeReaders();
         auto *dialog = new EditorialDialog(this);
+        // QDialog::open() otherwise replaces macOS flags with Qt::Sheet.
+        dialog->setWindowModality(Qt::WindowModal);
         dialog->setObjectName("documentReader");
         dialog->setAttribute(Qt::WA_DeleteOnClose);
         dialog->setWindowTitle(title_.isEmpty() ? QStringLiteral("示例文档 · 放大预览")

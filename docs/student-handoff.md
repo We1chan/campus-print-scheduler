@@ -93,13 +93,15 @@ $env:CPS_GUI_EVIDENCE_DIR = (Join-Path (Get-Location) 'runtime/native-gui-eviden
 
 Windows 清理测试目录时，coordinator 的锁文件消失先于操作系统释放重定向日志句柄。`process_integration.py` 对本次临时目录的 WinError 32 做最多 5 秒的释放等待；其他错误立即失败，超过期限仍失败。不能用锁文件消失推断所有文件句柄已经关闭。
 
+macOS 的 `QDialog::open()` 对尚未明确设置 WindowModal 的对话框使用 `setParent(..., Qt::Sheet)`，重置原窗口 flags。文档阅读器在 `open()` 前明确设置 `Qt::WindowModal`，与支付、收款码窗口一致；保留非阻塞打开方式及无系统标题栏要求。参见 [Qt 6.10.2 源码](https://github.com/qt/qtbase/blob/v6.10.2/src/widgets/dialogs/qdialog.cpp#L471-L486)。跨平台回归同时检查窗口 flags 和 modality。
+
 ## 发布包与启动
 
 提交与构建完成后，选一个尚不存在的输出目录，保证 manifest 对应交付提交：
 
 ```sh
-python tools/package_app.py --bin-dir build/ci/bin --qt-bin "<Qt安装目录>/bin" --output-dir dist/editorial-v9
-python tests/package_smoke.py --package-dir dist/editorial-v9
+python tools/package_app.py --bin-dir build/ci/bin --qt-bin "<Qt安装目录>/bin" --output-dir dist/editorial-v10
+python tests/package_smoke.py --package-dir dist/editorial-v10
 ```
 
 分发整个目录/ZIP（Windows）或 `.app` 与同包材料（macOS），含 GUI、coordinator、supervisor、worker、回放工具、匹配 Qt plugins、PDFium 与许可证。脚本拒绝覆盖旧输出。`release-manifest.json` 包含提交、工作树状态和文件 SHA-256；有效交付要求提交匹配、工作树 clean，并且 smoke 检查通过。macOS 使用 ad-hoc 签名，不等于正式 notarization。

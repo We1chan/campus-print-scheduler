@@ -6,7 +6,7 @@
 
 ## 运行
 
-Windows 双击桌面的“纸间打印”快捷方式或仓库根目录 `start-editorial.vbs`，只显示 UI，不打开命令行窗口。优先运行 `dist/editorial-v9` 的 Release 发布包，兼容旧的 v8/v7/v6/v5/v4/v3/v2，否则运行 `build/dev/bin`；构建版本需要匹配的 Qt 在 PATH 中。`start-editorial.cmd` 保留用于命令行兼容。独立发布包也提供 `start-student.vbs`，其数据使用默认用户目录。启动参数为 `--role student`，数据独立存放在本工作树的 `runtime/editorial-shop`，不共用第一版的数据目录。
+Windows 双击桌面的“纸间打印”快捷方式或仓库根目录 `start-editorial.vbs`，只显示 UI，不打开命令行窗口。优先运行 `dist/editorial-v10` 的 Release 发布包，兼容旧的 v9/v8/v7/v6/v5/v4/v3/v2，否则运行 `build/dev/bin`；构建版本需要匹配的 Qt 在 PATH 中。`start-editorial.cmd` 保留用于命令行兼容。独立发布包也提供 `start-student.vbs`，其数据使用默认用户目录。启动参数为 `--role student`，数据独立存放在本工作树的 `runtime/editorial-shop`，不共用第一版的数据目录。
 
 空白状态展示明确标注的示例报告；选择文件后，纸张会显示本机文件内容。可拖入文件或按 Ctrl+O，Ctrl+1/2/3 切换下单、我的订单与排队情况。
 
@@ -58,8 +58,8 @@ GUI 测试包含真正的两页 PDF，验证渲染像素、单双面翻页、放
 Windows 发布包：
 
 ```sh
-python tools/package_app.py --bin-dir build/ci/bin --qt-bin "<Qt installation>/bin" --output-dir dist/editorial-v9
-python tests/package_smoke.py --package-dir dist/editorial-v9
+python tools/package_app.py --bin-dir build/ci/bin --qt-bin "<Qt installation>/bin" --output-dir dist/editorial-v10
+python tests/package_smoke.py --package-dir dist/editorial-v10
 ```
 
 程序嵌入用户提供的桌面材质和校园建筑图片；所有控件、纸张和排版由程序绘制。发布包带 PDFium 原生库和第三方许可证。其他系统需独立验证，不能由本机 Windows 结果推断。
@@ -127,3 +127,5 @@ v8 支持点击“放大收款码”打开符合主题的无系统标题栏窗�
 `AGENTS.md` 提供按任务读取的入口，`student-handoff.md` 记录模块、行为边界、部署命令、配置与可检查的完成条件。发布脚本随包附带交接、设计证据、接口与分工文档；设计截图的相对链接在包内可读取。
 
 2026-10-02 本机 `ci` Release / Qt 6.10.1 / MinGW 13.1 完整 CTest 13/13、带帧预算门槛的原生 GUI 9/9 通过；绘制 p95 4.44ms，完整窗口示例/黑白 PDF 帧间隔 p95 17.13/17.08ms。进程测试清理仅对本次临时目录的 Windows 日志共享占用等待，最多 5 秒，其他错误保持失败；该测试连续三轮及最终完整套件通过。远端 CI 结果以对应提交的 Actions 为准。
+
+v10 修正文档阅读器在 macOS 的窗口 flags：在非阻塞 open 前明确设置 WindowModal，避免 Qt 默认转成 Sheet 时丢失 FramelessWindowHint。回归继续检查无系统标题栏，并同时检查模态类型；原生 Windows 行为保持。跨平台检查结果以 Actions 对应最终提交为准。
