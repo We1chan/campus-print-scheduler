@@ -45,7 +45,7 @@ python tests/office_package_smoke.py --package-dir dist/editorial-v11
 
 macOS `--office-dir .tools/libreoffice/LibreOffice.app`，开发时显式设置 `CPS_OFFICE_EXECUTABLE` 为该 app 内 `Contents/MacOS/soffice` 的绝对路径。带引擎的包显著大于 PDF-only 包；`release-manifest.json` 记录 `office_preview_bundled`。默认不联网获取转换器，不将用户文件发送至在线转换服务。未带引擎的轻量包需依赖系统安装，不得称为零依赖的 Office 预览包。
 
-macOS 必须分发整个发布目录（主应用 + `office/` + 配套材料）。转换器保留独立的上游签名，不放入 Qt app 内部；`macdeployqt` 会重定位/重签扫描到的框架，嵌套打包曾破坏 LibreOfficePython.framework 的资源封印。部署后分别对两份 app 执行 `codesign --verify --deep --strict`，再在独立 runner 真实转换，不能跳过签名校验或全局关闭系统安全机制。
+macOS 必须分发整个发布目录（主应用 + `office/` + 配套材料）。转换器保留独立的上游签名，不放入 Qt app 内部；使用原生 `ditto` 复制 framework 元数据、资源叉和符号链接，避免 Qt 部署工具重写内部框架或通用复制丢失原生元数据。复制前后校验转换器，并对主应用执行 `codesign --verify --deep --strict`，再在独立 runner 真实转换，不能跳过签名校验或全局关闭系统安全机制。
 
 ## 可复现验收
 

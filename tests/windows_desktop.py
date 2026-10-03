@@ -66,6 +66,20 @@ def _check_backend_consoles(coordinator_pid):
     kernel.Process32FirstW.argtypes = kernel.Process32NextW.argtypes = [wintypes.HANDLE, ctypes.POINTER(ProcessEntry)]
     kernel.Process32FirstW.restype = kernel.Process32NextW.restype = wintypes.BOOL
     kernel.CloseHandle.argtypes = [wintypes.HANDLE]
+    kernel.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+    kernel.OpenProcess.restype = wintypes.HANDLE
+    kernel.GetExitCodeProcess.argtypes = [wintypes.HANDLE, ctypes.POINTER(wintypes.DWORD)]
+    kernel.GetExitCodeProcess.restype = wintypes.BOOL
+
+    def exited(pid):
+        handle = kernel.OpenProcess(0x1000, False, pid)  # QUERY_LIMITED_INFORMATION
+        if not handle:
+            return ctypes.get_last_error() == 87
+        try:
+            code = wintypes.DWORD()
+            return bool(kernel.GetExitCodeProcess(handle, ctypes.byref(code))) and code.value != 259
+        finally:
+            kernel.CloseHandle(handle)
     snapshot = kernel.CreateToolhelp32Snapshot(2, 0)
     if snapshot == ctypes.c_void_p(-1).value:
         raise ctypes.WinError(ctypes.get_last_error())
@@ -101,7 +115,7 @@ def _check_backend_consoles(coordinator_pid):
         error = ctypes.get_last_error()
         if error == 6:  # ERROR_INVALID_HANDLE: the running target has no console
             observed.add(name)
-        elif error != 87:  # target may have exited since the process snapshot
+        elif error != 87 and not exited(pid):  # target may have exited during AttachConsole
             raise ctypes.WinError(error)
     return observed
 

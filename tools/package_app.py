@@ -75,7 +75,13 @@ def main():
             if windows and Path(directory).resolve() == office:
                 return [name for name in names if name == "extraction.log" or name.lower().endswith(".msi")]
             return []
-        shutil.copytree(office, office_target, symlinks=not windows, ignore=skip_extraction_artifacts)
+        if windows:
+            shutil.copytree(office, office_target, ignore=skip_extraction_artifacts)
+        else:
+            # Preserve macOS framework metadata and resource forks as well as
+            # symlinks. Verify both sides to distinguish source/copy damage.
+            subprocess.run(["/usr/bin/codesign", "--verify", "--deep", "--strict", "--verbose=4", str(office)], check=True)
+            subprocess.run(["/usr/bin/ditto", str(office), str(office_target)], check=True)
     env = dict(os.environ)
     env["PATH"] = str(qt_bin) + os.pathsep + env.get("PATH", "")
     if windows:
@@ -94,7 +100,7 @@ def main():
                         *("-executable=" + str(destination / name) for name in names[1:])], env=env, check=True)
         subprocess.run(["/usr/bin/codesign", "--verify", "--deep", "--strict", str(bundle)], check=True)
         if office:
-            subprocess.run(["/usr/bin/codesign", "--verify", "--deep", "--strict", str(office_target)], check=True)
+            subprocess.run(["/usr/bin/codesign", "--verify", "--deep", "--strict", "--verbose=4", str(office_target)], check=True)
     root = Path(__file__).resolve().parents[1]
     shutil.copy2(root / "docs" / "release.md", output / "README-release.md")
     for name in ("student-handoff.md", "editorial-frontend.md", "office-preview.md", "interfaces.md", "team.md"):
