@@ -194,7 +194,7 @@ void receipt(Painter& d, const Snapshot& state) {
     }
     d.p.restore();
     d.text(1217, 165, 291, 40, QStringLiteral("纸间 · 校园一店"), 25, navy, true, true);
-    d.text(1217, 204, 291, 35, state.date, 18, faded);
+    d.text(1217, 204, 291, 35, state.rangeDate, 18, faded);
     dashed(d, 1217, 244, 291);
     receiptRow(d, 258, QStringLiteral("营业额"), money(state.revenueCents));
     receiptRow(d, 291, QStringLiteral("订单总数"), QStringLiteral("%1 单").arg(state.todayOrders));
@@ -454,7 +454,7 @@ void paintStats(Painter& d, const Snapshot& state, const Selection& selection) {
     d.text(58, 80, 334, 81, QStringLiteral("今天的生意，"), 61, navy, true, true);
     d.text(395, 80, 337, 81, QStringLiteral("一目了然。"), 61, red, true, true);
     d.text(59, 156, 650, 43, QStringLiteral("把每一份打印，记成清楚的账。"), 23, faded);
-    d.text(59, 211, 218, 36, QStringLiteral("今日营业额"), 18, faded);
+    d.text(59, 211, 218, 36, state.rangeLabel+QStringLiteral("营业额"), 18, faded);
     d.text(56, 263, 30, 36, QStringLiteral("¥"), 29, navy, true, true);
     d.text(79, 244, 213, 62, money(state.revenueCents).mid(1), 52, navy, true, true);
     statisticsMetric(d, 340, 116, QStringLiteral("订单总数"), number(state.todayOrders));
@@ -472,11 +472,11 @@ void paintStats(Painter& d, const Snapshot& state, const Selection& selection) {
         d.hit(rect, QStringLiteral("range"), ranges[i], ranges[i]);
     }
     d.icon(QStringLiteral("calendar"), 967, 277, 18, faded);
-    d.text(995, 269, 123, 35, state.date, 16, faded, false, false, Qt::AlignRight | Qt::AlignVCenter);
+    d.text(995, 269, 123, 35, state.rangeDate, 16, faded, false, false, Qt::AlignRight | Qt::AlignVCenter);
     revenueChart(d, state); receipt(d, state); breakdown(d, state);
     d.icon(QStringLiteral("calendar"), 45, 879, 38);
     d.text(101, 873, 311, 34, selection.range == QStringLiteral("今天") ? QStringLiteral("今日营业数据") : selection.range + QStringLiteral("营业数据"), 23, navy, true);
-    d.text(101, 906, 311, 29, state.date, 18, faded);
+    d.text(101, 906, 311, 29, state.rangeDate, 18, faded);
     vertical(d, 435, 883, 37);
     d.icon(QStringLiteral("clock"), 478, 883, 36);
     d.text(536, 874, 478, 34, QStringLiteral("统计截至 %1").arg(state.clock), 23, navy, true);

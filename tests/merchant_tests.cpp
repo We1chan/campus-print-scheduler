@@ -168,7 +168,11 @@ private slots:
     void customDateRangeRecountsWithoutChangingQueue() {
         MerchantData data({}, true);
         QSignalSpy feedback(&data, &MerchantData::feedback);
+        QCOMPARE(data.snapshot().rangeLabel, QStringLiteral("今日"));
+        QCOMPARE(data.snapshot().rangeDate, QStringLiteral("2026年10月3日"));
         data.setRange(QStringLiteral("2026-10-04"));
+        QCOMPARE(data.snapshot().rangeLabel, QStringLiteral("指定日"));
+        QCOMPARE(data.snapshot().rangeDate, QStringLiteral("2026年10月4日"));
         QCOMPARE(data.snapshot().todayOrders, 0);
         QCOMPARE(data.snapshot().revenueCents, qint64(0));
         QCOMPARE(data.snapshot().printedPages, 0);
@@ -183,11 +187,22 @@ private slots:
         data.setRange(QStringLiteral("2026-02-30"));
         QVERIFY(feedback.last()[1].toBool());
         QCOMPARE(data.snapshot().todayOrders, 0); // An invalid date preserves the chosen range.
+        QCOMPARE(data.snapshot().rangeLabel, QStringLiteral("指定日"));
+        QCOMPARE(data.snapshot().rangeDate, QStringLiteral("2026年10月4日"));
         data.setRange(QStringLiteral("2026-10-03"));
+        QCOMPARE(data.snapshot().rangeDate, QStringLiteral("2026年10月3日"));
         QCOMPARE(data.snapshot().todayOrders, 48);
         QCOMPARE(data.snapshot().revenueCents, qint64(32680));
         QCOMPARE(data.snapshot().printedPages, 524);
         QVERIFY(!feedback.last()[1].toBool());
+        data.setRange(QStringLiteral("week"));
+        QCOMPARE(data.snapshot().rangeLabel, QStringLiteral("本周"));
+        QCOMPARE(data.snapshot().rangeDate, QStringLiteral("2026年10月3日"));
+        data.setRange(QStringLiteral("month"));
+        QCOMPARE(data.snapshot().rangeLabel, QStringLiteral("本月"));
+        QCOMPARE(data.snapshot().rangeDate, QStringLiteral("2026年10月3日"));
+        data.setRange(QStringLiteral("today"));
+        QCOMPARE(data.snapshot().rangeLabel, QStringLiteral("今日"));
     }
 
     void showcaseMoveBeforePreservesDeviceBoundaries() {
@@ -443,6 +458,7 @@ private slots:
         QCOMPARE(queued.copies, 2);
         QVERIFY(queued.color && !queued.duplex);
         QCOMPARE(queued.state, QStringLiteral("待打印"));
+        QCOMPARE(queued.estimatedMinutes, -1); // A paused queue cannot promise completion from the current time.
         QCOMPARE(queued.printer, -1);
         QCOMPARE(queued.amountCents, qint64(855)); // Six colour faces at 150 cents with the standard 95% rate.
         QVERIFY(queued.path.isEmpty()); // IPC supplies metadata, never fabricated uploaded bytes.
@@ -458,6 +474,7 @@ private slots:
 
         merchant.model()->execute(QStringLiteral("resume-all"));
         QTRY_COMPARE_WITH_TIMEOUT(merchant.model()->snapshot().orders[0].state, QStringLiteral("已完成"), 10000);
+        QCOMPARE(merchant.model()->snapshot().orders[0].estimatedMinutes, 0);
         QCOMPARE(merchant.model()->snapshot().orders[0].printed, 6);
         QCOMPARE(merchant.model()->snapshot().completed, 1);
         QCOMPARE(merchant.model()->snapshot().colorPages, 6);

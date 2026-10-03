@@ -212,6 +212,7 @@ void MerchantData::apply(const ViewState& state) {
         order.submittedMs = static_cast<qint64>(object.value(QStringLiteral("submitted_ms")).toDouble());
         order.finishedMs = static_cast<qint64>(object.value(QStringLiteral("finished_ms")).toDouble());
         order.pickupTime = order.deadlineMs > 0 ? QDateTime::fromMSecsSinceEpoch(order.deadlineMs).toString(QStringLiteral("HH:mm")) : QStringLiteral("—");
+        order.estimatedMinutes=printedState(order)?0:job.estimatedFinishMs>=state.nowMs&&!(state.paused&&job.state==JobState::Queued)?static_cast<int>((job.estimatedFinishMs-state.nowMs+59999)/60000):-1;
         // Existing IPC contains metadata only; no uploaded source path is available.
         if (printedState(order)) order.printed = faces(order);
         orders.insert(order.id, order);
@@ -246,6 +247,8 @@ void MerchantData::recount() {
     const auto customDate = QDate::fromString(range_, Qt::ISODate);
     const qint64 begin = rangeStart(range_, now);
     const qint64 end = customDate.isValid() ? QDateTime(customDate.addDays(1), QTime(0, 0)).toMSecsSinceEpoch()-1 : now.toMSecsSinceEpoch();
+    snapshot_.rangeLabel=range_=="today"?QStringLiteral("今日"):range_=="week"?QStringLiteral("本周"):range_=="month"?QStringLiteral("本月"):QStringLiteral("指定日");
+    snapshot_.rangeDate=customDate.isValid()?customDate.toString(QStringLiteral("yyyy年M月d日")):snapshot_.date;
     snapshot_.hourlyLabels = {QStringLiteral("06"), QStringLiteral("07"), QStringLiteral("08"), QStringLiteral("09"), QStringLiteral("10")};
     if (!snapshot_.showcase) {
         snapshot_.hourlyLabels.clear();

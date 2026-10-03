@@ -9,6 +9,7 @@ namespace cps::gui::merchant {
 struct Order {
     QString id, title, student, service = QStringLiteral("普通"), state = QStringLiteral("待打印");
     int pages = 8, copies = 1, printed = 0, printer = -1;
+    int estimatedMinutes = -1;
     bool color = false, duplex = true, a3 = false;
     qint64 amountCents = 0, deadlineMs = 0, submittedMs = 0, finishedMs = 0;
     QString pickupTime, path;
@@ -32,6 +33,7 @@ struct Snapshot {
     QStringList hourlyLabels;
     QString date = QStringLiteral("2026年10月3日"), clock = QStringLiteral("10:24");
     QString connection;
+    QString rangeLabel = QStringLiteral("今日"), rangeDate;
     bool connected = false, paused = false, showcase = false;
 };
 class MerchantData : public QObject {

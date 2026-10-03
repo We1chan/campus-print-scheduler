@@ -75,7 +75,7 @@ void hero(Painter& d, const Snapshot& state, bool queue)
     if (queue) {
         d.text(58,81,356,80,QStringLiteral("每一单，都有"),61,navy,true,true);
         d.text(413,81,279,80,QStringLiteral("好次序。"),61,red,true,true);
-        d.text(59,159,690,37,QStringLiteral("按设备查看进度，拖动工单调整顺序。"),23,secondary);
+        d.text(59,159,690,37,state.showcase?QStringLiteral("按设备查看进度，拖动工单调整顺序。"):QStringLiteral("按设备查看进度，自动调度等待任务。"),23,secondary);
         int assigned=0, unassigned=0;
         for (const auto& order : state.orders) {
             if (order.state != QStringLiteral("待打印")) continue;
@@ -92,14 +92,14 @@ void hero(Painter& d, const Snapshot& state, bool queue)
         d.text(58,81,424,80,QStringLiteral("每一份，都值得"),61,navy,true,true);
         d.text(479,81,253,80,QStringLiteral("印好。"),61,red,true,true);
         d.text(59,159,630,37,QStringLiteral("订单、队列与设备，一眼掌握。"),23,secondary);
-        metric(d,59,QStringLiteral("今日订单"),state.todayOrders);
+        metric(d,59,state.rangeLabel+QStringLiteral("订单"),state.todayOrders);
         metric(d,274,QStringLiteral("待打印"),state.waiting,true);
         metric(d,480,QStringLiteral("打印中"),state.printing);
         metric(d,679,QStringLiteral("待取件"),state.ready);
         verticalRule(d,218,211,56);
         verticalRule(d,426,211,56);
         verticalRule(d,642,211,56);
-        d.text(971,210,134,29,QStringLiteral("今日营收"),17,secondary,false,false,Qt::AlignRight|Qt::AlignVCenter);
+        d.text(971,210,134,29,state.rangeLabel+QStringLiteral("营收"),17,secondary,false,false,Qt::AlignRight|Qt::AlignVCenter);
         d.text(937,238,168,40,money(state.revenueCents),31,navy,true,true,Qt::AlignRight|Qt::AlignVCenter);
     }
 }
@@ -127,7 +127,7 @@ void documentPreview(Painter& d, const Order& order, const QRectF& rect)
     }
 }
 
-void sidebarHeading(Painter& d, const Order* order, bool queue)
+void sidebarHeading(Painter& d, const Order* order, bool queue, bool showcase)
 {
     d.text(1175,79,375,52,queue ? QStringLiteral("队列详情") : QStringLiteral("订单详情"),36,navy,true,true);
     if (!order) {
@@ -138,14 +138,15 @@ void sidebarHeading(Painter& d, const Order* order, bool queue)
     }
     d.text(1175,134,78,30,order->id,20,secondary);
     d.badge(QRectF(1250,134,83,29),order->state);
-    documentPreview(d,*order,QRectF(1238,144,264,319));
+    if(showcase)documentPreview(d,*order,QRectF(1238,144,264,319));
+    else {d.panel({1238,144,264,319},Qt::white,ruleColor,4);d.icon(QStringLiteral("document"),1340,209,58,secondary);d.text(1254,287,230,36,QStringLiteral("文件元数据"),22,navy,true,false,Qt::AlignCenter);d.text(1254,330,230,33,QStringLiteral("原件尚未传输"),17,secondary,false,false,Qt::AlignCenter);}
     d.text(1175,486,378,40,order->title,19,navy,true);
 }
 
 void workbenchSidebar(Painter& d, const Snapshot& state, const Selection& selection)
 {
     const Order* order=selectedOrder(state,selection);
-    sidebarHeading(d,order,false);
+    sidebarHeading(d,order,false,state.showcase);
     if (!order) return;
     d.panel(QRectF(1303,446,124,35),Qt::white,ruleColor,18);
     d.icon(QStringLiteral("search"),1325,452,20);
@@ -175,7 +176,7 @@ void workbenchSidebar(Painter& d, const Snapshot& state, const Selection& select
 void queueSidebar(Painter& d, const Snapshot& state, const Selection& selection)
 {
     const Order* order=selectedOrder(state,selection);
-    sidebarHeading(d,order,true);
+    sidebarHeading(d,order,true,state.showcase);
     if (!order) return;
     d.rule(1175,525,378);
     const Device* device=order->printer>=0 && order->printer<state.devices.size() ? &state.devices[order->printer] : nullptr;
@@ -236,9 +237,10 @@ void workbenchFooter(Painter& d, const Snapshot& state, const Selection& selecti
     d.text(102,907,312,26,order ? specs(*order) : QStringLiteral("从工作台选择需要打印的文件"),18,secondary);
     verticalRule(d,435,882,38);
     d.icon(QStringLiteral("clock"),477,883,39);
-    const int minutes=order ? std::max(1,int(std::ceil(double(order->pages*order->copies)/5.0))) : 0;
-    d.text(534,876,500,30,QStringLiteral("预计 %1 分钟完成").arg(minutes),23,navy,true);
-    d.text(535,907,495,26,device ? QStringLiteral("发送至 %1").arg(device->name) : QStringLiteral("请先分配打印设备"),18,secondary);
+    const int minutes=order ? state.showcase?std::max(1,int(std::ceil(double(order->pages*order->copies)/5.0))):order->estimatedMinutes : -1;
+    const QString forecast=order&&(order->state==QStringLiteral("已完成")||order->state==QStringLiteral("待取件"))?QStringLiteral("打印已完成"):minutes<0?QStringLiteral("暂无法估算完成时间"):QStringLiteral("预计 %1 分钟完成").arg(minutes);
+    d.text(534,876,500,30,forecast,23,navy,true);
+    d.text(535,907,495,26,!state.showcase?QStringLiteral("由后台自动匹配设备"):device ? QStringLiteral("发送至 %1").arg(device->name) : QStringLiteral("请先分配打印设备"),18,secondary);
     d.button(QRectF(1078,875,188,53),QStringLiteral("打印取件单"),QStringLiteral("pickup-slip"),QString::number(selection.order));
     if(order&&order->state==QStringLiteral("待取件"))d.button(QRectF(1286,875,262,54),QStringLiteral("确认取件  →"),QStringLiteral("pickup"),order->id,true);
     else if(order&&(order->state==QStringLiteral("已完成")||order->state==QStringLiteral("已取消")))d.text(1286,875,262,54,order->state,21,secondary,true,false,Qt::AlignCenter);
@@ -313,7 +315,8 @@ void queueLane(Painter& d, const Snapshot& state, const Selection& selection, in
         d.text(progressX,activeRect.y()+35,progressWidth-45,26,QStringLiteral("%1 / %2 页").arg(device.printed).arg(device.total),17,navy,false,false,Qt::AlignCenter);
         d.text(activeRect.right()-55,activeRect.y()+35,40,26,QStringLiteral("%1%").arg(qRound(ratio*100)),17,navy,true,false,Qt::AlignRight|Qt::AlignVCenter);
         d.progress(QRectF(progressX,activeRect.y()+65,progressWidth,9),ratio,QColor("#233F6D"));
-        d.text(progressX,activeRect.y()+81,progressWidth,23,QStringLiteral("预计 %1 分钟完成").arg(std::max(1,int(std::ceil(double(std::max(0,device.total-device.printed))/8.0)))),15,secondary,false,false,Qt::AlignRight|Qt::AlignVCenter);
+        const int minutes=state.showcase?std::max(1,int(std::ceil(double(std::max(0,device.total-device.printed))/8.0))):active>=0?state.orders[active].estimatedMinutes:-1;
+        d.text(progressX,activeRect.y()+81,progressWidth,23,minutes<0?QStringLiteral("暂无法估算完成时间"):QStringLiteral("预计 %1 分钟完成").arg(minutes),15,secondary,false,false,Qt::AlignRight|Qt::AlignVCenter);
         if (active>=0) d.hit(activeRect,QStringLiteral("select-order"),QString::number(active),QStringLiteral("查看正在打印的订单 %1").arg(device.jobId));
     } else {
         d.icon(QStringLiteral("printer"),rect.center().x()-18,rect.y()+84,36,QColor("#A9B5CC"));
@@ -447,7 +450,7 @@ void paintQueue(Painter& d, const Snapshot& state, const Selection& selection)
     d.text(103,906,315,28,QStringLiteral("%1 单已分配 · %2 单待分配").arg(assigned).arg(unassigned.size()),18,secondary);
     verticalRule(d,437,882,39);
     d.icon(QStringLiteral("clock"),477,881,40);
-    d.text(535,876,504,30,QStringLiteral("预计 %1 分钟清空队列").arg(state.clearMinutes),23,navy,true);
+    d.text(535,876,504,30,state.clearMinutes<0?QStringLiteral("暂无法估算清空时间"):QStringLiteral("预计 %1 分钟清空队列").arg(state.clearMinutes),23,navy,true);
     d.text(535,906,504,28,QStringLiteral("按当前设备状态估算"),18,secondary);
     const bool blackPaused=black>=0 && !state.devices[black].enabled;
     d.button(QRectF(1078,875,193,53),blackPaused ? QStringLiteral("启动黑白队列") : QStringLiteral("暂停黑白队列"),blackPaused ? QStringLiteral("start") : QStringLiteral("pause"),QString::number(black));
