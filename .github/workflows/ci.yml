@@ -20,7 +20,7 @@ jobs:
       matrix:
         os: [windows-latest, macos-latest, ubuntu-24.04]
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 20
+    timeout-minutes: 35
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -40,6 +40,23 @@ jobs:
           cache-key-prefix: qt-with-linux-icu-v1
       - name: Install local PDF renderer
         run: python tools/setup_pdfium.py
+      - name: Prepare private Office converter (Windows)
+        if: runner.os == 'Windows'
+        run: python tools/setup_office_preview.py
+      - name: Install Office converter (macOS)
+        if: runner.os == 'macOS'
+        run: brew install --cask libreoffice
+      - name: Install Office converter (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libreoffice
+      - name: Configure Office preview acceptance
+        run: |
+          python -m pip install python-docx==1.2.0 python-pptx==1.0.2 openpyxl==3.1.5
+          python -c "import os,sys; from pathlib import Path; root=Path.cwd(); engine=root/'.tools/libreoffice/program/soffice.com' if sys.platform=='win32' else Path('/Applications/LibreOffice.app/Contents/MacOS/soffice') if sys.platform=='darwin' else Path('/usr/bin/libreoffice'); assert engine.is_file(); Path(os.environ['GITHUB_ENV']).open('a').write('CPS_OFFICE_EXECUTABLE='+str(engine)+'\nCPS_OFFICE_FIXTURES='+str(root/'runtime/office-fixtures')+'\n')"
+      - name: Generate six real Office formats
+        run: python tools/generate_office_fixtures.py --office "${{ env.CPS_OFFICE_EXECUTABLE }}" --output-dir runtime/office-fixtures
       - name: Configure application
         run: cmake --preset ci
       - name: Build
@@ -52,13 +69,13 @@ jobs:
         if: runner.os != 'Linux'
         run: |
           python -c "from pathlib import Path; Path('runtime').mkdir(exist_ok=True)"
-          ./build/ci/bin/gui_tests${{ runner.os == 'Windows' && '.exe' || '' }} editorialMotionRetargeting editorialAnimationFrameBudget editorialReceiptCodes editorialHoverSpreadsAndReturns editorialWindowChrome editorialDocumentPreview studentOrderPaymentAndForecast persistentPoliciesAndReport backendCrashDuringCancellation runningCancelFaultAndReconnect compactWindowKeepsControlsReachable -o runtime/native-gui-tests.txt,txt -o "-,txt"
+          ./build/ci/bin/gui_tests${{ runner.os == 'Windows' && '.exe' || '' }} officeDocumentsRealPreview officeStudentPreviewAndReplacement previewPreservesMixedPageDirections editorialMotionRetargeting editorialAnimationFrameBudget editorialReceiptCodes editorialHoverSpreadsAndReturns editorialWindowChrome editorialDocumentPreview studentOrderPaymentAndForecast persistentPoliciesAndReport backendCrashDuringCancellation runningCancelFaultAndReconnect compactWindowKeepsControlsReachable -o runtime/native-gui-tests.txt,txt -o "-,txt"
         env:
           QT_QPA_PLATFORM: ${{ runner.os == 'Windows' && 'windows' || 'cocoa' }}
           CPS_GUI_EVIDENCE_DIR: ${{ github.workspace }}/runtime/native-gui-evidence
       - name: Deploy Qt runtime
         if: runner.os != 'Linux'
-        run: python tools/package_app.py --bin-dir build/ci/bin --qt-bin "${{ env.QT_ROOT_DIR }}/bin" --output-dir dist/campus-print
+        run: python tools/package_app.py --bin-dir build/ci/bin --qt-bin "${{ env.QT_ROOT_DIR }}/bin" --output-dir dist/campus-print --office-dir "${{ runner.os == 'Windows' && '.tools/libreoffice' || '/Applications/LibreOffice.app' }}" --preview-fixtures runtime/office-fixtures
       - name: Test deployed application without SDK paths
         if: runner.os != 'Linux'
         run: python tests/package_smoke.py --package-dir dist/campus-print
@@ -92,7 +109,7 @@ jobs:
           - os: macos-latest
             artifact: macOS
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 10
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5

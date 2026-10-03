@@ -2,6 +2,8 @@
 #include <QByteArray>
 #include <QCache>
 #include <QImage>
+#include <QHash>
+#include <QSizeF>
 #include <QTextDocument>
 #include <memory>
 
@@ -15,10 +17,12 @@ class DocumentPreview {
     DocumentPreview &operator=(const DocumentPreview &) = delete;
     bool load(const QString &path);
     void clear();
+    void setMessage(const QString &message) { clear(); error_ = message; }
     int pageCount() const { return pages_; }
     QString error() const { return error_; }
     bool loaded() const { return pages_ > 0; }
     QImage page(int index);
+    QSizeF pageSize(int index);
 
   private:
     QByteArray bytes_;
@@ -26,6 +30,7 @@ class DocumentPreview {
     QImage image_;
     std::unique_ptr<QTextDocument> text_;
     QCache<int, QImage> cache_{12};
+    QHash<int, QSizeF> pageSizes_;
     QString error_;
     int pages_ = 0;
 };

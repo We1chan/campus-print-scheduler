@@ -79,6 +79,7 @@ void DocumentPreview::clear() {
     image_ = {};
     text_.reset();
     cache_.clear();
+    pageSizes_.clear();
     pages_ = 0;
     error_.clear();
 }
@@ -141,6 +142,23 @@ bool DocumentPreview::load(const QString &path) {
     }
     error_ = QStringLiteral("此格式无法直接预览，请先导出为 PDF、图片或 UTF-8 文本");
     return false;
+}
+QSizeF DocumentPreview::pageSize(int index) {
+    if (index < 0 || index >= pages_) return {};
+    if (pageSizes_.contains(index)) return pageSizes_.value(index);
+    QSizeF size;
+    if (pdf_) {
+        auto &e = engine();
+        if (void *page = e.loadPage(pdf_, index)) {
+            const double w = e.width(page), h = e.height(page);
+            if (std::isfinite(w) && std::isfinite(h) && w > 0 && h > 0 && w <= 200000 && h <= 200000)
+                size = {w, h};
+            e.closePage(page);
+        }
+    } else if (text_) size = text_->pageSize();
+    else size = image_.size();
+    pageSizes_.insert(index, size);
+    return size;
 }
 QImage DocumentPreview::page(int index) {
     if (index < 0 || index >= pages_)

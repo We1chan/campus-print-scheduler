@@ -1,4 +1,5 @@
 #include "student_window.hpp"
+#include "office_preview.hpp"
 #include "ui_theme.hpp"
 #include "editorial_surface.hpp"
 #include "editorial_chrome.hpp"
@@ -385,11 +386,19 @@ StudentWindow::StudentWindow(WindowOptions options, const QString &studentId, QW
     align->setObjectName("alignProof");
     align->setCheckable(true);
     align->setIcon(ui::icon(ui::Icon::Activity, QColor("#14213E")));
-    for (auto *b : std::array<QPushButton *, 3>{flipProof_, unfold, align})
+    auto *rotate = new EditorialToolButton(QStringLiteral("旋转"));
+    rotate->setObjectName("rotateProof");
+    rotate->setIcon(ui::icon(ui::Icon::Refresh, QColor("#14213E")));
+    rotate->setToolTip(QStringLiteral("顺时针旋转预览 90°，不改变原文件或打印设置。"));
+    rotate->setAccessibleName(QStringLiteral("旋转预览"));
+    rotate->setEnabled(false);
+    for (auto *b : std::array<QPushButton *, 4>{flipProof_, unfold, align, rotate})
         b->setStyleSheet("background:rgba(255,255,255,235);border:none;color:#14213E;border-radius:4px;font-"
                          "size:13px;padding:0;");
     proof_->attachActions(flipProof_, unfold);
     proof_->attachAlignment(align);
+    proof_->attachRotation(rotate);
+    connect(rotate, &QPushButton::clicked, this, [this] { proof_->rotatePreview(); });
     connect(unfold, &QPushButton::toggled, this, [this, unfold](bool open) {
         proof_->setExpanded(open);
         unfold->setText(open ? QStringLiteral("▤\n收起") : QStringLiteral("▤\n展开"));
@@ -408,7 +417,8 @@ StudentWindow::StudentWindow(WindowOptions options, const QString &studentId, QW
     at(next, {1171, 780, 35, 33}, 24);
     connect(previous, &QPushButton::clicked, this, [this] { proof_->stepPage(-1); });
     connect(next, &QPushButton::clicked, this, [this] { proof_->stepPage(1); });
-    proof_->changed = [this, previous, next] {
+    proof_->changed = [this, previous, next, rotate] {
+        rotate->setEnabled(proof_->documentPages() > 0);
         previous->setEnabled(proof_->currentSheet() > 1);
         next->setEnabled(proof_->currentSheet() < proof_->sheetCount());
         flipProof_->setText(proof_->showingBack() ? QStringLiteral("▱\n正面") : QStringLiteral("▱\n翻页"));
@@ -573,7 +583,7 @@ StudentWindow::StudentWindow(WindowOptions options, const QString &studentId, QW
         const auto path = QFileDialog::getOpenFileName(
             this, QStringLiteral("选择要打印的文件"), {},
             QStringLiteral(
-                "文档 (*.pdf *.txt *.md *.doc *.docx *.ppt *.pptx *.png *.jpg *.jpeg);;所有文件 (*)"));
+                "文档 (*.pdf *.txt *.md *.doc *.docx *.ppt *.pptx *.xls *.xlsx *.png *.jpg *.jpeg);;所有文件 (*)"));
         if (!path.isEmpty())
             setDocument(path);
     });
@@ -653,11 +663,37 @@ StudentWindow::StudentWindow(WindowOptions options, const QString &studentId, QW
             }
         },
         Qt::QueuedConnection);
+    officePreview_ = new OfficePreview(this);
+    connect(officePreview_, &OfficePreview::ready, this, [this](const QString &pdf) {
+        documentLoading_ = false;
+        const bool previewed = proof_->loadDocument(pdf);
+        if (previewed) {
+            pageCount_->setValue(proof_->documentPages());
+            file_->setText(QStringLiteral("共 %1 页 · 本地预览").arg(proof_->documentPages()));
+            ui::say(feedback_, QStringLiteral("文档已转换并载入，确认打印设置后下单。"), "ready");
+        } else {
+            file_->setText(QStringLiteral("转换后的文档无法预览"));
+            ui::say(feedback_, proof_->previewError(), "error");
+        }
+        file_->setToolTip(file_->text());
+        pageCount_->setEnabled(!previewed);
+        updatePrice();
+    });
+    connect(officePreview_, &OfficePreview::failed, this, [this](const QString &message) {
+        documentLoading_ = false;
+        proof_->setPreviewMessage(message);
+        file_->setText(QStringLiteral("预览失败 · 请更换文件或导出 PDF"));
+        file_->setToolTip(message);
+        pageCount_->setEnabled(true);
+        ui::say(feedback_, message, "error");
+        updatePrice();
+    });
     clearDocument();
     updatePrice();
     backendThread_.start();
 }
 StudentWindow::~StudentWindow() {
+    officePreview_->cancel();
     backendThread_.quit();
     backendThread_.wait();
 }
@@ -679,19 +715,29 @@ void StudentWindow::setDocument(const QString &path) {
         ui::say(feedback_, QStringLiteral("无法使用这个文件：") + document.error, "error");
         return;
     }
-    const bool previewed = proof_->loadDocument(path);
+    officePreview_->cancel();
+    officeRequired_ = OfficePreview::supports(path);
+    documentLoading_ = officeRequired_;
+    pageCount_->setEnabled(!officeRequired_);
+    bool previewed = false;
+    if (officeRequired_)
+        proof_->setPreviewMessage(QStringLiteral("正在准备文档预览…"));
+    else
+        previewed = proof_->loadDocument(path);
     documentChosen_ = true;
     title_->setText(document.name);
     if (previewed)
         pageCount_->setValue(proof_->documentPages());
     else if (document.pages > 0)
         pageCount_->setValue(document.pages);
+    else
+        pageCount_->setValue(1);
     fileName_->setProperty("fullText", document.name);
     fileName_->setText(QFontMetrics(fileName_->font()).elidedText(
         document.name, Qt::ElideMiddle, fileName_->width()));
     fileName_->setToolTip(document.name);
     file_->setText(QStringLiteral("%1 · %2").arg(
-        sizeText(document.bytes), previewed
+        sizeText(document.bytes), documentLoading_ ? QStringLiteral("正在准备预览…") : previewed
                                       ? QStringLiteral("共 %1 页 · 本地预览").arg(proof_->documentPages())
                                       : QStringLiteral("未能识别页数，请在下方填写")));
     file_->setToolTip(file_->text());
@@ -699,19 +745,25 @@ void StudentWindow::setDocument(const QString &path) {
     remove_->show();
     ui::restyle(drop_, "state", "filled");
     ui::say(feedback_,
-            previewed ? QStringLiteral("文件已在本地预览，确认设置后下单；模拟支付，不会扣款。")
+            documentLoading_ ? QStringLiteral("正在转换文档，完成后自动显示预览和页数…")
+            : previewed ? QStringLiteral("文件已在本地预览，确认设置后下单；模拟支付，不会扣款。")
                       : proof_->previewError(),
             previewed ? "ready" : "waiting");
     pages_->setCurrentIndex(0);
     updatePrice();
+    if (officeRequired_) officePreview_->start(path);
 }
 void StudentWindow::clearDocument() {
+    if (officePreview_) officePreview_->cancel();
+    officeRequired_ = false;
+    documentLoading_ = false;
+    pageCount_->setEnabled(true);
     documentChosen_ = false;
     proof_->clearDocument();
     fileName_->setProperty("fullText", QVariant());
     fileName_->setText(QStringLiteral("拖入文件，或点击选择"));
     fileName_->setToolTip({});
-    file_->setText(QStringLiteral("PDF / 图片 / 文本 · 本地预览，不上传"));
+    file_->setText(QStringLiteral("PDF / Word / PPT / Excel / 图片 / 文本 · 本地预览"));
     choose_->setText(QStringLiteral("选择文件"));
     remove_->hide();
     ui::restyle(drop_, "state", "");
@@ -829,6 +881,9 @@ void StudentWindow::updateActions() {
                             : !view_.shop.value("shop_enabled").toBool()
                                 ? QStringLiteral("这个数据目录不是经营模式，无法下单。")
                             : !documentChosen_                   ? QStringLiteral("先选择要打印的文件。")
+                            : documentLoading_                  ? QStringLiteral("正在准备文档预览，完成后即可下单。")
+                            : officeRequired_ && proof_->documentPages() == 0
+                                ? QStringLiteral("请先完成文档预览，或将文件导出 PDF 后重试。")
                             : title_->text().trimmed().isEmpty() ? QStringLiteral("请填写文档名称。")
                             : student().isEmpty()                ? QStringLiteral("请先在右上角填写学号。")
                             : quoteAccepted_                     ? QString()
@@ -931,7 +986,7 @@ void StudentWindow::showPayment() {
         methods->addWidget(b, 1);
     }
     body->addLayout(methods);
-    auto *receipt = new ReceiptCodePanel(paymentCodesDirectory_);
+    auto *receipt = new ReceiptCodePanel(paymentCodesDirectory_, true);
     receipt->setMethod(paymentName(method));
     body->addWidget(receipt);
     connect(methodsGroup, &QButtonGroup::idClicked, this,

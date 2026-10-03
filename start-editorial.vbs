@@ -5,7 +5,7 @@ Set fs = CreateObject("Scripting.FileSystemObject")
 Set shell = CreateObject("WScript.Shell")
 root = fs.GetParentFolderName(WScript.ScriptFullName)
 executable = ""
-For Each version In Array("editorial-v10", "editorial-v9", "editorial-v8", "editorial-v7", "editorial-v6", "editorial-v5", "editorial-v4", "editorial-v3", "editorial-v2")
+For Each version In Array("editorial-v11", "editorial-v10", "editorial-v9", "editorial-v8", "editorial-v7", "editorial-v6", "editorial-v5", "editorial-v4", "editorial-v3", "editorial-v2")
     candidate = fs.BuildPath(root, "dist\" & version & "\campus-print.exe")
     If fs.FileExists(candidate) Then
         executable = candidate

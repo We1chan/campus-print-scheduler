@@ -1,6 +1,10 @@
 @echo off
 setlocal
 cd /d "%~dp0"
+if exist "dist\editorial-v11\campus-print.exe" (
+    start "" "%~dp0dist\editorial-v11\campus-print.exe" --role student --data-dir "%~dp0runtime\editorial-shop" %*
+    exit /b 0
+)
 if exist "dist\editorial-v10\campus-print.exe" (
     start "" "%~dp0dist\editorial-v10\campus-print.exe" --role student --data-dir "%~dp0runtime\editorial-shop" %*
     exit /b 0

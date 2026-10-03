@@ -1,5 +1,6 @@
 #include "print_window.hpp"
 #include "student_window.hpp"
+#include "preview_check.hpp"
 #include "editorial_chrome.hpp"
 #include "cps/runtime/job_io.hpp"
 #include <QApplication>
@@ -23,12 +24,18 @@ int main(int argc, char* argv[]) {
         {"role", "Interface to open: boss (owner console) or student (self-service client)", "role", "boss"},
         {"student", "Student ID used by the self-service client", "id"},
         {"document", "Open a local document in the student interface", "path"},
+        {"check-preview", "Render a local document for deployment diagnostics without starting the backend", "path"},
+        {"preview-report", "JSON result file for --check-preview", "path"},
         {"page-ms", "Simulation delay per page (10..10000)", "ms", "150"},
         {"legacy-mode", "Use the original homogeneous queue for compatibility"},
         {"demo-mode", "Show availability of demonstration controls"},
         {"demo-workload", "Submit mixed demonstration orders on startup (requires --demo-mode)"},
         {"smoke-test", "Start UI and exit without submitting jobs"}});
     parser.process(app);
+    if (parser.isSet("check-preview")) {
+        if (!parser.isSet("preview-report")) return 64;
+        return cps::gui::checkDocumentPreview(parser.value("check-preview"), parser.value("preview-report"));
+    }
     const auto role = parser.value("role");
     const bool student = role == "student";
     if (!student && role != "boss") {

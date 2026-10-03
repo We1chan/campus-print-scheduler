@@ -4,6 +4,7 @@
 #include "paper_workspace.hpp"
 #include "print_proof.hpp"
 #include "payment_receipt.hpp"
+#include "office_preview.hpp"
 #include "coordinator_test_client.hpp"
 #include "cps/runtime/job_io.hpp"
 #include <QProcess>
@@ -29,6 +30,7 @@
 #include <QScrollBar>
 #include <QTemporaryDir>
 #include <QTest>
+#include <QSignalSpy>
 #include <QElapsedTimer>
 #include <QDialog>
 #include <QListWidget>
@@ -80,6 +82,165 @@ class GuiTests : public QObject {
         QVERIFY(dialog && dialog->isVisible());
     }
 private slots:
+    void officeConversionLifecycle() {
+        const auto previous = qgetenv("CPS_OFFICE_EXECUTABLE");
+        const bool wasSet = qEnvironmentVariableIsSet("CPS_OFFICE_EXECUTABLE");
+        struct Restore {
+            QByteArray previous; bool wasSet;
+            ~Restore() { if (wasSet) qputenv("CPS_OFFICE_EXECUTABLE", previous); else qunsetenv("CPS_OFFICE_EXECUTABLE"); }
+        } restore{previous, wasSet};
+        QTemporaryDir root;
+        QVERIFY(root.isValid());
+        const auto pdfPath = QDir(root.path()).filePath("source.pdf");
+        { QPdfWriter pdf(pdfPath); QPainter painter(&pdf); painter.fillRect(0, 0, pdf.width(), pdf.height(), Qt::red);
+          QVERIFY(pdf.newPage()); painter.fillRect(0, 0, pdf.width(), pdf.height(), Qt::blue); }
+        const auto officePath = QDir(root.path()).filePath(QStringLiteral("中文 文档.docx"));
+        const auto writeFixture = [&](int delay) {
+            QFile file(officePath); if (!file.open(QIODevice::WriteOnly)) return false;
+            return file.write(QByteArray::fromHex("504b0304") + QJsonDocument(QJsonObject{{"pdf", pdfPath}, {"delay_ms", delay}}).toJson()) > 0;
+        };
+        QVERIFY(writeFixture(60));
+        const auto stub = QDir(QCoreApplication::applicationDirPath()).filePath("office_converter_stub"
+#ifdef Q_OS_WIN
+            ".exe"
+#endif
+        );
+        qputenv("CPS_OFFICE_EXECUTABLE", stub.toUtf8());
+        OfficePreview conversion;
+        QSignalSpy ready(&conversion, &OfficePreview::ready), failed(&conversion, &OfficePreview::failed);
+        int ticks = 0;
+        QTimer responsive; responsive.setInterval(5);
+        connect(&responsive, &QTimer::timeout, [&] { ++ticks; }); responsive.start();
+        conversion.start(officePath);
+        const auto temporary = conversion.temporaryPath();
+        QVERIFY(conversion.busy()); QVERIFY(!temporary.isEmpty());
+        QTRY_COMPARE_WITH_TIMEOUT(ready.size(), 1, 5000);
+        QVERIFY(ticks > 2); QCOMPARE(failed.size(), 0);
+        DocumentPreview document; QVERIFY(document.load(ready.at(0).at(0).toString()));
+        QCOMPARE(document.pageCount(), 2); QVERIFY(document.page(0) != document.page(1));
+        conversion.cancel(); QVERIFY(!QFileInfo::exists(temporary));
+        QVERIFY(writeFixture(1000)); conversion.start(officePath);
+        const auto stale = conversion.temporaryPath();
+        conversion.cancel(); QVERIFY(!QFileInfo::exists(stale));
+        QVERIFY(writeFixture(0)); conversion.start(officePath);
+        QTRY_COMPARE_WITH_TIMEOUT(ready.size(), 2, 5000);
+        QTest::qWait(1100); QCOMPARE(ready.size(), 2);
+        conversion.cancel();
+        qputenv("CPS_OFFICE_EXECUTABLE", "missing-converter");
+        conversion.start(officePath); QTRY_COMPARE(failed.size(), 1);
+        QVERIFY(failed.at(0).at(0).toString().contains(QStringLiteral("LibreOffice")));
+        qputenv("CPS_OFFICE_EXECUTABLE", stub.toUtf8());
+        { QFile corrupt(officePath); QVERIFY(corrupt.open(QIODevice::WriteOnly)); corrupt.write("not a document"); }
+        conversion.start(officePath); QTRY_COMPARE_WITH_TIMEOUT(failed.size(), 2, 5000);
+        QVERIFY(conversion.temporaryPath().isEmpty());
+        for (const auto *suffix : {"doc", "docx", "ppt", "pptx", "xls", "xlsx"})
+            QVERIFY(OfficePreview::supports(QString("file.") + suffix));
+        QVERIFY(!OfficePreview::supports("file.pdf"));
+    }
+    void officeDocumentsRealPreview_data() {
+        QTest::addColumn<QString>("suffix");
+        for (const auto *suffix : {"doc", "docx", "ppt", "pptx", "xls", "xlsx"}) QTest::newRow(suffix) << QString(suffix);
+    }
+    void officeDocumentsRealPreview() {
+        const auto fixtures = qEnvironmentVariable("CPS_OFFICE_FIXTURES");
+        if (fixtures.isEmpty()) QSKIP("Set CPS_OFFICE_FIXTURES to the generated real Office fixture directory");
+        QFETCH(QString, suffix);
+        const auto original = QDir(fixtures).filePath(QStringLiteral("中文 空格.") + suffix);
+        QFile source(original); QVERIFY(source.open(QIODevice::ReadOnly)); const auto bytes = source.readAll(); source.close();
+        OfficePreview conversion;
+        QSignalSpy ready(&conversion, &OfficePreview::ready), failed(&conversion, &OfficePreview::failed);
+        conversion.start(original);
+        QTRY_VERIFY_WITH_TIMEOUT(!ready.isEmpty() || !failed.isEmpty(), 100000);
+        QVERIFY2(failed.isEmpty(), failed.isEmpty() ? "" : qPrintable(failed.at(0).at(0).toString()));
+        QCOMPARE(ready.size(), 1);
+        DocumentPreview preview; QVERIFY2(preview.load(ready.at(0).at(0).toString()), qPrintable(preview.error()));
+        QCOMPARE(preview.pageCount(), 2);
+        const auto shape = preview.pageSize(0);
+        if (suffix.startsWith("ppt")) QVERIFY(shape.width() > shape.height());
+        else QVERIFY(shape.width() < shape.height());
+        QVERIFY(!preview.page(0).isNull()); QVERIFY(!preview.page(1).isNull());
+        QVERIFY(preview.page(0) != preview.page(1));
+        QVERIFY(source.open(QIODevice::ReadOnly)); QCOMPARE(source.readAll(), bytes);
+        const auto temp = conversion.temporaryPath(); conversion.cancel(); QVERIFY(!QFileInfo::exists(temp));
+    }
+    void officeStudentPreviewAndReplacement() {
+        const auto fixtures = qEnvironmentVariable("CPS_OFFICE_FIXTURES");
+        if (fixtures.isEmpty()) QSKIP("Real Office fixtures not configured");
+        BackendDirectory root;
+        StudentWindow student({root.path(), 20, false, true}); student.resize(1180, 820); student.show();
+        auto *proof = dynamic_cast<PrintProof *>(student.findChild<QWidget *>("printProof")); QVERIFY(proof);
+        const auto doc = QDir(fixtures).filePath(QStringLiteral("中文 空格.docx"));
+        student.setDocument(doc);
+        QVERIFY(!student.findChild<QPushButton *>("payOrder")->isEnabled());
+        QTRY_COMPARE_WITH_TIMEOUT(proof->documentPages(), 2, 100000);
+        QCOMPARE(student.findChild<QSpinBox *>("orderPages")->value(), 2);
+        QVERIFY(proof->currentPaperSize().width() < proof->currentPaperSize().height());
+        QVERIFY(!student.findChild<QSpinBox *>("orderPages")->isEnabled());
+        proof->openReader(); auto *reader = student.findChild<QDialog *>("documentReader"); QVERIFY(reader);
+        QVERIFY(!reader->findChild<QLabel *>("readerImage")->pixmap().isNull());
+        reader->findChild<QPushButton *>("readerNext")->click();
+        QVERIFY(reader->findChild<QLabel *>("readerPageCount")->text().contains("2 / 2"));
+        const auto evidence = qEnvironmentVariable("CPS_GUI_EVIDENCE_DIR");
+        if (!evidence.isEmpty()) { QDir().mkpath(evidence); QVERIFY(reader->grab().save(QDir(evidence).filePath("office-word-reader.png"))); }
+        student.setDocument(QDir(fixtures).filePath(QStringLiteral("中文 空格.pptx")));
+        QVERIFY(!reader->isVisible());
+        QTRY_COMPARE_WITH_TIMEOUT(proof->documentPages(), 2, 100000);
+        QVERIFY(proof->currentPaperSize().width() > proof->currentPaperSize().height());
+        const auto settings = proof->specification();
+        auto *rotate = student.findChild<QPushButton *>("rotateProof"); QVERIFY(rotate && rotate->isEnabled());
+        rotate->click(); QCOMPARE(proof->previewRotation(), 90);
+        QVERIFY(proof->currentPaperSize().width() < proof->currentPaperSize().height());
+        QCOMPARE(proof->specification(), settings); QCOMPARE(proof->documentPages(), 2);
+        for (int i = 0; i < 3; ++i) rotate->click();
+        QCOMPARE(proof->previewRotation(), 0);
+        proof->openReader(); auto *slideReader = student.findChild<QDialog *>("documentReader"); QVERIFY(slideReader);
+        auto *slideImage = slideReader->findChild<QLabel *>("readerImage"); QVERIFY(slideImage);
+        QVERIFY(slideImage->pixmap().width() > slideImage->pixmap().height());
+        const auto page = proof->renderedPage(0);
+        QVERIFY(std::abs(double(page.width()) / page.height() - double(slideImage->pixmap().width()) / slideImage->pixmap().height()) < .02);
+        if (!evidence.isEmpty()) {
+            QTest::qWait(120);
+            QVERIFY(slideReader->grab().save(QDir(evidence).filePath("office-ppt-reader.png")));
+            slideReader->close(); QTest::qWait(50);
+            QVERIFY(student.grab().save(QDir(evidence).filePath("office-ppt-desk.png")));
+        }
+        student.setDocument(QDir(fixtures).filePath(QStringLiteral("中文 空格.pptx")));
+        student.findChild<QPushButton *>("removeFile")->click();
+        QTest::qWait(200); QCOMPARE(proof->documentPages(), 0);
+        QVERIFY(student.findChild<QSpinBox *>("orderPages")->isEnabled());
+        student.setDocument(doc);
+        student.setDocument(QDir(fixtures).filePath(QStringLiteral("中文 空格.xlsx")));
+        QTRY_COMPARE_WITH_TIMEOUT(proof->documentPages(), 2, 100000);
+        QVERIFY(student.findChild<QLabel *>("fileName")->toolTip().endsWith(".xlsx"));
+        student.close(); QTRY_VERIFY(!student.isVisible());
+    }
+    void previewPreservesMixedPageDirections() {
+        QTemporaryDir root; QVERIFY(root.isValid());
+        const auto path = QDir(root.path()).filePath("mixed.pdf");
+        { QPdfWriter pdf(path); pdf.setPageSize(QPageSize(QPageSize::A4));
+          QPainter painter(&pdf); painter.fillRect(0, 0, pdf.width(), pdf.height(), Qt::red);
+          pdf.setPageOrientation(QPageLayout::Landscape); QVERIFY(pdf.newPage());
+          painter.fillRect(0, 0, pdf.width(), pdf.height(), Qt::blue); }
+        PrintProof proof; proof.resize(1100, 650); proof.setMotion(false);
+        proof.setSpecification("Mixed", 2, 1, false, true, false, true);
+        QVERIFY(proof.loadDocument(path)); proof.show();
+        QVERIFY(proof.currentPaperSize().width() < proof.currentPaperSize().height());
+        proof.stepPage(1);
+        QVERIFY(proof.currentPaperSize().width() > proof.currentPaperSize().height());
+        const auto original = proof.renderedPage(1);
+        proof.rotatePreview(); QVERIFY(proof.currentPaperSize().width() < proof.currentPaperSize().height());
+        for (int i = 0; i < 3; ++i) proof.rotatePreview();
+        QCOMPARE(proof.renderedPage(1), original);
+        proof.openReader(); auto *reader = proof.findChild<QDialog *>("documentReader"); QVERIFY(reader);
+        auto *image = reader->findChild<QLabel *>("readerImage"); QVERIFY(image);
+        QVERIFY(image->pixmap().width() > image->pixmap().height());
+        const auto ratio = double(image->pixmap().width()) / image->pixmap().height();
+        reader->resize(800, 700); QTest::qWait(60);
+        QVERIFY(std::abs(double(image->pixmap().width()) / image->pixmap().height() - ratio) < .01);
+        reader->findChild<QPushButton *>("readerPrevious")->click();
+        QVERIFY(image->pixmap().width() < image->pixmap().height());
+        proof.clearDocument(); QVERIFY(!reader->isVisible());
+    }
     void editorialMotionRetargeting() {
         PaperTransition motion(nullptr);
         motion.retarget(0., 1.);
@@ -188,6 +349,14 @@ private slots:
     }
     void editorialReceiptCodes() {
         QTemporaryDir root; QVERIFY(root.isValid());
+        Q_INIT_RESOURCE(editorial_assets);
+        ReceiptCodePanel defaults(root.path(), true);
+        auto *defaultCode = defaults.findChild<QLabel *>("paymentReceiptCode");
+        for (const QString &method : {QString("wechat"), QString("alipay")}) {
+            defaults.setMethod(method);
+            QVERIFY(defaultCode->property("configured").toBool());
+            QCOMPARE(defaultCode->property("sourcePath").toString(), ":/editorial/payment-codes/" + method + ".jpg");
+        }
         ReceiptCodePanel panel(root.path());
         panel.setMethod("wechat");
         auto *code = panel.findChild<QLabel *>("paymentReceiptCode");
@@ -199,6 +368,8 @@ private slots:
         QImage alipay(120, 80, QImage::Format_RGB32); alipay.fill(Qt::blue);
         QVERIFY(wechat.save(root.filePath("wechat.png")));
         QVERIFY(alipay.save(root.filePath("alipay.png")));
+        defaults.setMethod("wechat");
+        QCOMPARE(defaultCode->property("sourcePath").toString(), root.filePath("wechat.png"));
         panel.setMethod("wechat");
         QVERIFY(code->property("configured").toBool());
         QCOMPARE(code->pixmap().toImage().pixelColor(20, 20), QColor(Qt::green));
@@ -212,6 +383,8 @@ private slots:
         QVERIFY(code->property("sourcePath").toString().isEmpty());
         QCOMPARE(title->text(), QStringLiteral("校园卡支付"));
         { QFile broken(root.filePath("wechat.png")); QVERIFY(broken.open(QIODevice::WriteOnly)); broken.write("invalid image"); }
+        defaults.setMethod("wechat");
+        QVERIFY(!defaultCode->property("configured").toBool());
         panel.setMethod("wechat");
         QVERIFY(!code->property("configured").toBool()); // never leave another provider's image on screen
         QVERIFY(QFile::remove(root.filePath("wechat.png")));

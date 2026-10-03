@@ -35,7 +35,7 @@ Windows：
 .\campus-print.exe --data-dir .\runtime
 ```
 
-上述默认打开老板端；学生端使用 `--role student`，或 Windows 双击包内 `start-student.vbs` 静默启动。两端传入相同 `--data-dir` 才共享队列。收款图片在该数据目录的 `payment-codes/` 下配置，不随通用发布包分发；真实码扫码转账与应用内模拟确认的边界见交接文档。
+上述默认打开老板端；学生端使用 `--role student`，或 Windows 双击包内 `start-student.vbs` 静默启动。两端传入相同 `--data-dir` 才共享队列。发布包自带用户授权公开的两张收款码；该数据目录的 `payment-codes/` 可覆盖默认图片，换收款人需分别配置微信和支付宝。真实码扫码转账与应用内模拟确认的边界见交接文档。
 
 macOS：
 
@@ -63,3 +63,6 @@ macOS：
 
 关闭 GUI 后后台仍存在。先按 [清理说明](clean-up.md) 停止对应数据目录的后台，确认退出后再删除发布目录和运行数据。
 源代码、构建产物与本地数据的清理边界见 [clean-up.md](clean-up.md)。
+## Office 文档分发
+
+Word/PPT/Excel 预览须携带完整 LibreOffice 转换器或明确依赖系统安装。打包与六格式独立运行验收见 [Office 预览部署](office-preview.md)；轻量 PDF-only 包不能标为完整 Office 预览版。

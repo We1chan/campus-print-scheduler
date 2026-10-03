@@ -45,6 +45,8 @@ def main():
     print(f"Verified {len(manifest['files'])} file hashes for {manifest['source_commit']}", flush=True)
     root = Path(__file__).resolve().parents[1]
     subprocess.run([sys.executable, str(root / "tests" / "package_smoke.py"), "--package-dir", str(package)], check=True)
+    if manifest.get("office_preview_bundled"):
+        subprocess.run([sys.executable, str(root / "tests" / "office_package_smoke.py"), "--package-dir", str(package)], check=True)
     binaries = package if sys.platform == "win32" else package / "CampusPrint.app" / "Contents" / "MacOS"
     executable = binaries / ("print-supervisor.exe" if sys.platform == "win32" else "print-supervisor")
     env = {key: value for key, value in os.environ.items() if not key.startswith(("QT_", "QML", "DYLD_")) and key != "QTDIR"}

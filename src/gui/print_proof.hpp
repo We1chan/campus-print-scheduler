@@ -57,6 +57,8 @@ class PrintProof : public QWidget {
         sheet_ = 0;
         back_ = false;
         turn_ = 0;
+        rotation_ = 0;
+        refreshPaperShapes();
         update();
         return ok;
     }
@@ -68,11 +70,29 @@ class PrintProof : public QWidget {
         sheet_ = 0;
         back_ = false;
         turn_ = 0;
+        rotation_ = 0;
+        paperRatios_.fill(0.);
+        positionActions();
         update();
     }
     int documentPages() const { return document_.pageCount(); }
+    void setPreviewMessage(const QString &message) {
+        clearDocument();
+        document_.setMessage(message);
+        update();
+    }
     QString previewError() const { return document_.error(); }
-    QImage renderedPage(int index) { return document_.page(index); }
+    QImage renderedPage(int index) { return previewPage(index); }
+    QSizeF currentPaperSize() const { return paperPlacements(spread_)[2].size; }
+    int previewRotation() const { return rotation_ * 90; }
+    void rotatePreview() {
+        closeReaders();
+        rotation_ = (rotation_ + 1) % 4;
+        paperCache_.clear();
+        refreshPaperShapes();
+        update();
+        if (changed) changed();
+    }
     void setSpecification(const QString &title, int pages, int copies, bool a3, bool color, bool duplex,
                           bool chosen) {
         if (pages_ != pages || color_ != color || duplex_ != duplex || chosen_ != chosen)
@@ -89,6 +109,7 @@ class PrintProof : public QWidget {
         sheet_ = std::min(sheet_, sheetCount() - 1);
         if (!duplex_)
             setBack(false);
+        refreshPaperShapes();
         describe();
         update();
         if (changed)
@@ -96,6 +117,7 @@ class PrintProof : public QWidget {
     }
     void setBack(bool back) {
         back_ = back && duplex_;
+        refreshPaperShapes();
         animate(turning_, turn_, back_ ? 1. : 0.);
         describe();
         if (changed)
@@ -121,6 +143,7 @@ class PrintProof : public QWidget {
     }
     void stepPage(int dir) {
         sheet_ = std::clamp(sheet_ + dir, 0, sheetCount() - 1);
+        refreshPaperShapes();
         describe();
         update();
         if (changed)
@@ -163,6 +186,12 @@ class PrintProof : public QWidget {
         align_ = align;
         align_->setParent(this);
         align_->show();
+        positionActions();
+    }
+    void attachRotation(QPushButton *rotate) {
+        rotate_ = rotate;
+        rotate_->setParent(this);
+        rotate_->show();
         positionActions();
     }
     std::function<void()> changed;
@@ -233,7 +262,7 @@ class PrintProof : public QWidget {
         auto index = std::make_shared<int>(currentPage());
         const auto refresh = [this, index, image, count, prev, next, zoom, scroll] {
             const bool blank = *index >= pages_;
-            QImage rendered = blank ? QImage() : chosen_ ? document_.page(*index) : sample(*index);
+            QImage rendered = blank ? QImage() : chosen_ ? previewPage(*index) : sample(*index);
             if (rendered.isNull()) {
                 image->clear();
                 image->setText(blank ? QStringLiteral("背面留白") : document_.error().isEmpty() ? QStringLiteral("这一页不在原文件中")
@@ -246,7 +275,7 @@ class PrintProof : public QWidget {
                 const QSize fitted = rendered.size().scaled(
                     std::max(240, scroll->viewport()->width() - 72),
                     std::max(240, scroll->viewport()->height() - 48), Qt::KeepAspectRatio);
-                const int w = zoom->isChecked() ? 1000 : std::min(700, fitted.width());
+                const int w = zoom->isChecked() ? 1000 : std::min(rendered.width() > rendered.height() ? 1100 : 700, fitted.width());
                 image->setPixmap(QPixmap::fromImage(rendered).scaledToWidth(w, Qt::SmoothTransformation));
                 image->resize(image->pixmap().size());
             }
@@ -333,6 +362,11 @@ class PrintProof : public QWidget {
         text(p, {accentX, 23, 370, 78}, QStringLiteral("印出来。"), 60, QColor("#D63D29"), true, true);
         text(p, {44, 109, 750, 42}, QStringLiteral("拖入文件，在纸上调整你的打印方式。"), 24,
              QColor("#667080"));
+        p.save();
+        p.resetTransform();
+        const qreal paperScale = std::min(width() / 1218., height() / 788.);
+        p.translate((width() - 1218. * paperScale) / 2., (height() - 788. * paperScale) / 2.);
+        p.scale(paperScale, paperScale);
         const auto papers = paperPlacements(spread_);
         drawPaper(p, papers[0].center, papers[0].size, papers[0].angle, std::max(0, currentPage() - 1), 0);
         drawPaper(p, papers[1].center, papers[1].size, papers[1].angle,
@@ -340,6 +374,7 @@ class PrintProof : public QWidget {
         const qreal squash = std::max(.06, std::abs(std::cos(turn_ * 3.141592653589793)));
         drawPaper(p, papers[2].center, {papers[2].size.width() * squash, papers[2].size.height()},
                   papers[2].angle, currentPage() + (chosen_ ? 0 : 1), 2);
+        p.restore();
         text(p, {470, 752, 590, 27},
              chosen_ && currentPage() >= pages_ ? QStringLiteral("末张背面留白 · 双击放大")
              : chosen_ ? QStringLiteral("第 %1 / %2 页 · %3 · 双击放大")
@@ -352,14 +387,45 @@ class PrintProof : public QWidget {
 
   private:
     struct PaperPlacement { QPointF center; QSizeF size; qreal angle; };
+    QImage previewPage(int index) {
+        const auto page = document_.page(index);
+        return rotation_ == 0 || page.isNull() ? page : page.transformed(QTransform().rotate(rotation_ * 90));
+    }
+    void refreshPaperShapes() {
+        paperRatios_.fill(0.);
+        if (document_.loaded()) {
+            const std::array<int, 3> indices{std::max(0, currentPage() - 1),
+                std::min(document_.pageCount() - 1, currentPage() + 1),
+                std::min(document_.pageCount() - 1, currentPage())};
+            for (int i = 0; i < 3; ++i) {
+                const auto size = document_.pageSize(indices[i]);
+                if (!size.isEmpty()) paperRatios_[i] = rotation_ % 2 ? size.height() / size.width() : size.width() / size.height();
+            }
+        }
+        positionActions();
+    }
     std::array<PaperPlacement, 3> paperPlacements(qreal spread) const {
         const qreal scale = a3_ ? 1.06 : 1.;
-        return {{{{282 - spread * 60 - alignment_ * 30, 476 - alignment_ * 12 - spread * 40 * (1. - alignment_)},
+        std::array<PaperPlacement, 3> result{{{{282 - spread * 60 - alignment_ * 30, 476 - alignment_ * 12 - spread * 40 * (1. - alignment_)},
                   {340 - spread * 30, 555 - alignment_ * 15 - spread * 30}, (1. - alignment_) * 11.},
                  {{1029 + spread * 20 + alignment_ * 25, 462 + alignment_ * 2 - spread * 40 * (1. - alignment_)},
                   {342 - spread * 30, 500 + alignment_ * 40 - spread * 30}, (1. - alignment_) * 9.},
                  {{654, 432 + alignment_ * 32},
                   {(438 - spread * 60) * scale, (610 - alignment_ * 70 - spread * 30) * scale}, (1. - alignment_) * -8.}}};
+        for (int i = 0; i < 3; ++i) {
+            const qreal ratio = paperRatios_[i];
+            if (ratio <= 0.) continue;
+            if (ratio > 1.) {
+                const qreal w = i == 2 ? (620 - spread * 65) * scale : 440 - spread * 30;
+                result[i].size = {w, w / ratio};
+                result[i].center.setY(i == 2 ? 478 + alignment_ * 16 : 460 - spread * 28);
+            } else {
+                const auto original = result[i].size;
+                const qreal h = std::min(original.height(), original.width() / ratio);
+                result[i].size = {h * ratio, h};
+            }
+        }
+        return result;
     }
     bool onPaper(QPointF point, qreal spread) const {
         for (const auto &paper : paperPlacements(spread)) {
@@ -374,7 +440,9 @@ class PrintProof : public QWidget {
     }
     void hoverAt(QPointF local) {
         if (width() <= 0 || height() <= 0) return;
-        const QPointF point(local.x() * 1218. / width(), local.y() * 788. / height());
+        const qreal scale = std::min(width() / 1218., height() / 788.);
+        const QPointF point((local.x() - (width() - 1218. * scale) / 2.) / scale,
+                            (local.y() - (height() - 788. * scale) / 2.) / scale);
         hoverPosition_ = point;
         if (!motion_ || expanded_) return;
         // Keep the complete motion envelope active after entry, so moving paper
@@ -411,8 +479,11 @@ class PrintProof : public QWidget {
         p.rotate(angle);
         const QRectF box(-size.width() / 2, -size.height() / 2, size.width(), size.height());
         const qreal scale = a3_ ? 1.06 : 1.;
-        const QSizeF base = slot == 0 ? QSizeF(340, 555) : slot == 1 ? QSizeF(342, 540)
+        QSizeF base = slot == 0 ? QSizeF(340, 555) : slot == 1 ? QSizeF(342, 540)
                                         : QSizeF(438 * scale, 610 * scale);
+        const auto ratio = paperRatios_[slot];
+        if (ratio > 1.) { const qreal w = slot == 2 ? 620 * scale : 440.; base = {w, w / ratio}; }
+        else if (ratio > 0.) { const qreal h = std::min(base.height(), base.width() / ratio); base = {h * ratio, h}; }
         // Resolve content and texture once, outside the per-frame transformation.
         // Quantize the reference density, not animated dimensions, to keep cache hits stable.
         const qreal density = qBound(.5, std::ceil(devicePixelRatioF() *
@@ -434,7 +505,8 @@ class PrintProof : public QWidget {
             const int cost = std::max(1, raster.width() * raster.height() * 4 / 1024);
             paperCache_.insert(key, sprite, cost);
         }
-        p.drawPixmap(box.adjusted(-16, -10, 16, 32), *sprite, QRectF(QPointF(), sprite->size()));
+        const qreal sx = size.width() / base.width(), sy = size.height() / base.height();
+        p.drawPixmap(box.adjusted(-16 * sx, -10 * sy, 16 * sx, 32 * sy), *sprite, QRectF(QPointF(), sprite->size()));
         p.restore();
     }
     void paintPaperSurface(QPainter &p, const QRectF &box, int page, bool selected) {
@@ -449,7 +521,7 @@ class PrintProof : public QWidget {
         if (page >= pages_)
             text(p, box.adjusted(30, 0, -30, 0), QStringLiteral("背面留白"), 22, QColor("#8A8F98"));
         else
-            content = chosen_ ? document_.page(page) : sample(page);
+            content = chosen_ ? previewPage(page) : sample(page);
         if (!content.isNull()) {
             if (!color_)
                 content = content.convertToFormat(QImage::Format_Grayscale8);
@@ -583,12 +655,13 @@ class PrintProof : public QWidget {
         return page;
     }
     void positionActions() {
-        const qreal sx = width() / 1218., sy = height() / 788.;
+        const qreal scale = std::min(width() / 1218., height() / 788.);
+        const qreal x = (width() - 1218. * scale) / 2., y = (height() - 788. * scale) / 2.;
         int row = 0;
-        for (auto *b : {unfold_, flip_, align_})
+        for (auto *b : {unfold_, flip_, align_, rotate_})
             if (b)
-                b->setGeometry(qRound(873 * sx), qRound((289 + row++ * 66) * sy), qRound(61 * sx),
-                               qRound(64 * sy));
+                b->setGeometry(qRound(x + (paperRatios_[2] > 1. ? 980 : 873) * scale),
+                               qRound(y + (289 + row++ * 66) * scale), qRound(61 * scale), qRound(64 * scale));
     }
     void bind(QVariantAnimation &a, qreal &value) {
         a.setDuration(420);
@@ -631,13 +704,15 @@ class PrintProof : public QWidget {
     QPixmap desk_, campus_, deskLayer_;
     QCache<QString, QPixmap> paperCache_{32768}; // 32 MiB, bounded independently of document length
     QPixmap frontShadow_, rearShadow_;
+    std::array<qreal, 3> paperRatios_{};
     PaperTransition spreading_;
     QVariantAnimation aligning_, turning_;
     QPushButton *flip_ = nullptr;
     QPushButton *unfold_ = nullptr;
     QPushButton *align_ = nullptr;
+    QPushButton *rotate_ = nullptr;
     QString title_;
-    int pages_ = 8, copies_ = 1, sheet_ = 0;
+    int pages_ = 8, copies_ = 1, sheet_ = 0, rotation_ = 0;
     qreal spread_ = 0., alignment_ = 0., turn_ = 0.;
     QPointF hoverPosition_{-1000, -1000};
     bool a3_ = false, color_ = true, duplex_ = true, chosen_ = false, back_ = false, expanded_ = false,

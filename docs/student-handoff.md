@@ -19,6 +19,7 @@ Scope: Qt Widgets 学生客户端「纸间」，分支 `feat/print-editorial`。
 | `src/gui/print_proof.hpp` | 桌面、纸叠位置、悬停区域、展开保持、单双面与页序、放大阅读器、图层缓存 |
 | `src/gui/paper_transition.hpp` | 展开 Hermite 插值、反向时继承速度、端点约束；已有曲线与时长由用户验收 |
 | `src/gui/document_preview.{hpp,cpp}` | GUI 进程内读取 PDF/图片/UTF-8 文本，动态加载 PDFium C ABI；源字节存活至文档关闭，调用在 GUI 线程 |
+| `src/gui/office_preview.{hpp,cpp}`、`docs/office-preview.md` | Office 本地异步转换、独立进程及临时目录、取消清理、完整引擎打包和六格式真实验收 |
 | `src/gui/editorial_chrome.{hpp,cpp}` | 无系统标题栏、主题窗口按钮、拖动与边缘调整、Windows 最大化工作区、对话框公共样式 |
 | `src/gui/editorial_surface.hpp` | 主页面背景；打印设置竖分隔线仅在下单页绘制 |
 | `src/gui/editorial_color_switch.hpp` | 半透明黑白/彩色切换条，保留独立键盘焦点与原 checkbox 同步 |
@@ -35,7 +36,7 @@ Scope: Qt Widgets 学生客户端「纸间」，分支 `feat/print-editorial`。
 - 视觉：白色纸张、朱红强调、墨蓝文字、暖灰背景。订单进度/取件码/完成及空闲状态使用学生主题；表格选中行为和业务状态保持原语义。
 - 窗口：Windows GUI 子系统及品牌 ICO；品牌、导航、学号与窗口按钮共用顶部一行；后台进程可继续执行且无可见控制台。
 - 纸叠：悬停自动展开，离开复位；点击展开固定姿态，工具按钮区域保持悬停；减少动效停下动画并落到最终状态。翻页保持单双面映射，奇数末张背面留白。
-- 预览：替换/移除文档或变更相关规格关闭旧阅读器；支持适合整页、125%、滚动和键盘翻页。Office 文件只登记信息，提示先导出 PDF，不伪造内容。
+- 预览：替换/移除文档或变更相关规格关闭旧阅读器；支持适合整页、125%、滚动和键盘翻页。Word、PPT、Excel 由本地 LibreOffice 异步转换后真实预览；部署须按 `office-preview.md` 提供引擎。横向页面自动适配，第四个工具按钮只旋转预览。
 - 文档：文件上限 64 MiB，PDF 1–1000 页；文档内容仅由 GUI 读取，后端接收订单元数据。上传入口在本项目表示选择本地文件。
 - 支付：三个支付品牌图标，微信/支付宝收款图片及放大展示，校园卡终端占位。图片仅作展示，支付、订单状态与打印输出仍由模拟后端驱动。
 
@@ -60,7 +61,7 @@ Scope: Qt Widgets 学生客户端「纸间」，分支 `feat/print-editorial`。
 
 同名 PNG 优先；若 PNG 存在但损坏，显示未配置状态，不隐式退到 JPEG。换格式时移走过期同名 PNG。单文件不超过 8 MiB，宽高各不超过 4096。保留整张图比例与二维码留白。替换后重新选择支付方式或重新打开支付窗口刷新。
 
-源码根目录 VBS 使用 `runtime/editorial-shop`；发布包 `start-student.vbs` 使用 Qt 用户数据目录。两者不是同一个目录。共享老板/学生状态时向两端传入相同的绝对 `--data-dir`。通用包、Qt resources 和仓库文档截图均不含真实收款图，部署操作者自行配置。若明确选择公开收款码，将其作为单独发布决策处理；本分支的交付范围是代码与占位配置。
+源码根目录 VBS 使用 `runtime/editorial-shop`；发布包 `start-student.vbs` 使用 Qt 用户数据目录。两者不是同一个目录。共享老板/学生状态时向两端传入相同的绝对 `--data-dir`。用户已授权两张真实收款码公开提交，原图位于 `assets/editorial/payment-codes/` 并编入 Qt resources，发布包自带默认展示。数据目录中对应方式的 PNG/JPEG 优先；文件存在但损坏时显示配置错误，不退到默认收款人。换收款人必须分别覆盖两种方式。真实到账仍未接入。
 
 ## 从源码构建
 
@@ -93,7 +94,7 @@ $env:CPS_GUI_EVIDENCE_DIR = (Join-Path (Get-Location) 'runtime/native-gui-eviden
 
 性能用例直接驱动展开目标，在该用例的预览组件上关闭自动 hover 事件，防止操作者真实鼠标在窗口出现时改写动画目标；生产代码保持 hover，专门的 `editorialHoverSpreadsAndReturns` 验证完整悬停行为。原生 CI 日志同时写入标准输出与 evidence 文件，失败时可直接定位用例。
 
-`CPS_GUI_RECEIPT_DIRECTORY` 可让 `editorialReceiptCodes` 额外读取实际本地收款码；生成截图保存在被忽略的 `runtime/`，不用于公开 CI evidence。常规测试用临时目录的合成色块，分别覆盖图片源、缺失、损坏、比例和放大对话框。
+`editorialReceiptCodes` 检查默认资源能读取、本地配置优先、损坏配置不能退回默认收款人，并用临时色块检查缺失、比例和放大对话框。`CPS_GUI_RECEIPT_DIRECTORY` 可额外读取本地配置并保存截图；截图在被忽略的 `runtime/`。默认真实码已经包含在源码及发布资源，不能将它描述为未公开。
 
 Windows 清理测试目录时，coordinator 的锁文件消失先于操作系统释放重定向日志句柄。`process_integration.py` 对本次临时目录的 WinError 32 做最多 5 秒的释放等待；其他错误立即失败，超过期限仍失败。不能用锁文件消失推断所有文件句柄已经关闭。
 

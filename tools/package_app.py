@@ -15,6 +15,9 @@ def main():
     parser.add_argument("--bin-dir", type=Path, required=True)
     parser.add_argument("--qt-bin", type=Path, required=True)
     parser.add_argument("--output-dir", type=Path, required=True)
+    parser.add_argument("--office-dir", type=Path,
+                        help="Complete LibreOffice root (Windows) or LibreOffice.app (macOS); bundle local Office preview")
+    parser.add_argument("--preview-fixtures", type=Path, help="Generated Office acceptance examples (all six formats)")
     args = parser.parse_args()
     source = args.bin_dir.resolve()
     output = args.output_dir.resolve()
@@ -27,6 +30,11 @@ def main():
         parser.error("Packaging currently targets Windows and macOS")
     qt_bin = args.qt_bin.resolve()
     windows = sys.platform == "win32"
+    office = args.office_dir.resolve() if args.office_dir else None
+    if office:
+        engine = office / ("program/soffice.com" if windows else "Contents/MacOS/soffice")
+        if not engine.is_file():
+            parser.error("--office-dir must contain a complete LibreOffice installation")
     suffix = ".exe" if windows else ""
     names = ["campus-print", "print-coordinator", "print-supervisor", "print-worker", "scheduler-replay", "shop-experiments"]
     deploy = qt_bin / ("windeployqt.exe" if windows else "macdeployqt")
@@ -49,6 +57,11 @@ def main():
     if not license_dirs:
         parser.error("PDFium redistribution licenses are missing from .tools/pdfium")
     shutil.copytree(license_dirs[0], output / "licenses" / "pdfium")
+    if office:
+        # Keep the full engine, filters, fonts and licenses; copying just the
+        # executable does not create a usable Office converter.
+        office_target = destination / "office" if windows else destination / "office" / "LibreOffice.app"
+        shutil.copytree(office, office_target, symlinks=not windows)
     env = dict(os.environ)
     env["PATH"] = str(qt_bin) + os.pathsep + env.get("PATH", "")
     if windows:
@@ -68,7 +81,7 @@ def main():
         subprocess.run(["/usr/bin/codesign", "--verify", "--deep", "--strict", str(bundle)], check=True)
     root = Path(__file__).resolve().parents[1]
     shutil.copy2(root / "docs" / "release.md", output / "README-release.md")
-    for name in ("student-handoff.md", "editorial-frontend.md", "interfaces.md", "team.md"):
+    for name in ("student-handoff.md", "editorial-frontend.md", "office-preview.md", "interfaces.md", "team.md"):
         shutil.copy2(root / "docs" / name, output / name)
     # Keep the design evidence links usable in the redistributed document.
     image_output = output / "images"
@@ -87,12 +100,17 @@ shell.Run Chr(34) & fs.BuildPath(root, "campus-print.exe") & Chr(34) & " --role 
         shutil.copy2(root / "assets" / "editorial" / "paperroom.ico", output / "paperroom.ico")
     shutil.copy2(root / "docs" / "clean-up.md", output / "clean-up.md")
     shutil.copytree(root / "examples", output / "examples")
+    if args.preview_fixtures:
+        fixtures = output / "examples" / "office"
+        fixtures.mkdir()
+        for extension in ("doc", "docx", "ppt", "pptx", "xls", "xlsx"):
+            shutil.copy2(args.preview_fixtures / ("中文 空格." + extension), fixtures)
     commit = subprocess.run(["git", "rev-parse", "HEAD"], cwd=root, capture_output=True, text=True, check=True).stdout.strip()
     dirty = bool(subprocess.run(["git", "status", "--porcelain"], cwd=root, capture_output=True, text=True, check=True).stdout.strip())
     files = [{"path": path.relative_to(output).as_posix(), "sha256": hashlib.sha256(path.read_bytes()).hexdigest()}
              for path in sorted(output.rglob("*")) if path.is_file()]
     (output / "release-manifest.json").write_text(json.dumps(dict(schema_version=1, source_commit=commit,
-        working_tree_dirty=dirty, platform=sys.platform, files=files), indent=2), encoding="utf-8")
+        working_tree_dirty=dirty, platform=sys.platform, office_preview_bundled=bool(office), files=files), indent=2), encoding="utf-8")
     # A tarball preserves macOS executable permissions and framework symlinks.
     shutil.make_archive(str(output), archive_format, root_dir=output.parent, base_dir=output.name)
     print(output)

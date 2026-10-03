@@ -20,6 +20,7 @@ class QBoxLayout;
 
 namespace cps::gui {
 class PrintProof;
+class OfficePreview;
 struct DocumentInfo {
     QString name;
     qint64 bytes = 0;
@@ -67,6 +68,7 @@ private:
     ViewState view_;
     QStackedWidget* pages_ = nullptr;
     PrintProof* proof_ = nullptr;
+    OfficePreview* officePreview_ = nullptr;
     QPushButton* flipProof_ = nullptr;
     QBoxLayout* orderColumns_ = nullptr;
     QBoxLayout* settingsDock_ = nullptr;
@@ -111,6 +113,8 @@ private:
     Money quotedCents_ = 0;
     int quoteToken_ = 0;
     bool documentChosen_ = false;
+    bool officeRequired_ = false;
+    bool documentLoading_ = false;
     bool quoteAccepted_ = false;
     bool quotePending_ = true;
     bool closeApproved_ = false;

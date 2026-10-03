@@ -12,7 +12,8 @@
 namespace cps::gui {
 class ReceiptCodePanel : public QFrame {
 public:
-    explicit ReceiptCodePanel(const QString &directory) : directory_(directory) {
+    explicit ReceiptCodePanel(const QString &directory, bool includeDefaults = false)
+        : directory_(directory), includeDefaults_(includeDefaults) {
         setObjectName("paymentReceipt");
         setStyleSheet("QFrame#paymentReceipt{background:#F3F1EC;border:1px solid #E8E3DA;border-radius:12px;}"
                      "QLabel{background:transparent;border:none;color:#14213E;font-size:13px;}");
@@ -55,6 +56,10 @@ public:
         code_->setAccessibleName(title_->text());
         QString path = QDir(directory_).filePath(method + ".png");
         if (!QFileInfo::exists(path)) path = QDir(directory_).filePath(method + ".jpg");
+        // Explicit local files take precedence, including corrupt files. Never
+        // hide a bad shop configuration behind another recipient's bundled code.
+        if (!card && includeDefaults_ && !QFileInfo::exists(path))
+            path = ":/editorial/payment-codes/" + method + ".jpg";
         code_->setProperty("sourcePath", card ? QString() : path);
         QImage image;
         if (!card && QFileInfo(path).size() <= 8 * 1024 * 1024) {
@@ -123,6 +128,7 @@ private:
         dialog->show();
     }
     QString directory_;
+    bool includeDefaults_ = false;
     QLabel *code_ = nullptr, *title_ = nullptr, *hint_ = nullptr;
     QPushButton *enlarge_ = nullptr;
     QImage image_;
