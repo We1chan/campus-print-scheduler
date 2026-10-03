@@ -4,6 +4,7 @@
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
+#include <QProcessEnvironment>
 #include <QStandardPaths>
 #include <QUrl>
 #ifdef Q_OS_WIN
@@ -151,6 +152,11 @@ void OfficePreview::start(const QString &path) {
     // page breaks, scale and paper settings from the workbook.
     pdfPath_ = QDir(output).filePath("document.pdf");
     process_.setProgram(engine);
+    auto environment = QProcessEnvironment::systemEnvironment();
+    // LibreOffice's embedded Python otherwise rewrites signed stdlib pyc files
+    // after relocation on macOS. Keep the vendor application immutable.
+    environment.insert("PYTHONDONTWRITEBYTECODE", "1");
+    process_.setProcessEnvironment(environment);
     process_.setWorkingDirectory(root);
     process_.setArguments({"-env:UserInstallation=" + QUrl::fromLocalFile(profile).toString(QUrl::FullyEncoded),
         "--headless", "--nologo", "--nodefault", "--norestore", "--convert-to", "pdf:" + filter,

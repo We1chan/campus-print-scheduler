@@ -39,6 +39,10 @@ def main():
             if suffix.startswith("ppt") and data["width"] <= data["height"]:
                 raise RuntimeError("Deployed PPT preview lost landscape direction")
             print(suffix + ": 2 real pages rendered without SDK paths", flush=True)
+    if not windows:
+        subprocess.run(["/usr/bin/codesign", "--verify", "--deep", "--strict",
+                        str(package / "office/LibreOffice.app")], check=True)
+        print("Office vendor signature remains valid after all six imports", flush=True)
 
 
 if __name__ == "__main__":

@@ -94,6 +94,7 @@ def main():
         engine = output / "LibreOffice.app/Contents/MacOS/soffice"
         if not engine.is_file() or not os.access(engine, os.X_OK):
             raise RuntimeError("Expected one executable LibreOffice application")
+        subprocess.run(["/usr/bin/codesign", "--verify", "--deep", "--strict", str(output / "LibreOffice.app")], check=True)
         print(engine)
         print("Package engine root:", engine.parents[2])
         return

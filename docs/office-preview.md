@@ -47,6 +47,8 @@ macOS `--office-dir .tools/libreoffice/LibreOffice.app`，开发时显式设置 
 
 macOS 必须分发整个发布目录（主应用 + `office/` + 配套材料）。转换器保留独立的上游签名，不放入 Qt app 内部；使用原生 `ditto` 复制 framework 元数据、资源叉和符号链接，避免 Qt 部署工具重写内部框架或通用复制丢失原生元数据。复制前后校验转换器，并对主应用执行 `codesign --verify --deep --strict`，再在独立 runner 真实转换，不能跳过签名校验或全局关闭系统安全机制。
 
+macOS 签名回归的已确认原因：重定位后首次运行会重新生成 LibreOfficePython.framework 内已签名的 `*.pyc`，实际日志列出 `encodings`、`collections`、`re` 等缓存内容被改写。应用的转换子进程与测试输入生成均设置 `PYTHONDONTWRITEBYTECODE=1`，不修改全局环境。安装后、复制前后及独立包六格式导入后都校验上游签名；不得通过删除缓存或重新签署厂商 app 掩盖该问题。
+
 ## 可复现验收
 
 测试依赖：`python-docx==1.2.0 python-pptx==1.0.2 openpyxl==3.1.5`。生成 Word 两页、16:9 PPT 两张、Excel 指定打印区域及分页两页，并导出三个旧二进制格式。中文、空格路径作为测试输入。

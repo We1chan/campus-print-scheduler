@@ -5,6 +5,7 @@ the OOXML inputs to their legacy counterparts in an isolated temporary profile.
 No user documents or global Office profile are opened or modified.
 """
 import argparse
+import os
 from pathlib import Path
 import subprocess
 import tempfile
@@ -64,7 +65,8 @@ def main():
                 ("pptx", "ppt", "MS PowerPoint 97"), ("xlsx", "xls", "MS Excel 97")]:
             subprocess.run([str(args.office.resolve()), "-env:UserInstallation=" + Path(directory).as_uri(),
                 "--headless", "--nologo", "--norestore", "--convert-to", destination + ":" + filter_name,
-                "--outdir", str(root), str(root / (title + "." + source))], check=True, timeout=90)
+                "--outdir", str(root), str(root / (title + "." + source))],
+                env=dict(os.environ, PYTHONDONTWRITEBYTECODE="1"), check=True, timeout=90)
             if not (root / (title + "." + destination)).is_file():
                 raise RuntimeError("Legacy fixture conversion did not produce " + destination)
     print(root)
