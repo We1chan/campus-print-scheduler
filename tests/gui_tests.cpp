@@ -1141,12 +1141,16 @@ private slots:
         auto* pages = window.findChild<QSpinBox*>("jobPages");
         pages->setValue(1000); // Keep both jobs alive until explicitly cancelled.
         auto* submit = window.findChild<QPushButton*>("submitJob");
+        auto* table = window.findChild<QTableView*>("jobsTable");
+        // Native exposure does not imply a completed backend handshake.
+        // Clicking the disabled submit button otherwise silently loses a job.
+        QTRY_VERIFY_WITH_TIMEOUT(submit->isEnabled(), 15000);
         openForm(window);
         QTest::mouseClick(submit, Qt::LeftButton);
+        QTRY_COMPARE(table->model()->rowCount(), 1);
         openForm(window);
         QTest::mouseClick(submit, Qt::LeftButton);
         window.findChild<QPushButton*>("navHistory")->click();
-        auto* table = window.findChild<QTableView*>("jobsTable");
         QTRY_COMPARE(table->model()->rowCount(), 2);
         table->selectRow(0);
         auto* fault = window.findChild<QPushButton*>("injectFault");
