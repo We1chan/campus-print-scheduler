@@ -95,10 +95,14 @@ def main():
     shutil.copy2(root / "docs" / "release.md", output / "README-release.md")
     for name in ("student-handoff.md", "editorial-frontend.md", "office-preview.md", "interfaces.md", "team.md"):
         shutil.copy2(root / "docs" / name, output / name)
+    shutil.copy2(root / "docs" / "merchant-frontend.md", output / "merchant-frontend.md")
+    shutil.copy2(root / "docs" / "merchant-validation.md", output / "merchant-validation.md")
     # Keep the design evidence links usable in the redistributed document.
     image_output = output / "images"
     image_output.mkdir()
     for path in sorted((root / "docs" / "images").glob("editorial-*.png")):
+        shutil.copy2(path, image_output / path.name)
+    for path in sorted((root / "docs" / "images").glob("merchant-*.png")):
         shutil.copy2(path, image_output / path.name)
     if windows:
         (output / "start-student.vbs").write_text('''Option Explicit
@@ -107,7 +111,16 @@ Set fs = CreateObject("Scripting.FileSystemObject")
 Set shell = CreateObject("WScript.Shell")
 root = fs.GetParentFolderName(WScript.ScriptFullName)
 shell.CurrentDirectory = root
-shell.Run Chr(34) & fs.BuildPath(root, "campus-print.exe") & Chr(34) & " --role student", 1, False
+shell.Run Chr(34) & fs.BuildPath(root, "campus-print.exe") & Chr(34) & " --role student --data-dir " & Chr(34) & fs.BuildPath(root, "runtime\\shop") & Chr(34), 1, False
+''', encoding="ascii")
+        for launcher, flags in (("start-merchant.vbs", ""), ("preview-merchant.vbs", " --merchant-showcase")):
+            (output / launcher).write_text('''Option Explicit
+Dim fs, shell, root
+Set fs = CreateObject("Scripting.FileSystemObject")
+Set shell = CreateObject("WScript.Shell")
+root = fs.GetParentFolderName(WScript.ScriptFullName)
+shell.CurrentDirectory = root
+shell.Run Chr(34) & fs.BuildPath(root, "campus-print.exe") & Chr(34) & "''' + flags + ''' --data-dir " & Chr(34) & fs.BuildPath(root, "runtime\\shop") & Chr(34), 1, False
 ''', encoding="ascii")
         shutil.copy2(root / "assets" / "editorial" / "paperroom.ico", output / "paperroom.ico")
     shutil.copy2(root / "docs" / "clean-up.md", output / "clean-up.md")

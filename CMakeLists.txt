@@ -76,6 +76,10 @@ if(CPS_BUILD_QT_APPS)
     # Flat executable layout is intentional in the development scaffold.
     # GUI and child programs live together in build/<preset>/bin on every OS.
     add_library(cps_gui src/gui/event_stream.cpp src/gui/control_client.cpp src/gui/print_controller.cpp src/gui/print_window.cpp src/gui/student_window.cpp src/gui/document_preview.cpp src/gui/office_preview.cpp src/gui/preview_check.cpp src/gui/editorial_chrome.cpp)
+    target_sources(cps_gui PRIVATE src/gui/merchant_data.cpp src/gui/merchant_painter.cpp
+        src/gui/merchant_orders.cpp src/gui/merchant_devices_stats.cpp src/gui/merchant_window.cpp)
+    qt_add_resources(cps_gui merchant_assets PREFIX "/merchant" BASE "assets/merchant"
+        FILES assets/merchant/workbench.png assets/merchant/queue.png assets/merchant/devices.png assets/merchant/stats.png)
     qt_add_resources(cps_gui editorial_assets PREFIX "/editorial" BASE "assets/editorial"
         FILES assets/editorial/desk.png assets/editorial/campus.png
         assets/editorial/brand-16.png assets/editorial/brand-24.png assets/editorial/brand-32.png
@@ -116,6 +120,12 @@ if(CPS_BUILD_QT_APPS)
         endif()
         add_test(NAME gui COMMAND gui_tests -o "${CMAKE_BINARY_DIR}/gui-results.xml,junitxml" -o -,txt)
         set_tests_properties(gui PROPERTIES TIMEOUT 300 ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+
+        add_executable(merchant_tests tests/merchant_tests.cpp)
+        set_target_properties(merchant_tests PROPERTIES AUTOMOC ON)
+        target_link_libraries(merchant_tests PRIVATE cps_gui Qt6::Test cps_options)
+        add_test(NAME merchant COMMAND merchant_tests -o "${CMAKE_BINARY_DIR}/merchant-results.xml,junitxml" -o -,txt)
+        set_tests_properties(merchant PROPERTIES TIMEOUT 90 ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
 
         add_executable(runtime_state_tests tests/runtime_state_tests.cpp)
         add_executable(shop_integration_tests tests/shop_integration.cpp)

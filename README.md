@@ -23,6 +23,8 @@
 
 本分支提供「纸间」学生端：俯视纸张工作台、真实本地文档预览、无系统标题栏窗口、悬停展开、主题订单/队列与模拟支付。代理接手与部署先读 [学生端交接](docs/student-handoff.md)，视觉及性能证据见 [设计与验证](docs/editorial-frontend.md)。Windows 的学生入口为 `start-editorial.vbs` 或发布包 `start-student.vbs`；原 `start-studio-demo.cmd` 仍用于两端演示。
 
+本分支另提供按四张确认概念图实现的「纸间」店主端，默认老板入口包含订单工作台、打印队列、设备管理和营业统计。运行 `--merchant-showcase` 查看独立交互样例；真实模式继续连接共同持久后台。启动方式、实际截图、功能与协议边界见 [店主端说明](docs/merchant-frontend.md)。
+
 ```sh
 cmake --preset dev
 cmake --build --preset dev --parallel 4

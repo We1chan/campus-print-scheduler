@@ -1,5 +1,6 @@
 #include "print_window.hpp"
 #include "student_window.hpp"
+#include "merchant_window.hpp"
 #include "preview_check.hpp"
 #include "editorial_chrome.hpp"
 #include "cps/runtime/job_io.hpp"
@@ -30,6 +31,9 @@ int main(int argc, char* argv[]) {
         {"legacy-mode", "Use the original homogeneous queue for compatibility"},
         {"demo-mode", "Show availability of demonstration controls"},
         {"demo-workload", "Submit mixed demonstration orders on startup (requires --demo-mode)"},
+        {"classic-owner", "Open the previous owner console"},
+        {"merchant-showcase", "Open interactive owner sample data, without a real backend"},
+        {"merchant-capture", "Save all four rendered owner screens for visual review", "directory"},
         {"smoke-test", "Start UI and exit without submitting jobs"}});
     parser.process(app);
     if (parser.isSet("check-preview")) {
@@ -67,6 +71,15 @@ int main(int argc, char* argv[]) {
             client->setDocument(parser.value("document"));
         if (parser.isSet("smoke-test"))
             QObject::connect(client, &cps::gui::StudentWindow::backendReady, client, &QWidget::close, Qt::QueuedConnection);
+    } else if (!parser.isSet("classic-owner") && !parser.isSet("legacy-mode") && !parser.isSet("demo-workload")) {
+        auto* console = new cps::gui::MerchantWindow(options, parser.isSet("merchant-showcase"));
+        window.reset(console);
+        if (parser.isSet("merchant-capture")) {
+            QObject::connect(console, &cps::gui::MerchantWindow::backendReady, console, [console, &app, &parser] {
+                QTimer::singleShot(350, console, [console, &app, &parser] {console->captureAll(parser.value("merchant-capture")); app.quit();});
+            });
+        } else if (parser.isSet("smoke-test"))
+            QObject::connect(console, &cps::gui::MerchantWindow::backendReady, console, &QWidget::close, Qt::QueuedConnection);
     } else {
         auto* console = new cps::gui::PrintWindow(options);
         window.reset(console);

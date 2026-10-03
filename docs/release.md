@@ -37,6 +37,8 @@ Windows：
 
 上述默认打开老板端；学生端使用 `--role student`，或 Windows 双击包内 `start-student.vbs` 静默启动。两端传入相同 `--data-dir` 才共享队列。发布包自带用户授权公开的两张收款码；该数据目录的 `payment-codes/` 可覆盖默认图片，换收款人需分别配置微信和支付宝。真实码扫码转账与应用内模拟确认的边界见交接文档。
 
+`feat/merchant-editorial` 分支的默认老板入口为新的四页店主端；Windows 包提供 `start-merchant.vbs`（真实队列）和 `preview-merchant.vbs`（独立交互样例）。包内学生/店主启动脚本共享 `runtime/shop`。操作说明与原生截图见 [merchant-frontend.md](merchant-frontend.md)，旧控制台可用 `--classic-owner` 打开。
+
 macOS：
 
 ```sh
