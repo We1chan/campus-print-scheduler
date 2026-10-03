@@ -95,11 +95,13 @@ private slots:
         { QPdfWriter pdf(pdfPath); QPainter painter(&pdf); painter.fillRect(0, 0, pdf.width(), pdf.height(), Qt::red);
           QVERIFY(pdf.newPage()); painter.fillRect(0, 0, pdf.width(), pdf.height(), Qt::blue); }
         const auto officePath = QDir(root.path()).filePath(QStringLiteral("中文 文档.docx"));
-        const auto writeFixture = [&](int delay) {
+        const auto releaseFile = QDir(root.path()).filePath("release-converter");
+        const auto writeFixture = [&](int delay, bool gated = false) {
             QFile file(officePath); if (!file.open(QIODevice::WriteOnly)) return false;
-            return file.write(QByteArray::fromHex("504b0304") + QJsonDocument(QJsonObject{{"pdf", pdfPath}, {"delay_ms", delay}}).toJson()) > 0;
+            return file.write(QByteArray::fromHex("504b0304") + QJsonDocument(QJsonObject{
+                {"pdf", pdfPath}, {"delay_ms", delay}, {"release_file", gated ? releaseFile : QString()}}).toJson()) > 0;
         };
-        QVERIFY(writeFixture(60));
+        QVERIFY(writeFixture(0, true));
         const auto stub = QDir(QCoreApplication::applicationDirPath()).filePath("office_converter_stub"
 #ifdef Q_OS_WIN
             ".exe"
@@ -108,14 +110,19 @@ private slots:
         qputenv("CPS_OFFICE_EXECUTABLE", stub.toUtf8());
         OfficePreview conversion;
         QSignalSpy ready(&conversion, &OfficePreview::ready), failed(&conversion, &OfficePreview::failed);
-        int ticks = 0;
+        bool responsiveDuringConversion = false;
         QTimer responsive; responsive.setInterval(5);
-        connect(&responsive, &QTimer::timeout, [&] { ++ticks; }); responsive.start();
+        connect(&responsive, &QTimer::timeout, [&] {
+            if (responsiveDuringConversion || !conversion.busy()) return;
+            QFile release(releaseFile);
+            if (release.open(QIODevice::WriteOnly) && release.write("ready") > 0)
+                responsiveDuringConversion = true;
+        }); responsive.start();
         conversion.start(officePath);
         const auto temporary = conversion.temporaryPath();
         QVERIFY(conversion.busy()); QVERIFY(!temporary.isEmpty());
         QTRY_COMPARE_WITH_TIMEOUT(ready.size(), 1, 5000);
-        QVERIFY(ticks > 2); QCOMPARE(failed.size(), 0);
+        QVERIFY(responsiveDuringConversion); QCOMPARE(failed.size(), 0);
         DocumentPreview document; QVERIFY(document.load(ready.at(0).at(0).toString()));
         QCOMPARE(document.pageCount(), 2); QVERIFY(document.page(0) != document.page(1));
         conversion.cancel(); QVERIFY(!QFileInfo::exists(temporary));
