@@ -34,7 +34,7 @@ $env:CPS_OFFICE_EXECUTABLE = (Resolve-Path '.tools/libreoffice/program/soffice.c
 
 脚本使用 LibreOffice 26.8.0 的 x64 MSI，SHA-256 固定为 `4aa6c6e1895f4055104effcb556bd3362d20c6ad707c149543304f395ef9db95`，匹配上游 winget 26.8.0.3 manifest。先校验后执行 `msiexec /a /qn TARGETDIR=...`，生成私有行政镜像，不执行 `/i` 系统安装。输出目录必须不存在；保留旧镜像。可传入 `--installer <已下载MSI>`。不跳过校验，不全局禁用 Office 安全设置。
 
-Windows 转换器还依赖 Microsoft Visual C++ x64 运行库；MSVC 的 Qt 分发会携带匹配的运行库，MinGW 的 Qt 分发不能代替此依赖。部署到新机器时检查 VC++ 运行库及实际导入结果。macOS：安装 LibreOffice（CI 使用 `brew install --cask libreoffice`）；路径为 `/Applications/LibreOffice.app/Contents/MacOS/soffice`。Linux：安装发行版的 LibreOffice（CI `apt-get install libreoffice`），使用 `/usr/bin/libreoffice`。字体由对应机器提供。
+Windows 转换器还依赖 Microsoft Visual C++ x64 运行库；MSVC 的 Qt 分发会携带匹配的运行库，MinGW 的 Qt 分发不能代替此依赖。部署到新机器时检查 VC++ 运行库及实际导入结果。macOS 同样运行 `python tools/setup_office_preview.py`，按 CPU 架构下载固定 26.8.0 DMG，校验后只读挂载、复制完整 app 并卸载卷，不修改 `/Applications`。输出为 `.tools/libreoffice/LibreOffice.app`；ARM SHA-256 `8858d8058da4f862f47559486814e65efc27294da67c5e4bb56b006b1ee59f89`，Intel `2dcbce4894e01bc1ecd594658e2cbda70ff7bfcd0b310f35d38887797172d09e`，匹配 [Homebrew cask](https://github.com/Homebrew/homebrew-cask/blob/master/Casks/l/libreoffice.rb)。下载每个来源最多四分钟、单次读等待 30 秒，失败尝试固定校验和的备用镜像。Linux 安装发行版的 LibreOffice（CI `apt-get install libreoffice`），使用 `/usr/bin/libreoffice`。字体由对应机器提供。
 
 完整分发包显式带转换器及其全部许可证；Windows 示例：
 
@@ -43,7 +43,7 @@ python tools/package_app.py --bin-dir build/ci/bin --qt-bin C:/Qt/6.10.1/mingw_6
 python tests/office_package_smoke.py --package-dir dist/editorial-v11
 ```
 
-macOS `--office-dir /Applications/LibreOffice.app`。带引擎的包显著大于 PDF-only 包；`release-manifest.json` 记录 `office_preview_bundled`。默认不联网获取转换器，不将用户文件发送至在线转换服务。未带引擎的轻量包需依赖系统安装，不得称为零依赖的 Office 预览包。
+macOS `--office-dir .tools/libreoffice/LibreOffice.app`，开发时显式设置 `CPS_OFFICE_EXECUTABLE` 为该 app 内 `Contents/MacOS/soffice` 的绝对路径。带引擎的包显著大于 PDF-only 包；`release-manifest.json` 记录 `office_preview_bundled`。默认不联网获取转换器，不将用户文件发送至在线转换服务。未带引擎的轻量包需依赖系统安装，不得称为零依赖的 Office 预览包。
 
 ## 可复现验收
 

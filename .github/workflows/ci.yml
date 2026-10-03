@@ -43,11 +43,9 @@ jobs:
       - name: Prepare private Office converter (Windows)
         if: runner.os == 'Windows'
         run: python tools/setup_office_preview.py
-      - name: Install Office converter (macOS)
+      - name: Prepare private Office converter (macOS)
         if: runner.os == 'macOS'
-        run: brew install --cask libreoffice
-        env:
-          HOMEBREW_NO_AUTO_UPDATE: '1'
+        run: python tools/setup_office_preview.py
       - name: Install Office converter (Linux)
         if: runner.os == 'Linux'
         run: |
@@ -56,7 +54,7 @@ jobs:
       - name: Configure Office preview acceptance
         run: |
           python -m pip install python-docx==1.2.0 python-pptx==1.0.2 openpyxl==3.1.5
-          python -c "import os,sys; from pathlib import Path; root=Path.cwd(); engine=root/'.tools/libreoffice/program/soffice.com' if sys.platform=='win32' else Path('/Applications/LibreOffice.app/Contents/MacOS/soffice') if sys.platform=='darwin' else Path('/usr/bin/libreoffice'); assert engine.is_file(); Path(os.environ['GITHUB_ENV']).open('a').write('CPS_OFFICE_EXECUTABLE='+str(engine)+'\nCPS_OFFICE_FIXTURES='+str(root/'runtime/office-fixtures')+'\n')"
+          python -c "import os,sys; from pathlib import Path; root=Path.cwd(); engine=root/'.tools/libreoffice/program/soffice.com' if sys.platform=='win32' else root/'.tools/libreoffice/LibreOffice.app/Contents/MacOS/soffice' if sys.platform=='darwin' else Path('/usr/bin/libreoffice'); assert engine.is_file(); Path(os.environ['GITHUB_ENV']).open('a').write('CPS_OFFICE_EXECUTABLE='+str(engine)+'\nCPS_OFFICE_FIXTURES='+str(root/'runtime/office-fixtures')+'\n')"
       - name: Generate six real Office formats
         run: python tools/generate_office_fixtures.py --office "${{ env.CPS_OFFICE_EXECUTABLE }}" --output-dir runtime/office-fixtures
       - name: Configure application
@@ -77,7 +75,7 @@ jobs:
           CPS_GUI_EVIDENCE_DIR: ${{ github.workspace }}/runtime/native-gui-evidence
       - name: Deploy Qt runtime
         if: runner.os != 'Linux'
-        run: python tools/package_app.py --bin-dir build/ci/bin --qt-bin "${{ env.QT_ROOT_DIR }}/bin" --output-dir dist/campus-print --office-dir "${{ runner.os == 'Windows' && '.tools/libreoffice' || '/Applications/LibreOffice.app' }}" --preview-fixtures runtime/office-fixtures
+        run: python tools/package_app.py --bin-dir build/ci/bin --qt-bin "${{ env.QT_ROOT_DIR }}/bin" --output-dir dist/campus-print --office-dir "${{ runner.os == 'Windows' && '.tools/libreoffice' || '.tools/libreoffice/LibreOffice.app' }}" --preview-fixtures runtime/office-fixtures
       - name: Test deployed application without SDK paths
         if: runner.os != 'Linux'
         run: python tests/package_smoke.py --package-dir dist/campus-print
