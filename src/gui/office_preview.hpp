@@ -32,6 +32,8 @@ private:
     QString pdfPath_;
     bool busy_ = false;
     quint64 generation_ = 0;
+#ifdef Q_OS_WIN
     void *jobHandle_ = nullptr;
+#endif
 };
 } // namespace cps::gui

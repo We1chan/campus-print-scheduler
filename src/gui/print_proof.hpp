@@ -346,22 +346,23 @@ class PrintProof : public QWidget {
         QPainter p(this);
         p.setRenderHint(QPainter::Antialiasing);
         p.setRenderHint(QPainter::SmoothPixmapTransform);
-        p.fillRect(rect(), QColor("#F4F3EF"));
         if (!desk_.isNull()) {
             const qreal dpr = devicePixelRatioF();
             const QSize pixels = (QSizeF(size()) * dpr).toSize();
             if (deskLayer_.size() != pixels || deskLayer_.devicePixelRatio() != dpr) {
                 deskLayer_ = desk_.scaled(pixels, Qt::IgnoreAspectRatio, Qt::SmoothTransformation);
                 deskLayer_.setDevicePixelRatio(dpr);
+                QPainter background(&deskLayer_);
+                background.setRenderHint(QPainter::Antialiasing);
+                background.setRenderHint(QPainter::SmoothPixmapTransform);
+                paintDeskCaption(background);
             }
             p.drawPixmap(QPoint(0, 0), deskLayer_);
+        } else {
+            p.fillRect(rect(), QColor("#F4F3EF"));
+            paintDeskCaption(p);
         }
         p.scale(width() / 1218., height() / 788.);
-        text(p, {42, 23, 700, 78}, QStringLiteral("好作品，值得"), 60, QColor("#101F3C"), true, true);
-        const qreal accentX=42+p.fontMetrics().horizontalAdvance(QStringLiteral("好作品，值得"));
-        text(p, {accentX, 23, 370, 78}, QStringLiteral("印出来。"), 60, QColor("#D63D29"), true, true);
-        text(p, {44, 109, 750, 42}, QStringLiteral("拖入文件，在纸上调整你的打印方式。"), 24,
-             QColor("#667080"));
         p.save();
         p.resetTransform();
         const qreal paperScale = std::min(width() / 1218., height() / 788.);
@@ -386,6 +387,18 @@ class PrintProof : public QWidget {
     }
 
   private:
+    void paintDeskCaption(QPainter &p) {
+        // The heading is stationary during paper animation. Compose it once
+        // with the desk at the actual window scale and DPR.
+        p.save();
+        p.scale(width() / 1218., height() / 788.);
+        text(p, {42, 23, 700, 78}, QStringLiteral("好作品，值得"), 60, QColor("#101F3C"), true, true);
+        const qreal accentX = 42 + p.fontMetrics().horizontalAdvance(QStringLiteral("好作品，值得"));
+        text(p, {accentX, 23, 370, 78}, QStringLiteral("印出来。"), 60, QColor("#D63D29"), true, true);
+        text(p, {44, 109, 750, 42}, QStringLiteral("拖入文件，在纸上调整你的打印方式。"), 24,
+             QColor("#667080"));
+        p.restore();
+    }
     struct PaperPlacement { QPointF center; QSizeF size; qreal angle; };
     QImage previewPage(int index) {
         const auto page = document_.page(index);

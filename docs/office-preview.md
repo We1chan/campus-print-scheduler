@@ -71,4 +71,8 @@ CI 安装真实 LibreOffice、生成六格式输入，在 Windows/macOS/Linux �
 
 发布前增量回归：生命周期、混合方向 PDF 与默认收款资源/本地覆盖用例 5/5 通过。两张用户授权公开的原图已编入资源，文件哈希与现有本地配置一致；真实转账和到账确认没有测试。
 
+动画增量检查：静态标题随桌面层缓存，减少逐帧文字与背景填充。在同机原生测量中，新版纸张绘制 p95 6.40 ms，旧提交 `64df221` 为 9.01 ms；完整窗口的 27 ms 门槛在两版本均出现波动（约 26.3–27.8 ms），未放宽断言，不能记录为本轮完整帧预算验收通过。日志位于 `runtime/office-caption-tests.txt` 与 `runtime/animation-baseline-tests.txt`。
+
+首轮远端 `5e136eb`：Linux 完整套件通过；Windows 六格式预览等新增用例通过，完整 GUI 套件的既有 `persistentPoliciesAndReport` 在启动时发送暂停过早而失败。该测试改为等待 `backendReady` 和持久暂停快照后提交任务；没有修改后台业务语义。最终 CI 结果仍以交付提交为准。
+
 参考：[LibreOffice 参数文档](https://help.libreoffice.org/latest/en-US/text/shared/guide/start_parameters.html)、[issue #1](https://github.com/korwave/campus-print-scheduler/issues/1)。

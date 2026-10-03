@@ -992,14 +992,21 @@ private slots:
     void persistentPoliciesAndReport() {
         BackendDirectory root(QDir::tempPath() + QStringLiteral("/持久 验收-XXXXXX"));
         {
-            PrintWindow window({root.path(), 40, false}); window.show();
+            PrintWindow window({root.path(), 40, false});
+            QSignalSpy ready(&window, &PrintWindow::backendReady);
+            window.show();
+            QTRY_VERIFY_WITH_TIMEOUT(!ready.isEmpty(), 15000);
             window.pauseRequested(true);
+            CoordinatorClient client(root.path());
+            QJsonObject paused;
+            // Do not submit short jobs until the durable pause is visible.
+            // The UI disables mutation before readiness; the test must too.
+            QTRY_VERIFY((paused = client.request("snapshot")).value("paused").toBool());
             window.submitRequested(QStringLiteral("先来的大任务"), 40, 1, 0);
             window.submitRequested(QStringLiteral("短任务"), 2, 1, 0);
             window.submitRequested(QStringLiteral("紧急任务"), 10, 1, 100);
             auto* table = window.findChild<QTableView*>("jobsTable");
             QTRY_COMPARE(table->model()->rowCount(), 3);
-            CoordinatorClient client(root.path());
             const auto first = client.request("snapshot");
             QVERIFY(first.value("paused").toBool());
             const auto rows = first.value("jobs").toArray();

@@ -35,6 +35,12 @@ def main():
         engine = office / ("program/soffice.com" if windows else "Contents/MacOS/soffice")
         if not engine.is_file():
             parser.error("--office-dir must contain a complete LibreOffice installation")
+        if args.preview_fixtures is None:
+            parser.error("Office packages require --preview-fixtures for independent import acceptance")
+    if args.preview_fixtures:
+        for extension in ("doc", "docx", "ppt", "pptx", "xls", "xlsx"):
+            if not (args.preview_fixtures / ("中文 空格." + extension)).is_file():
+                parser.error("--preview-fixtures must contain all six generated Office formats")
     suffix = ".exe" if windows else ""
     names = ["campus-print", "print-coordinator", "print-supervisor", "print-worker", "scheduler-replay", "shop-experiments"]
     deploy = qt_bin / ("windeployqt.exe" if windows else "macdeployqt")
@@ -61,7 +67,13 @@ def main():
         # Keep the full engine, filters, fonts and licenses; copying just the
         # executable does not create a usable Office converter.
         office_target = destination / "office" if windows else destination / "office" / "LibreOffice.app"
-        shutil.copytree(office, office_target, symlinks=not windows)
+        def skip_extraction_artifacts(directory, names):
+            # An MSI administrative image leaves a packaging database and log
+            # beside the engine. They are not runtime modules or license files.
+            if windows and Path(directory).resolve() == office:
+                return [name for name in names if name == "extraction.log" or name.lower().endswith(".msi")]
+            return []
+        shutil.copytree(office, office_target, symlinks=not windows, ignore=skip_extraction_artifacts)
     env = dict(os.environ)
     env["PATH"] = str(qt_bin) + os.pathsep + env.get("PATH", "")
     if windows:
