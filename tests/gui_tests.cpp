@@ -1408,6 +1408,10 @@ private slots:
     void demoControlsAbsentInNormalMode() {
         BackendDirectory root;
         PrintWindow window({root.path(), 10, false});
+        QSignalSpy ready(&window, &PrintWindow::backendReady);
+        // Even this structural check starts a persistent coordinator. Await
+        // its handshake so directory cleanup cannot race a detached launch.
+        QTRY_VERIFY_WITH_TIMEOUT(!ready.isEmpty(), 15000);
         QVERIFY(!window.findChild<QPushButton*>("injectFault"));
         QVERIFY(!window.findChild<QPushButton*>("disconnectControl"));
     }

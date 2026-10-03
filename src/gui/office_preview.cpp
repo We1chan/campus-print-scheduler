@@ -81,7 +81,8 @@ QString OfficePreview::executable() {
     }
     candidates << QStandardPaths::findExecutable("soffice.com") << QStandardPaths::findExecutable("soffice.exe");
 #elif defined(Q_OS_MACOS)
-    candidates << QDir(app).filePath("office/LibreOffice.app/Contents/MacOS/soffice")
+    candidates << QDir(app).filePath("../../../office/LibreOffice.app/Contents/MacOS/soffice")
+               << QDir(app).filePath("office/LibreOffice.app/Contents/MacOS/soffice")
                << "/Applications/LibreOffice.app/Contents/MacOS/soffice"
                << QDir::home().filePath("Applications/LibreOffice.app/Contents/MacOS/soffice");
 #else

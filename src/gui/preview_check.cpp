@@ -12,6 +12,7 @@ int checkDocumentPreview(const QString &path, const QString &report) {
     DocumentPreview document;
     OfficePreview office;
     QString error;
+    const QString converter = OfficePreview::supports(path) ? OfficePreview::executable() : QString();
     if (OfficePreview::supports(path)) {
         QEventLoop loop;
         QObject::connect(&office, &OfficePreview::ready, &loop, [&](const QString &pdf) {
@@ -29,7 +30,7 @@ int checkDocumentPreview(const QString &path, const QString &report) {
     const auto size = document.pageSize(0);
     const QJsonObject data{{"ok", error.isEmpty()}, {"error", error}, {"pages", document.pageCount()},
         {"width", size.width()}, {"height", size.height()},
-        {"first_rendered", !first.isNull()}, {"last_rendered", !last.isNull()}};
+        {"first_rendered", !first.isNull()}, {"last_rendered", !last.isNull()}, {"converter", converter}};
     QSaveFile output(report);
     const auto bytes = QJsonDocument(data).toJson();
     if (!output.open(QIODevice::WriteOnly) || output.write(bytes) != bytes.size() || !output.commit()) return 74;

@@ -66,7 +66,9 @@ def main():
     if office:
         # Keep the full engine, filters, fonts and licenses; copying just the
         # executable does not create a usable Office converter.
-        office_target = destination / "office" if windows else destination / "office" / "LibreOffice.app"
+        # Keep the vendor's signed macOS app outside the Qt app. macdeployqt
+        # otherwise rewrites/signs its nested Python framework and breaks seals.
+        office_target = destination / "office" if windows else output / "office" / "LibreOffice.app"
         def skip_extraction_artifacts(directory, names):
             # An MSI administrative image leaves a packaging database and log
             # beside the engine. They are not runtime modules or license files.
@@ -91,6 +93,8 @@ def main():
         subprocess.run([str(deploy), str(bundle), "-always-overwrite", "-codesign=-",
                         *("-executable=" + str(destination / name) for name in names[1:])], env=env, check=True)
         subprocess.run(["/usr/bin/codesign", "--verify", "--deep", "--strict", str(bundle)], check=True)
+        if office:
+            subprocess.run(["/usr/bin/codesign", "--verify", "--deep", "--strict", str(office_target)], check=True)
     root = Path(__file__).resolve().parents[1]
     shutil.copy2(root / "docs" / "release.md", output / "README-release.md")
     for name in ("student-handoff.md", "editorial-frontend.md", "office-preview.md", "interfaces.md", "team.md"):
