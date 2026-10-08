@@ -400,11 +400,16 @@ void paintQueue(Painter& d, const Snapshot& state, const Selection& selection)
 {
     hero(d,state,true);
     d.text(39,307,520,52,QStringLiteral("打印队列"),32,navy,true);
-    d.panel(QRectF(847,310,174,39),Qt::white,QColor("#C5CDDC"),7);
-    d.text(860,313,135,32,QStringLiteral("全部设备"),17,secondary);
-    d.text(987,313,25,32,QStringLiteral("⌄"),22,navy);
-    const int base=std::max(0,selection.device/2*2);
-    d.hit(QRectF(847,310,174,39),QStringLiteral("select-device"),QString::number(state.devices.isEmpty() ? -1 : (base+2)%state.devices.size()),QStringLiteral("切换队列设备组"));
+    const int pageCount=std::max(1,(int(state.devices.size())+1)/2);
+    const int page=std::clamp(selection.device/2,0,pageCount-1);
+    const int base=page*2;
+    d.text(651,310,142,39,QStringLiteral("第 %1 / %2 页").arg(page+1).arg(pageCount),15,secondary,false,false,Qt::AlignRight|Qt::AlignVCenter);
+    const auto pageButton=[&](QRectF rect,const QString& label,int target,bool enabled){
+        if(enabled)d.button(rect,label,QStringLiteral("queue-device-page"),QString::number(target));
+        else{d.panel(rect,QColor("#F7F8FA"),ruleColor,7);d.text(rect.x(),rect.y(),rect.width(),rect.height(),label,16,secondary,false,false,Qt::AlignCenter);}
+    };
+    pageButton(QRectF(807,310,101,39),QStringLiteral("上一页"),base-2,page>0);
+    pageButton(QRectF(920,310,101,39),QStringLiteral("下一页"),base+2,page+1<pageCount);
     refreshButton(d,QRectF(1034,310,84,39));
     const int black=base<state.devices.size() ? base : -1;
     const int color=base+1<state.devices.size() ? base+1 : -1;

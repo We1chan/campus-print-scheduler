@@ -183,6 +183,7 @@ void MerchantWindow::viewFile() {
 void MerchantWindow::action(const QString& name,const QString& value) {
     if(name=="nav"){setPage(value.toInt());return;}if(name=="select-order"){canvas_->selection.order=value.toInt();canvas_->refresh();return;}
     if(name=="select-device"){canvas_->selection.device=value.toInt();canvas_->refresh();return;}if(name=="filter"){canvas_->selection.filter=value.toInt();canvas_->selection.offset=0;canvas_->refresh();return;}
+    if(name=="queue-device-page"){canvas_->selection.device=value.toInt();canvas_->selection.queueOffset=0;canvas_->refresh();return;}
     if(name=="table-prev"||name=="table-next"){int maximum=std::max(0,int(visibleOrders(model_->snapshot(),canvas_->selection).size())-5);canvas_->selection.offset=std::clamp(canvas_->selection.offset+(name=="table-next"?5:-5),0,maximum);canvas_->refresh();return;}
     if(name=="queue-prev"||name=="queue-next"){canvas_->selection.queueOffset=std::max(0,canvas_->selection.queueOffset+(name=="queue-next"?1:-1));canvas_->refresh();return;}
     if(name=="view-file"){viewFile();return;}if(name=="order-details"){setPage(0);return;}

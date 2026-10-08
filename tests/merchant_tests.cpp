@@ -674,6 +674,26 @@ private slots:
         QVERIFY(!merchant.model()->snapshot().showcase);
         QCOMPARE(merchant.model()->snapshot().devices.size(), 6);
         QCOMPARE(merchant.model()->snapshot().orders.size(), 0);
+        merchant.setPage(1);
+        QVERIFY(!merchant.findChild<QPushButton*>("merchant_queue-device-page_-2"));
+        for(int target:{2,4}){
+            auto* next=merchant.findChild<QPushButton*>(QStringLiteral("merchant_queue-device-page_%1").arg(target));
+            QVERIFY(next && next->isVisible());
+            QTest::mouseClick(next,Qt::LeftButton);
+            for(int device:{target,target+1}){
+                auto* lane=merchant.findChild<QPushButton*>(QStringLiteral("merchant_select-device_%1").arg(device));
+                QVERIFY(lane && lane->isVisible());
+            }
+        }
+        QVERIFY(!merchant.findChild<QPushButton*>("merchant_queue-device-page_6"));
+        QVERIFY(saveEvidence(merchant,QStringLiteral("native-queue-last-device-page.png")));
+        for(int target:{2,0}){
+            auto* previous=merchant.findChild<QPushButton*>(QStringLiteral("merchant_queue-device-page_%1").arg(target));
+            QVERIFY(previous && previous->isVisible());
+            QTest::mouseClick(previous,Qt::LeftButton);
+        }
+        QVERIFY(saveEvidence(merchant,QStringLiteral("native-queue-first-device-page.png")));
+        merchant.setPage(0);
         merchant.model()->execute(QStringLiteral("pause-all"));
         QTRY_VERIFY(merchant.model()->snapshot().paused);
 

@@ -68,3 +68,10 @@ python tools/verify_package.py --archive-dir runtime/merchant-v3-archive --outpu
 - 门店按钮的悬停区域从 205×52 缩小至 120×42，仅包住门店图标和名称；移除名称后的向下箭头，点击仍打开原有店铺菜单。
 - `ci` Release 构建通过，Windows 原生菜单、淡红悬停恢复、窗口控件、任务栏图标四项回归共 6 passed / 0 failed（含初始化和清理）。新增两张实际悬停截图位于 `runtime/merchant-evidence/v4-native/native-header-{nav,shop}-hover.png`，供视觉核对。
 - 发布为独立 `merchant-v4`，沿用 v3 图标与既有 v1 店铺数据；保留学生端和旧发布包。完整 CTest 与发布验收输出分别存放在 `runtime/merchant-evidence/v4-ctest.txt` 和 `v4-package-verification.txt`。
+
+## v5 队列翻页和学生指标文字修复（2026-10-08）
+
+- 队列设备组入口恢复为“上一页 / 下一页”，显示当前页码；首尾页不循环跳转，每页展示两台设备，换页重置设备内工单滚动位置。
+- 原生真实 IPC 用例覆盖六个设备槽位的三页前进和返回，并核对首尾边界，随后继续执行原来的订单提交、打印和设备设置验证。日志与第一页/末页截图位于 `runtime/merchant-evidence/v5-*`。
+- 学生端订单/排队页的三行指标原来使用固定字号和默认布局间距，而外层卡片会按窗口缩放，造成文字框被挤压。同步学生分支的局部响应式字号、边距和间距修复，保持字体家族、字重和文案。
+- 学生回归检查空队列、暂停派发与可取件状态，在 920×640、1180×820、1420×888 三种尺寸核对两页实际字体行高/宽度与文字框并保存截图。独立学生分支已在 Windows 原生 DPR 1.25 / 1.6 通过该用例。
