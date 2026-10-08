@@ -61,3 +61,10 @@ python tools/verify_package.py --archive-dir runtime/merchant-v3-archive --outpu
 ```
 
 验证包括完整 manifest 哈希、移除 SDK PATH 后的两端原生启动及持久队列、包内 Office 六格式两页预览、进程控制；范围仍限于本机 Windows。
+
+## v4 标题栏悬停布局修复（2026-10-08）
+
+- 四个导航文字与各自悬停区域使用同一个矩形并居中绘制，当前页的下划线同步居中。
+- 门店按钮的悬停区域从 205×52 缩小至 120×42，仅包住门店图标和名称；移除名称后的向下箭头，点击仍打开原有店铺菜单。
+- `ci` Release 构建通过，Windows 原生菜单、淡红悬停恢复、窗口控件、任务栏图标四项回归共 6 passed / 0 failed（含初始化和清理）。新增两张实际悬停截图位于 `runtime/merchant-evidence/v4-native/native-header-{nav,shop}-hover.png`，供视觉核对。
+- 发布为独立 `merchant-v4`，沿用 v3 图标与既有 v1 店铺数据；保留学生端和旧发布包。完整 CTest 与发布验收输出分别存放在 `runtime/merchant-evidence/v4-ctest.txt` 和 `v4-package-verification.txt`。

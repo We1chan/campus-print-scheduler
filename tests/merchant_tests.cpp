@@ -611,6 +611,14 @@ private slots:
         auto* shop = window.findChild<QPushButton*>("merchant_shop-menu_");
         auto* search = window.findChild<QLineEdit*>("merchantSearch");
         QVERIFY(shop && search && !search->isVisible());
+        auto* queue = window.findChild<QPushButton*>("merchant_nav_1");
+        QVERIFY(queue);
+        setPointerInside(*queue, true);
+        QVERIFY(saveEvidence(window, QStringLiteral("native-header-nav-hover.png")));
+        setPointerInside(*queue, false);
+        setPointerInside(*shop, true);
+        QVERIFY(saveEvidence(window, QStringLiteral("native-header-shop-hover.png")));
+        setPointerInside(*shop, false);
         QSignalSpy feedback(window.model(), &MerchantData::feedback);
         const QStringList businessActions{QStringLiteral("订单工作台"), QStringLiteral("刷新后台")};
         for (int index = 0; index < businessActions.size(); ++index) {

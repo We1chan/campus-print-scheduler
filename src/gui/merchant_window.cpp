@@ -131,9 +131,12 @@ private:
         d.text(92,8,63,38,QStringLiteral("纸间"),24,navy,true);p.setPen(ruleColor);p.drawLine(163,16,163,40);d.text(181,8,92,38,QStringLiteral("店主端"),16,slate);
         const QStringList nav{QStringLiteral("订单工作台"),QStringLiteral("打印队列"),QStringLiteral("设备管理"),QStringLiteral("营业统计")};
         const int positions[4]={562,706,826,947};
-        for(int i=0;i<4;++i) {d.text(positions[i],0,i==0?108:96,55,nav[i],18,i==page?navy:slate);d.hit({qreal(positions[i]-6),0.,qreal(i==0?114:106),56.},"nav",QString::number(i),nav[i]);
-            if(i==page){p.fillRect(QRectF(positions[i]-2,52,i==0?100:88,4),red);}}
-        d.icon("shop",1240,18,23);d.text(1275,3,140,50,QStringLiteral("校园一店⌄"),16);d.hit({1227,1,205,52},"shop-menu",{},QStringLiteral("店铺菜单"));
+        for(int i=0;i<4;++i) {
+            const QRectF tab(positions[i]-6,0,i==0?114:106,56);
+            d.text(tab.x(),tab.y(),tab.width(),tab.height(),nav[i],18,i==page?navy:slate,false,false,Qt::AlignCenter);
+            d.hit(tab,"nav",QString::number(i),nav[i]);
+            if(i==page){const qreal lineWidth=i==0?100:88;p.fillRect(QRectF(tab.center().x()-lineWidth/2,52,lineWidth,4),red);}}
+        d.icon("shop",1240,18,23);d.text(1275,3,70,50,QStringLiteral("校园一店"),16);d.hit({1230,7,120,42},"shop-menu",{},QStringLiteral("店铺菜单"));
         p.fillRect(QRectF(0,942,1586,50),Qt::white);d.rule(39,942,1507);
         d.dot(44,963,state.connected||state.showcase?QStringLiteral("店铺营业中"):QStringLiteral("连接后台中"),state.connected||state.showcase?green:slate);
         const auto online=std::count_if(state.devices.cbegin(),state.devices.cend(),[](const Device& device){return device.online;});
