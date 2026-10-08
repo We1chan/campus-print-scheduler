@@ -3,15 +3,32 @@
 #include <QPainterPath>
 #include <QRandomGenerator>
 #include <algorithm>
+#include <array>
 #include <cmath>
 static void initializeMerchantArt() { Q_INIT_RESOURCE(merchant_assets); }
 namespace cps::gui::merchant {
+static QImage featherDecoration(QImage image,qreal left,qreal right,qreal bottom) {
+    image=image.convertToFormat(QImage::Format_ARGB32_Premultiplied);
+    QPainter mask(&image);mask.setCompositionMode(QPainter::CompositionMode_DestinationIn);
+    QLinearGradient horizontal(0,0,image.width(),0);
+    horizontal.setColorAt(0,QColor(0,0,0,left>0?0:255));
+    if(left>0)horizontal.setColorAt(left/image.width(),Qt::black);
+    if(right>0)horizontal.setColorAt(1-right/image.width(),Qt::black);
+    horizontal.setColorAt(1,QColor(0,0,0,right>0?0:255));
+    mask.fillRect(image.rect(),horizontal);
+    if(bottom>0){QLinearGradient vertical(0,0,0,image.height());vertical.setColorAt(0,Qt::black);vertical.setColorAt(1-bottom/image.height(),Qt::black);vertical.setColorAt(1,Qt::transparent);mask.fillRect(image.rect(),vertical);}
+    mask.end();
+    return image;
+}
 Assets::Assets() {
     initializeMerchantArt();
     workbench.load(":/merchant/workbench.png"); queue.load(":/merchant/queue.png");
     devices.load(":/merchant/devices.png"); stats.load(":/merchant/stats.png");
     // A text-free material swatch; application content is never an image layer.
     texture=workbench.copy(700,76,128,128);
+    // Fade only the photograph's edges; keep the complete clip and its shadow inside the opaque area.
+    heroCoffee=featherDecoration(workbench.copy(860,56,274,160),36,0,12);
+    heroLeaf=featherDecoration(workbench.copy(0,56,55,145),0,12,15);
 }
 void Painter::text(qreal x,qreal y,qreal w,qreal h,const QString& value,int size,QColor color,bool bold,bool serif,int align) {
     QFont font=merchantFont(size,bold,serif);
@@ -40,6 +57,25 @@ void Painter::headline(qreal x,qreal y,qreal h,const QString& prefix,const QStri
     p.drawText(QRectF(x+prefixWidth,y,accentWidth+2,h),Qt::AlignLeft|Qt::AlignVCenter,accent);
 }
 void Painter::rule(qreal x,qreal y,qreal w) {p.setPen(QPen(ruleColor,1)); p.drawLine(QPointF(x,y),QPointF(x+w,y));}
+void Painter::heroMetric(int column,const QString& label,const QString& value,QColor color,const QString& unit) {
+    const std::array<qreal,4> xs{{59,274,503,713}},widths{{146,157,163,112}};
+    if(column<0||column>=4)return;
+    const qreal x=xs[static_cast<std::size_t>(column)],width=widths[static_cast<std::size_t>(column)];
+    text(x,206,width,27,label,14,slate);
+    const QFont unitFont=merchantFont(14,true);
+    const QFontMetricsF unitMetrics(unitFont);
+    const qreal unitWidth=unit.isEmpty()?0:unitMetrics.horizontalAdvance(unit)+8;
+    const qreal valueWidth=width-unitWidth;
+    QFont valueFont=merchantFont(32,true);
+    while(valueFont.pixelSize()>1&&QFontMetricsF(valueFont).horizontalAdvance(value)>valueWidth)valueFont.setPixelSize(valueFont.pixelSize()-1);
+    text(x,235,valueWidth,43,value,valueFont.pixelSize(),color,true);
+    if(!unit.isEmpty()){
+        const QFontMetricsF metrics(valueFont);
+        const qreal baselineOffset=(metrics.ascent()-metrics.descent()-unitMetrics.ascent()+unitMetrics.descent())/2;
+        text(x+metrics.horizontalAdvance(value)+8,235+baselineOffset,unitWidth,43,unit,14,color,true);
+    }
+    if(column<3){const std::array<qreal,3> dividers{{205,431,666}};p.save();p.setPen(QPen(ruleColor,1.4));p.drawLine(QPointF(dividers[static_cast<std::size_t>(column)],211),QPointF(dividers[static_cast<std::size_t>(column)],267));p.restore();}
+}
 void Painter::panel(QRectF r,QColor fill,QColor border,qreal radius) { p.setPen(QPen(border,1));p.setBrush(fill);p.drawRoundedRect(r,radius,radius);p.setBrush(Qt::NoBrush); }
 void Painter::hit(QRectF r,const QString& action,const QString& value,const QString& label) {hits.push_back({r,action,value,label.isEmpty()?action:label});}
 void Painter::button(QRectF r,const QString& label,const QString& action,const QString& value,bool primary) {
@@ -74,15 +110,8 @@ void Painter::dot(qreal x,qreal y,const QString& label,QColor color) {
 void Painter::art(const QString& name,QRectF target) {
     if(name=="printer-black")p.drawImage(target,assets.devices,QRectF(150,402,297,179));
     else if(name=="printer-color")p.drawImage(target,assets.devices,QRectF(735,392,251,185));
-    else if(name=="coffee") {
-        p.drawImage(target,assets.workbench,QRectF(905,57,228,155));
-        const QColor paper("#F5F4F1");QColor transparent=paper;transparent.setAlpha(0);
-        QLinearGradient left(target.left(),0,target.left()+28,0);left.setColorAt(0,paper);left.setColorAt(1,transparent);
-        p.fillRect(QRectF(target.left(),target.top(),28,target.height()),left);
-        QLinearGradient bottom(0,target.bottom()-25,0,target.bottom());bottom.setColorAt(0,transparent);bottom.setColorAt(1,paper);
-        p.fillRect(QRectF(target.left(),target.bottom()-25,target.width(),25),bottom);
-    }
-    else if(name=="leaf")p.drawImage(target,assets.workbench,QRectF(0,56,55,145));
+    else if(name=="coffee")p.drawImage(target,assets.heroCoffee);
+    else if(name=="leaf")p.drawImage(target,assets.heroLeaf);
     else if(name=="poster")p.drawImage(target,assets.queue,QRectF(695,646,53,73));
 }
 void Painter::cover(QRectF target) {

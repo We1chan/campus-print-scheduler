@@ -143,9 +143,8 @@ private:
         const auto& state=data_->snapshot();Painter d(p,controls,assets_,state.showcase);
         p.fillRect(QRectF(0,0,1586,992),Qt::white);
         p.save();p.setOpacity(.18);p.drawTiledPixmap(QRectF(0,0,1586,992),QPixmap::fromImage(assets_.texture));p.restore();
-        const int heroBottom=page==3?315:page==2?286:292;
         p.drawTiledPixmap(QRectF(0,56,1134,heroBottom-56),QPixmap::fromImage(assets_.texture));
-        d.art("coffee",{905,57,228,155});d.art("leaf",{0,56,55,145});
+        d.art("coffee",{860,56,274,160});d.art("leaf",{0,56,55,145});
         p.setPen(QPen(ruleColor,1));p.drawLine(QPointF(1145,65),QPointF(1145,852));
         if(page==0)paintWorkbench(d,state,selection);else if(page==1)paintQueue(d,state,selection);else if(page==2)paintDevices(d,state,selection);else paintStats(d,state,selection);
         p.fillRect(QRectF(0,0,1586,56),QColor("#FAFAF9"));d.rule(0,55,1586);

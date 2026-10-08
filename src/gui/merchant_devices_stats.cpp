@@ -163,20 +163,6 @@ void deviceDetails(Painter& d, const Snapshot& state, const Device* device) {
     d.text(1177, 807, 376, 35,
            device->paper < 0 || device->toner[0] < 0 ? QStringLiteral("尚未接入设备耗材遥测。") : QStringLiteral("耗材充足时，设备可持续接单。"), 14, faded);
 }
-void statisticsMetric(Painter& d, qreal x, qreal w, const QString& label,
-                      const QString& value, const QString& unit = {}) {
-    d.text(x, 211, w, 36, label, 14, faded);
-    const qreal unitWidth=unit.isEmpty() ? 0 : QFontMetricsF(merchantFont(14,true)).horizontalAdvance(unit);
-    const qreal valueWidth=w-(unit.isEmpty() ? 0 : unitWidth+8);
-    QFont valueFont=merchantFont(32,true);
-    while(valueFont.pixelSize()>1 && QFontMetricsF(valueFont).horizontalAdvance(value)>valueWidth)
-        valueFont.setPixelSize(valueFont.pixelSize()-1);
-    d.text(x,245,valueWidth,62,value,valueFont.pixelSize(),navy,true);
-    if (!unit.isEmpty()) {
-        const qreal unitX=x+QFontMetricsF(valueFont).horizontalAdvance(value)+8;
-        d.text(unitX,267,unitWidth+1,31,unit,14,navy,true);
-    }
-}
 QPainterPath receiptPath(QRectF rect) {
     QPainterPath path;
     path.moveTo(rect.left(), rect.top() + 2);
@@ -384,7 +370,7 @@ void breakdown(Painter& d, const Snapshot& state) {
 
 void paintDevices(Painter& d, const Snapshot& state, const Selection& selection) {
     d.headline(58,81,80,QStringLiteral("每台设备，都在"),QStringLiteral("好状态。"));
-    d.text(59, 157, 685, 42, QStringLiteral("设备、耗材与任务，随时心中有数。"), 21, faded);
+    d.text(59, 159, 685, 37, QStringLiteral("设备、耗材与任务，随时心中有数。"), 21, faded);
     int connected = 0, printing = 0, idle = 0, alerts = 0, lowDevice = -1;
     for (const Device& device : state.devices) {
         connected += device.online ? 1 : 0;
@@ -396,12 +382,8 @@ void paintDevices(Painter& d, const Snapshot& state, const Selection& selection)
     }
     const QStringList labels{QStringLiteral("已连接"), QStringLiteral("打印中"), QStringLiteral("空闲"), QStringLiteral("耗材提醒")};
     const std::array<int, 4> values{{connected, printing, idle, alerts}};
-    const std::array<qreal, 4> xs{{59, 268, 488, 716}};
-    for (int i = 0; i < 4; ++i) {
-        d.text(xs[static_cast<std::size_t>(i)], 202, 176, 32, labels[i], 14, faded);
-        d.text(xs[static_cast<std::size_t>(i)], 228, 176, 51, number(values[static_cast<std::size_t>(i)]), 32, i == 3 && alerts > 0 ? red : navy, true);
-        if (i < 3) vertical(d, i == 0 ? 211 : i == 1 ? 428 : 658, 210, 55);
-    }
+    for (int i = 0; i < 4; ++i)
+        d.heroMetric(i,labels[i],number(values[static_cast<std::size_t>(i)]),i==3&&alerts>0?red:navy);
     section(d, 40, 294, QStringLiteral("我的打印设备"), 500);
     d.button({998, 297, 120, 41}, QStringLiteral("添加设备"), QStringLiteral("add-device"));
     const Device* selected = nullptr;
@@ -470,27 +452,24 @@ void paintDevices(Painter& d, const Snapshot& state, const Selection& selection)
 }
 
 void paintStats(Painter& d, const Snapshot& state, const Selection& selection) {
-    d.headline(58,80,81,QStringLiteral("今天的生意，"),QStringLiteral("一目了然。"));
-    d.text(59, 156, 650, 43, QStringLiteral("把每一份打印，记成清楚的账。"), 21, faded);
-    d.text(59, 211, 218, 36, state.rangeLabel+QStringLiteral("营业额"), 14, faded);
-    d.text(56, 263, 30, 36, QStringLiteral("¥"), 29, navy, true);
-    d.text(79, 244, 213, 62, money(state.revenueCents).mid(1), 44, navy, true);
-    statisticsMetric(d, 340, 116, QStringLiteral("订单总数"), number(state.todayOrders));
-    statisticsMetric(d, 498, 140, QStringLiteral("打印页数"), number(state.printedPages));
-    statisticsMetric(d, 672, 157, QStringLiteral("平均完成"), QString::number(state.averageMinutes, 'f', 1), QStringLiteral("分钟"));
-    vertical(d, 295, 220, 75); vertical(d, 457, 220, 75); vertical(d, 636, 220, 75);
+    d.headline(58,81,80,QStringLiteral("今天的生意，"),QStringLiteral("一目了然。"));
+    d.text(59,159,650,37,QStringLiteral("把每一份打印，记成清楚的账。"),21,faded);
+    d.heroMetric(0,state.rangeLabel+QStringLiteral("营业额"),money(state.revenueCents));
+    d.heroMetric(1,QStringLiteral("订单总数"),number(state.todayOrders));
+    d.heroMetric(2,QStringLiteral("打印页数"),number(state.printedPages));
+    d.heroMetric(3,QStringLiteral("平均完成"),QString::number(state.averageMinutes,'f',1),navy,QStringLiteral("分钟"));
     const QStringList ranges{QStringLiteral("今天"), QStringLiteral("本周"), QStringLiteral("本月"), QStringLiteral("自定义")};
-    d.panel({825, 216, 286, 38}, QColor(255, 255, 255, 205), QColor("#D1D6E0"), 9);
+    d.panel({825, 206, 286, 38}, Qt::white, QColor("#BBC3CF"), 8);
     for (int i = 0; i < 4; ++i) {
-        const QRectF rect(825 + i * 71.5, 216, 71.5, 38);
+        const QRectF rect(825 + i * 71.5, 206, 71.5, 38);
         const bool active = selection.range == ranges[i];
         if (active) d.panel(rect, Qt::white, red, 9);
-        else if (i > 0) vertical(d, rect.x(), 223, 24);
+        else if (i > 0) vertical(d, rect.x(), 213, 24);
         d.text(rect.x(), rect.y(), rect.width(), rect.height(), ranges[i], 14, active ? red : navy, false, false, Qt::AlignCenter);
         d.hit(rect, QStringLiteral("range"), ranges[i], ranges[i]);
     }
-    d.icon(QStringLiteral("calendar"), 967, 277, 18, faded);
-    d.text(995, 269, 123, 35, state.rangeDate, 14, faded, false, false, Qt::AlignRight | Qt::AlignVCenter);
+    d.icon(QStringLiteral("calendar"), 967, 260, 18, faded);
+    d.text(995, 252, 123, 35, state.rangeDate, 14, faded, false, false, Qt::AlignRight | Qt::AlignVCenter);
     revenueChart(d, state); receipt(d, state); breakdown(d, state);
     d.icon(QStringLiteral("calendar"), 45, 879, 38);
     d.text(101, 873, 311, 34, selection.range == QStringLiteral("今天") ? QStringLiteral("今日营业数据") : selection.range + QStringLiteral("营业数据"), 21, navy, true);

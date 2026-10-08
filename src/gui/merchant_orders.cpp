@@ -47,12 +47,6 @@ void serviceBadge(Painter& d, const QRectF& rect, const QString& service)
     d.badge(rect,service,service == QStringLiteral("快速"));
 }
 
-void metric(Painter& d, qreal x, const QString& label, int value, bool accent=false)
-{
-    d.text(x,206,150,27,label,14,secondary);
-    d.text(x,235,158,43,QString::number(value),32,accent ? red : navy,true);
-}
-
 void refreshButton(Painter& d, const QRectF& rect)
 {
     d.panel(rect,Qt::white,navy,6);
@@ -80,23 +74,17 @@ void hero(Painter& d, const Snapshot& state, bool queue)
             if (order.state != QStringLiteral("待打印")) continue;
             order.printer >= 0 ? ++assigned : ++unassigned;
         }
-        metric(d,60,QStringLiteral("待打印"),state.waiting,true);
-        metric(d,274,QStringLiteral("打印中"),state.printing);
-        metric(d,503,QStringLiteral("已分配"),assigned);
-        metric(d,713,QStringLiteral("未分配"),unassigned);
-        verticalRule(d,205,211,56);
-        verticalRule(d,431,211,56);
-        verticalRule(d,666,211,56);
+        d.heroMetric(0,QStringLiteral("待打印"),QString::number(state.waiting),red);
+        d.heroMetric(1,QStringLiteral("打印中"),QString::number(state.printing));
+        d.heroMetric(2,QStringLiteral("已分配"),QString::number(assigned));
+        d.heroMetric(3,QStringLiteral("未分配"),QString::number(unassigned));
     } else {
         d.headline(58,81,80,QStringLiteral("每一份，都值得"),QStringLiteral("印好。"));
         d.text(59,159,630,37,QStringLiteral("订单、队列与设备，一眼掌握。"),21,secondary);
-        metric(d,59,state.rangeLabel+QStringLiteral("订单"),state.todayOrders);
-        metric(d,274,QStringLiteral("待打印"),state.waiting,true);
-        metric(d,480,QStringLiteral("打印中"),state.printing);
-        metric(d,679,QStringLiteral("待取件"),state.ready);
-        verticalRule(d,218,211,56);
-        verticalRule(d,426,211,56);
-        verticalRule(d,642,211,56);
+        d.heroMetric(0,state.rangeLabel+QStringLiteral("订单"),QString::number(state.todayOrders));
+        d.heroMetric(1,QStringLiteral("待打印"),QString::number(state.waiting),red);
+        d.heroMetric(2,QStringLiteral("打印中"),QString::number(state.printing));
+        d.heroMetric(3,QStringLiteral("待取件"),QString::number(state.ready));
         d.text(971,210,134,29,state.rangeLabel+QStringLiteral("营收"),14,secondary,false,false,Qt::AlignRight|Qt::AlignVCenter);
         d.text(937,238,168,40,money(state.revenueCents),31,navy,true,false,Qt::AlignRight|Qt::AlignVCenter);
     }

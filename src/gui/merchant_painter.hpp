@@ -7,6 +7,7 @@
 namespace cps::gui::merchant {
 // Student editorial palette: strong text, action accent, secondary text, rules and availability.
 inline const QColor navy("#14213E"), red("#D63D29"), slate("#69748A"), ruleColor("#DADDE2"), green("#138342");
+inline constexpr qreal heroBottom=292;
 // Match the student client: interface text is YaHei; the editorial headline
 // and text printed on the document itself are SimSun.
 inline QFont merchantFont(int size, bool bold = false, bool serif = false) {
@@ -21,7 +22,7 @@ inline bool requiresShowcase(const QString& action) {
 }
 struct Selection { int order = 0, device = 0, filter = 0, offset = 0, queueOffset = 0; QString search, range = QStringLiteral("今天"); };
 struct Assets {
-    QImage workbench, queue, devices, stats, texture;
+    QImage workbench, queue, devices, stats, texture, heroCoffee, heroLeaf;
     Assets();
 };
 class Painter {
@@ -30,6 +31,7 @@ public:
     QPainter& p; QVector<Hit>& hits; const Assets& assets;
     void text(qreal x,qreal y,qreal w,qreal h,const QString& value,int size=14,QColor color=navy,bool bold=false,bool serif=false,int align=Qt::AlignLeft|Qt::AlignVCenter);
     void headline(qreal x,qreal y,qreal h,const QString& prefix,const QString& accent);
+    void heroMetric(int column,const QString& label,const QString& value,QColor color=navy,const QString& unit={});
     void navigationText(QRectF rect,const QString& value);
     void rule(qreal x,qreal y,qreal w);
     void panel(QRectF rect,QColor fill=Qt::white,QColor border=ruleColor,qreal radius=6);
