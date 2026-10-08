@@ -144,7 +144,10 @@ private slots:
     }
     void officeDocumentsRealPreview() {
         const auto fixtures = qEnvironmentVariable("CPS_OFFICE_FIXTURES");
-        if (fixtures.isEmpty()) QSKIP("Set CPS_OFFICE_FIXTURES to the generated real Office fixture directory");
+        if (fixtures.isEmpty()) {
+            QTest::qSkip("Set CPS_OFFICE_FIXTURES to the generated real Office fixture directory", __FILE__, __LINE__);
+            return;
+        }
         QFETCH(QString, suffix);
         const auto original = QDir(fixtures).filePath(QStringLiteral("中文 空格.") + suffix);
         QFile source(original); QVERIFY(source.open(QIODevice::ReadOnly)); const auto bytes = source.readAll(); source.close();
@@ -166,7 +169,10 @@ private slots:
     }
     void officeStudentPreviewAndReplacement() {
         const auto fixtures = qEnvironmentVariable("CPS_OFFICE_FIXTURES");
-        if (fixtures.isEmpty()) QSKIP("Real Office fixtures not configured");
+        if (fixtures.isEmpty()) {
+            QTest::qSkip("Real Office fixtures not configured", __FILE__, __LINE__);
+            return;
+        }
         BackendDirectory root;
         StudentWindow student({root.path(), 20, false, true}); student.resize(1180, 820); student.show();
         auto *proof = dynamic_cast<PrintProof *>(student.findChild<QWidget *>("printProof")); QVERIFY(proof);

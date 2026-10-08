@@ -1,5 +1,11 @@
 # 店主端验收记录
 
+## v13 跨平台提交前修正（2026-10-09）
+
+店主分支首次远端构建暴露了本机 MinGW 未报出的兼容性问题：Qt `qint64` 与 Linux `TimeMs` 的底层类型不同；MSVC 对 32 位移位结果升至 64 位给出警告；任务栏属性函数缺少 Windows SDK 的直接声明；新版 Clang 将旧的空可变参数 Qt 测试宏作为 C++20 扩展警告。分别统一演示时钟的 `TimeMs` 运算、使用 64 位移位、显式包含 `shellapi.h`，并沿用学生分支已有的 `QTest::qSkip` 调用。保留 C++17 与 warnings-as-errors，不降低检查要求，也不改变调度规则、界面和现有数据。
+
+本机最终 Release 完整 CTest 15/15 及 Windows 原生菜单/调度/IPC 检查保留为 `runtime/merchant-evidence/v13-ctest.txt` 和 `v13-native-menu.txt`；最终本地运行包改为独立 `merchant-v13`，验收输出为 `v13-package-verification.txt`。两端 README 的功能表与调度工作台入口说明继续保留。远端各平台和独立运行检查以最终提交的 Actions 结果为准。
+
 ## v12 菜单阴影与分支功能说明（2026-10-09）
 
 - Windows 原生菜单样式会在自绘阴影之外叠加深色阴影。弹出菜单改用局部 Fusion 基础样式，继续保留两端统一的纸白、墨蓝、淡红反馈和原生 QMenu 操作；自绘阴影减至 10 层、每层 alpha 2、下移 2px。主窗口系统阴影保持原效果。

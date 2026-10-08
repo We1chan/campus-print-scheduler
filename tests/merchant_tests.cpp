@@ -32,6 +32,7 @@
 #define NOMINMAX
 #endif
 #include <windows.h>
+#include <shellapi.h>
 #include <shobjidl.h>
 #include <propkey.h>
 #endif

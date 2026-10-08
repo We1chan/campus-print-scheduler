@@ -119,7 +119,8 @@ public:
         QObject::connect(scenario_,&QComboBox::currentIndexChanged,this,[this](int index){demo=makeDispatchDemo(index);demoSelection.nowMs=0;demoSelection.order.clear();pauseDispatch();refresh();});
         demoTimer_.setParent(this);demoTimer_.setInterval(50);
         QObject::connect(&demoTimer_,&QTimer::timeout,this,[this]{
-            demoSelection.nowMs=std::min(demo.horizonMs,demoSelection.nowMs+demoClock_.restart()*20*(1<<speed_->currentIndex()));
+            const auto elapsed=static_cast<cps::TimeMs>(demoClock_.restart());
+            demoSelection.nowMs=std::min(demo.horizonMs,demoSelection.nowMs+elapsed*20*(cps::TimeMs{1}<<speed_->currentIndex()));
             if(demoSelection.nowMs>=demo.horizonMs)pauseDispatch();
             refresh();
         });
