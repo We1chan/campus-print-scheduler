@@ -75,3 +75,11 @@ python tools/verify_package.py --archive-dir runtime/merchant-v3-archive --outpu
 - 原生真实 IPC 用例覆盖六个设备槽位的三页前进和返回，并核对首尾边界，随后继续执行原来的订单提交、打印和设备设置验证。日志与第一页/末页截图位于 `runtime/merchant-evidence/v5-*`。
 - 学生端订单/排队页的三行指标原来使用固定字号和默认布局间距，而外层卡片会按窗口缩放，造成文字框被挤压。同步学生分支的局部响应式字号、边距和间距修复，保持字体家族、字重和文案。
 - 学生回归检查空队列、暂停派发与可取件状态，在 920×640、1180×820、1420×888 三种尺寸核对两页实际字体行高/宽度与文字框并保存截图。独立学生分支已在 Windows 原生 DPR 1.25 / 1.6 通过该用例。
+
+## v6 原生窗口边界与阴影（2026-10-08）
+
+- 两端共享窗口框架接入 Windows DWM：保留自绘标题栏，恢复系统窗口轮廓、圆角和柔和的窗口外阴影。活动窗口使用低对比度浅灰轮廓，失焦后进一步淡化；最大化时移除扩展边距，继续按工作区避开任务栏。
+- Windows 原生测试读取 DWM 非客户区渲染状态和圆角属性，并在自建纯色背景上捕获合成器实际桌面画面、检查窗口底部阴影像素。截图为 `runtime/merchant-evidence/v6-native/merchant-native-frame.png`，不是 QWidget 内部抓图；辅助窗口仅在验收期间置顶。
+- 原生窗口最小化、最大化/还原、键盘操作与店主独立任务栏图标测试通过（4 passed / 0 failed，含初始化/清理）。学生分支同步相同实现，原生窗口、文档预览和指标卡回归通过（5 passed / 0 failed）。完整 Release CTest 结果见 `runtime/native-frame-ctest.txt`。
+- 独立发布版本为 `merchant-v6`；数据仍使用既有 v1 的 `runtime/shop`。桌面入口、原图标和旧发布包保留。包内完整哈希、无 SDK 启动、六种 Office 格式和进程控制验证日志为 `runtime/merchant-evidence/v6-package-verification.txt`。
+- 使用 [Microsoft DWM 窗口属性](https://learn.microsoft.com/en-us/windows/win32/api/dwmapi/ne-dwmapi-dwmwindowattribute) 和 [扩展系统窗口框架](https://learn.microsoft.com/en-us/windows/win32/api/dwmapi/nf-dwmapi-dwmextendframeintoclientarea)；Windows 11 的圆角/轮廓属性在旧版本系统上由 DWM 忽略。本机视觉效果已验证，其他系统结果以对应环境为准。

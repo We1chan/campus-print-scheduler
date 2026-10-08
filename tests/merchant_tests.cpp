@@ -1,5 +1,6 @@
 #include "merchant_window.hpp"
 #include "coordinator_test_client.hpp"
+#include "native_frame_evidence.hpp"
 
 #include <QApplication>
 #include <QAction>
@@ -560,6 +561,8 @@ private slots:
         window.raise();
         window.activateWindow();
         QVERIFY(QTest::qWaitForWindowActive(&window));
+        const auto frameError=verifyNativeFrame(window,qEnvironmentVariable("CPS_MERCHANT_EVIDENCE_DIR"),"merchant-native-frame.png");
+        QVERIFY2(frameError.isEmpty(),qPrintable(frameError));
         QVERIFY(window.windowFlags().testFlag(Qt::FramelessWindowHint));
         auto* maximize = window.findChild<QPushButton*>("windowMaximize");
         auto* minimize = window.findChild<QPushButton*>("windowMinimize");

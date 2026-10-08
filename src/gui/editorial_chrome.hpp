@@ -69,6 +69,7 @@ class EditorialChrome : public QObject, public QAbstractNativeEventFilter {
   protected:
     bool eventFilter(QObject *object, QEvent *event) override;
   private:
+    void updateSystemFrame(bool active);
     bool draggable(QPoint point) const {
         const qreal band = referenceHeight_ ? titleHeight_ * window_->height() / referenceHeight_ : titleHeight_;
         if (point.y() < 0 || point.y() >= band) return false;

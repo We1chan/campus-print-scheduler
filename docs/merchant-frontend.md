@@ -6,7 +6,7 @@
 
 Windows 发布包中双击 `preview-merchant.vbs` 查看与概念图对应的交互样例；双击 `start-merchant.vbs` 连接真实持久队列。`start-student.vbs` 与真实店主端共同使用包内 `runtime/shop`，两端可以同时运行。样例完全独立，不读取或写入真实队列。
 
-本机桌面的“纸间 · 店主工作台”通过源码根目录 `start-merchant.vbs` 启动最新的 `merchant-v5` 发布包，兼容 v4/v3/v2/v1。v5 沿用 v3 的专用 `campus-print-merchant.exe` 和加大门店角标的图标；学生启动脚本继续使用原 `campus-print.exe`。已运行过 v1 时继续使用其 `runtime/shop` 队列；全新安装使用本工作树的 `runtime/merchant-shop`。两个数据目录均需要保留。现有学生快捷方式、品牌 PNG/ICO 和旧店主图标均保留，新版图标另存于 `assets/merchant/icons-v3/`，发布包另带 `paperroom-merchant-v3.ico`。
+本机桌面的“纸间 · 店主工作台”通过源码根目录 `start-merchant.vbs` 启动最新的 `merchant-v6` 发布包，兼容 v5/v4/v3/v2/v1。v6 沿用 v3 的专用 `campus-print-merchant.exe` 和加大门店角标的图标；学生启动脚本继续使用原 `campus-print.exe`。已运行过 v1 时继续使用其 `runtime/shop` 队列；全新安装使用本工作树的 `runtime/merchant-shop`。两个数据目录均需要保留。现有学生快捷方式、品牌 PNG/ICO 和旧店主图标均保留，新版图标另存于 `assets/merchant/icons-v3/`，发布包另带 `paperroom-merchant-v3.ico`。
 
 源码构建后的等价命令：
 
