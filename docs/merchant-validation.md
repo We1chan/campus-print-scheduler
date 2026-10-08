@@ -1,5 +1,13 @@
 # 店主端验收记录
 
+## v12 菜单阴影与分支功能说明（2026-10-09）
+
+- Windows 原生菜单样式会在自绘阴影之外叠加深色阴影。弹出菜单改用局部 Fusion 基础样式，继续保留两端统一的纸白、墨蓝、淡红反馈和原生 QMenu 操作；自绘阴影减至 10 层、每层 alpha 2、下移 2px。主窗口系统阴影保持原效果。
+- 回归检查整个面板外侧的透明区域，最大 alpha 不超过 24，防止只测远处淡影而漏掉紧贴边缘的深色阴影。实际两菜单截图见 [v12 菜单效果](images/merchant-menu-shadow-v12.png)。
+- 本机 Release 完整 CTest 15/15 通过，Windows 原生调度工作台、店铺菜单和真实 IPC 三个场景全部通过（含初始化/清理为 5 passed）。日志位于 `runtime/merchant-evidence/v12-ctest.txt` 和 `v12-native-menu.txt`。
+- README 开头列出店主端四页功能，并明确“打印队列 → 调度工作台”的按钮位置、五策略/四场景、播放与单步操作、返回方式及教学订单边界。调度工作台尚未接入后台实时订单。
+- 本机新包使用独立 `dist/merchant-v12` 目录，保留旧版本及原 v1 真实店铺数据。仍采用完整可运行目录交付，不重复生成本机 ZIP；发布检查输出保留为 `v12-package-verification.txt`。
+
 2026-10-03，Windows 11，Qt 6.10.1，MinGW 13.1，`ci` Release，warnings-as-errors 开启。
 
 ## 已完成的源代码与原生验收

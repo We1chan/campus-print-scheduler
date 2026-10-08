@@ -723,7 +723,13 @@ private slots:
                 const auto image=popup->grab().toImage();
                 const int x=image.width()/2,y=image.height()-qRound(8*image.devicePixelRatio());
                 const int alpha=image.pixelColor(x,y).alpha();
-                return image.pixelColor(0,0).alpha()==0&&alpha>0&&alpha<100;
+                const int inset=qRound(15*image.devicePixelRatio());
+                int darkest=0;
+                for(int row=0;row<image.height();++row)for(int column=0;column<image.width();++column){
+                    if(column<inset||row<inset||column>=image.width()-inset||row>=image.height()-inset)
+                        darkest=std::max(darkest,image.pixelColor(column,row).alpha());
+                }
+                return image.pixelColor(0,0).alpha()==0&&alpha>0&&darkest<=24;
             };
             menusRounded=menusRounded&&softShadow(menu)&&softShadow(policy);
             menusSaved=saveEvidence(*menu,QStringLiteral("native-shop-rounded-menu.png"))&&saveEvidence(*policy,QStringLiteral("native-policy-rounded-menu.png"));

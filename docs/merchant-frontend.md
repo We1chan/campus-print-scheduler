@@ -6,7 +6,7 @@
 
 Windows 发布包中双击 `preview-merchant.vbs` 查看与概念图对应的交互样例；双击 `start-merchant.vbs` 连接真实持久队列。`start-student.vbs` 与真实店主端共同使用包内 `runtime/shop`，两端可以同时运行。样例完全独立，不读取或写入真实队列。
 
-本机桌面的“纸间 · 店主工作台”通过源码根目录 `start-merchant.vbs` 启动最新的 `merchant-v11` 发布包，兼容已有旧版本。新版沿用 v3 的专用 `campus-print-merchant.exe` 和加大门店角标的图标；学生启动脚本继续使用原 `campus-print.exe`。已运行过 v1 时继续使用其 `runtime/shop` 队列；全新安装使用本工作树的 `runtime/merchant-shop`。两个数据目录均需要保留。现有学生快捷方式、品牌 PNG/ICO 和旧店主图标均保留，新版图标另存于 `assets/merchant/icons-v3/`，发布包另带 `paperroom-merchant-v3.ico`。
+本机桌面的“纸间 · 店主工作台”通过源码根目录 `start-merchant.vbs` 启动最新的 `merchant-v12` 发布包，兼容已有旧版本。新版沿用 v3 的专用 `campus-print-merchant.exe` 和加大门店角标的图标；学生启动脚本继续使用原 `campus-print.exe`。已运行过 v1 时继续使用其 `runtime/shop` 队列；全新安装使用本工作树的 `runtime/merchant-shop`。两个数据目录均需要保留。现有学生快捷方式、品牌 PNG/ICO 和旧店主图标均保留，新版图标另存于 `assets/merchant/icons-v3/`，发布包另带 `paperroom-merchant-v3.ico`。
 
 源码构建后的等价命令：
 
@@ -29,6 +29,10 @@ build/ci/bin/campus-print.exe --role student --data-dir runtime/shop
 Windows 店主窗口使用独立 `Paperroom.Merchant` 身份和新版窗口图标。任务栏重新启动信息保留店铺数据目录，店主专用 EXE 内嵌新图标；共用窗口控件初始化后重新设置店主图标，避免被学生品牌覆盖。该机制遵循 [Microsoft AppUserModelID 说明](https://learn.microsoft.com/en-us/windows/win32/shell/appids) 和 [任务栏图标属性](https://learn.microsoft.com/en-us/windows/win32/properties/props-system-appusermodel-relaunchiconresource)。
 
 工作台可按状态筛选、搜索文件名/订单号/学号、分页、选择订单和查看详情。右键订单可以取消等待任务；样例打印完成后可确认取件。队列按设备显示进度与顺序，较长队列可翻页。设备页的“上一页 / 下一页 / 添加设备”始终显示并保持同尺寸、同基线；首页禁用上一页、末页禁用下一页，不再弹出边界提示。设备页可切换设备组、调整名称和能力、开关接单，打开耗材补纸窗口。统计页可按今日、本周、本月或自定义日期重算并导出 JSON 报表。
+
+## 调度工作台：入口与操作
+
+**入口：启动店主端 → 顶栏“打印队列”（Ctrl+2）→ 队列标题同一行的“调度工作台”按钮。** 按钮位于设备分页区左侧。
 
 打印队列页的“调度工作台”打开独立演示页面，真实模式和样例模式都可进入。沿用已批准的同屏五策略时间轴、六单固定配色、底部顺序解释和纸面大标语；左侧显示订单参数，点击任一订单会在五条时间轴中同步突出该订单。点击策略名称或指标区切换当前策略及解释。四个场景分别展示长短单、取件期限、等待老化和营业收入；可以单步推进、播放/暂停、重新开始，选择 1×/2×/4× 演示速度。返回按钮回到打印队列，保留队列浏览状态。
 

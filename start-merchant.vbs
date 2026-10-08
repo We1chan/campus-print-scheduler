@@ -5,7 +5,7 @@ Set fs = CreateObject("Scripting.FileSystemObject")
 Set shell = CreateObject("WScript.Shell")
 root = fs.GetParentFolderName(WScript.ScriptFullName)
 executable = ""
-For Each version In Array("merchant-v11", "merchant-v10", "merchant-v9", "merchant-v8", "merchant-v7", "merchant-v6", "merchant-v5", "merchant-v4", "merchant-v3", "merchant-v2", "merchant-v1")
+For Each version In Array("merchant-v12", "merchant-v11", "merchant-v10", "merchant-v9", "merchant-v8", "merchant-v7", "merchant-v6", "merchant-v5", "merchant-v4", "merchant-v3", "merchant-v2", "merchant-v1")
     candidate = fs.BuildPath(root, "dist\" & version & "\campus-print-merchant.exe")
     If Not fs.FileExists(candidate) Then candidate = fs.BuildPath(root, "dist\" & version & "\campus-print.exe")
     If fs.FileExists(candidate) Then

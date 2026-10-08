@@ -34,6 +34,7 @@
 #include <QElapsedTimer>
 #include <QAbstractItemView>
 #include <QScreen>
+#include <QStyleFactory>
 #include <functional>
 #include <algorithm>
 static void initializeMerchantBrand() { Q_INIT_RESOURCE(merchant_assets); }
@@ -241,6 +242,10 @@ public:
     explicit MerchantMenu(QWidget* parent):QMenu(parent) {
         setWindowFlags(windowFlags()|Qt::FramelessWindowHint|Qt::NoDropShadowWindowHint);
         setAttribute(Qt::WA_TranslucentBackground);
+        // Vista menu items themselves contain the native popup shadow. Use a
+        // flat base style only for these menus, retaining our shared stylesheet.
+        auto* flatStyle=QStyleFactory::create(QStringLiteral("Fusion"));
+        flatStyle->setParent(this);setStyle(flatStyle);
     }
 protected:
     void showEvent(QShowEvent* event) override {
@@ -271,11 +276,10 @@ protected:
             painter.setCompositionMode(QPainter::CompositionMode_SourceOver);
             painter.setPen(Qt::NoPen);
             const QRectF paper=QRectF(rect()).adjusted(16,16,-16,-16);
-            // Low-opacity nested silhouettes produce a soft, rounded shadow
-            // inside the popup rather than relying on Windows' square shadow.
-            for(int spread=12;spread>=1;--spread){
-                painter.setBrush(QColor(0,0,0,3));
-                painter.drawRoundedRect(paper.adjusted(-spread,-spread,spread,spread).translated(0,3),8+spread,8+spread);
+            // Keep the halo as quiet as the main window's compositor shadow.
+            for(int spread=10;spread>=1;--spread){
+                painter.setBrush(QColor(0,0,0,2));
+                painter.drawRoundedRect(paper.adjusted(-spread,-spread,spread,spread).translated(0,2),8+spread,8+spread);
             }
         }
         QMenu::paintEvent(event);
