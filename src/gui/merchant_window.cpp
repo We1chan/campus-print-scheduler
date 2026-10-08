@@ -33,6 +33,7 @@
 #include <QRegion>
 #include <QElapsedTimer>
 #include <QAbstractItemView>
+#include <QScreen>
 #include <functional>
 #include <algorithm>
 static void initializeMerchantBrand() { Q_INIT_RESOURCE(merchant_assets); }
@@ -242,14 +243,46 @@ public:
         setAttribute(Qt::WA_TranslucentBackground);
     }
 protected:
+    void showEvent(QShowEvent* event) override {
+        QMenu::showEvent(event);
+        auto* parentMenu=qobject_cast<QMenu*>(parentWidget());
+        if(!parentMenu||!parentMenu->isVisible())return;
+        const auto row=parentMenu->actionGeometry(menuAction());
+        if(row.isEmpty())return;
+        // Align the paper edges, not the outer transparent shadow margins.
+        const auto available=screen()->availableGeometry();
+        int x=parentMenu->x()+parentMenu->width()-32;
+        if(x+width()>available.right()+1)x=parentMenu->x()-width()+32;
+        const int y=std::clamp(parentMenu->y()+row.top()-22,available.top(),std::max(available.top(),available.bottom()-height()+1));
+        move(x,y);
+    }
     void resizeEvent(QResizeEvent* event) override {
         QMenu::resizeEvent(event);
-        QPainterPath outline;outline.addRoundedRect(QRectF(rect()),8,8);
+        // Clip only the transparent window's outer corners. The paper panel
+        // and its rounded halo are inset, so neither gets a rectangular tail.
+        QPainterPath outline;outline.addRoundedRect(QRectF(rect()),12,12);
         setMask(QRegion(outline.toFillPolygon().toPolygon()));
+    }
+    void paintEvent(QPaintEvent* event) override {
+        {
+            QPainter painter(this);painter.setRenderHint(QPainter::Antialiasing);
+            painter.setCompositionMode(QPainter::CompositionMode_Source);
+            painter.fillRect(rect(),Qt::transparent);
+            painter.setCompositionMode(QPainter::CompositionMode_SourceOver);
+            painter.setPen(Qt::NoPen);
+            const QRectF paper=QRectF(rect()).adjusted(16,16,-16,-16);
+            // Low-opacity nested silhouettes produce a soft, rounded shadow
+            // inside the popup rather than relying on Windows' square shadow.
+            for(int spread=12;spread>=1;--spread){
+                painter.setBrush(QColor(0,0,0,3));
+                painter.drawRoundedRect(paper.adjusted(-spread,-spread,spread,spread).translated(0,3),8+spread,8+spread);
+            }
+        }
+        QMenu::paintEvent(event);
     }
 };
 static void styleMerchantMenu(QMenu& menu) {
-    menu.setStyleSheet("QMenu{background:#FAFAF9;color:#14213E;border:1px solid #DADDE2;border-radius:8px;padding:6px;font-family:'Microsoft YaHei UI';font-size:14px;}QMenu::item{padding:9px 24px 9px 15px;border-radius:5px;}QMenu::item:selected{background:#FFF6F2;color:#D63D29;}QMenu::separator{height:1px;background:#DADDE2;margin:6px 10px;}");
+    menu.setStyleSheet("QMenu{background:#FAFAF9;color:#14213E;border:1px solid #DADDE2;border-radius:8px;margin:16px;padding:6px;font-family:'Microsoft YaHei UI';font-size:14px;}QMenu::item{padding:9px 24px 9px 15px;border-radius:5px;}QMenu::item:selected{background:#FFF6F2;color:#D63D29;}QMenu::separator{height:1px;background:#DADDE2;margin:6px 10px;}");
 }
 MerchantWindow::MerchantWindow(WindowOptions options,bool showcase):model_(new MerchantData(options,showcase,this)),canvas_(new MerchantCanvas(this,model_)) {
     setFont(QFont(QStringLiteral("Microsoft YaHei UI"),10));
@@ -307,7 +340,7 @@ void MerchantWindow::action(const QString& name,const QString& value) {
         canvas_->selection.device=state.devices[target].index;canvas_->refresh();return;
     }
     if(name=="order-menu"){int index=value.toInt();if(index<0||index>=state.orders.size())return;canvas_->selection.order=index;canvas_->refresh();const auto order=state.orders[index];MerchantMenu menu(this);menu.setObjectName("merchantOrderMenu");styleMerchantMenu(menu);menu.addAction(QStringLiteral("查看文件"),this,&MerchantWindow::viewFile);if(order.state==QStringLiteral("待打印"))menu.addAction(QStringLiteral("取消订单"),this,[this,order]{model_->execute("cancel",order.id);});if(order.state==QStringLiteral("待取件")&&state.showcase)menu.addAction(QStringLiteral("确认取件"),this,[this,order]{model_->execute("pickup",order.id);});menu.exec(QCursor::pos());return;}
-    if(name=="shop-menu") {MerchantMenu menu(this);menu.setObjectName("merchantShopMenu");styleMerchantMenu(menu);menu.addAction(QStringLiteral("订单工作台"),this,[this]{setPage(0);});menu.addAction(QStringLiteral("刷新后台"),this,[this]{model_->execute("refresh");});if(!state.showcase){menu.addSeparator();auto* policy=new MerchantMenu(&menu);policy->setTitle(QStringLiteral("自动调度策略"));policy->setObjectName("merchantPolicyMenu");styleMerchantMenu(*policy);menu.addMenu(policy);const QStringList labels{QStringLiteral("先来先服务"),QStringLiteral("短作业优先"),QStringLiteral("优先级优先"),QStringLiteral("期限优先"),QStringLiteral("收入优先")};const QStringList values{"fcfs","sjf","priority","deadline","revenue"};for(int i=0;i<5;++i)policy->addAction(labels[i],this,[this,values,i]{model_->execute("policy",values[i]);});menu.addAction(state.paused?QStringLiteral("恢复全部派发"):QStringLiteral("暂停全部派发"),this,[this]{model_->execute(model_->snapshot().paused?"resume-all":"pause-all");});}auto* trigger=canvas_->findChild<QPushButton*>("merchant_shop-menu_");menu.exec(trigger?trigger->mapToGlobal(QPoint(0,trigger->height()+4)):QCursor::pos());return;}
+    if(name=="shop-menu") {MerchantMenu menu(this);menu.setObjectName("merchantShopMenu");styleMerchantMenu(menu);menu.addAction(QStringLiteral("订单工作台"),this,[this]{setPage(0);});menu.addAction(QStringLiteral("刷新后台"),this,[this]{model_->execute("refresh");});if(!state.showcase){menu.addSeparator();auto* policy=new MerchantMenu(&menu);policy->setTitle(QStringLiteral("自动调度策略"));policy->setObjectName("merchantPolicyMenu");styleMerchantMenu(*policy);menu.addMenu(policy);const QStringList labels{QStringLiteral("先来先服务"),QStringLiteral("短作业优先"),QStringLiteral("优先级优先"),QStringLiteral("期限优先"),QStringLiteral("收入优先")};const QStringList values{"fcfs","sjf","priority","deadline","revenue"};for(int i=0;i<5;++i)policy->addAction(labels[i],this,[this,values,i]{model_->execute("policy",values[i]);});menu.addAction(state.paused?QStringLiteral("恢复全部派发"):QStringLiteral("暂停全部派发"),this,[this]{model_->execute(model_->snapshot().paused?"resume-all":"pause-all");});}auto* trigger=canvas_->findChild<QPushButton*>("merchant_shop-menu_");menu.exec(trigger?trigger->mapToGlobal(QPoint(-16,trigger->height()-12)):QCursor::pos());return;}
     if(name=="pickup-slip") {if(state.orders.isEmpty())return;const auto& o=state.orders[canvas_->selection.order];QString path=QFileDialog::getSaveFileName(this,QStringLiteral("保存取件单"),o.id+"-取件单.txt","Text (*.txt)");if(path.isEmpty())return;QSaveFile file(path);if(file.open(QIODevice::WriteOnly)){file.write((QStringLiteral("纸间 · 校园一店\n订单：%1\n文件：%2\n学号：%3\n规格：%4\n金额：%5\n取件时间：%6\n").arg(o.id,o.title,o.student,specs(o),money(o.amountCents),o.pickupTime)).toUtf8());file.commit();notify(QStringLiteral("取件单已保存"));}return;}
     if(name=="device-settings"||name=="add-device") {
         const bool adding=name=="add-device"&&state.showcase;

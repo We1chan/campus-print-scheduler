@@ -119,3 +119,10 @@ python tools/verify_package.py --archive-dir runtime/merchant-v3-archive --outpu
 - 演示模型直接调用 `replayShop`，不修改调度核心和真实后台协议。输入与输出均采用统一教学时钟，等待、期限、派发、完成、历史及指标通过独立测试逐项与原始回放核对。覆盖 SJF 平均等待改善、期限策略改善、老化使旧低优先级订单提前、未来到达不可提前派发、五策略相同负载与全部完成。
 - Windows 原生测试在 950×594、1269×794、1586×992 检查控制区域没有越界；验证场景选择、单步推进、播放暂停、策略/订单选择、重置及返回；核对原有订单状态、设备打印量与等待数不变。原生窗口控件、DWM 圆角阴影和店铺菜单回归同时通过。证据在 `runtime/merchant-evidence/v10-native-tests.txt` 与 `v10-native/`。
 - Release 构建和完整 15 项 CTest 全部通过，结果为 `runtime/merchant-evidence/v10-ctest.txt`；四页及新调度页原生抓图为 `v10-gallery/`。正式 `merchant-v10` 包从已提交且 clean 的工作树打包，继续沿用 v1 的持久数据目录。打包和独立发布验证输出分别保存在 `v10-package.txt`、`v10-package-verification.txt`；部署完成证据为 `v10-completion.json`。
+
+## v11 门店与策略菜单阴影（2026-10-09）
+
+- 门店菜单与策略子菜单使用相同的中性灰柔和圆角阴影，阴影绘制在透明窗口的留白内，保留圆角纸白面板，避免系统方形阴影露出直角。菜单内容位置及子菜单纸面边缘保持对齐，原有按钮悬停与主窗口 DWM 阴影不变。
+- 原生回归同时检查菜单操作、圆角透明角点及面板之外存在低透明度阴影；截图为 `runtime/merchant-evidence/v11-native/native-menu-shadow-pair.png`。完整 CTest 结果记录于 `v11-ctest.txt`，原生结果为 `v11-native-menu.txt`。
+- 发布采用独立的 `dist/merchant-v11` 可运行目录，从 clean 提交构建打包。沿用 v10 已验证的完整 Office 运行时，目录所有文件核对 release manifest，移除 SDK 路径后执行启动、持久队列、六格式预览和进程控制验证；为保留旧版本并节省本机磁盘，本次不重复生成 ZIP。日志为 `v11-package-verification.txt`，部署结果为 `v11-completion.json`。
+- 调度工作台仍是独立教学演示；本轮只读取真实 `snapshot` 核实已有接口，没有把真实后台订单接入演示页面，也没有修改队列或后台策略。接口调查记录为 `runtime/merchant-evidence/v11-backend-readonly.json`：当前该数据目录为 0 个订单、6 个设备槽位。

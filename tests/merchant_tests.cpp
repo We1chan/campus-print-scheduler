@@ -719,7 +719,24 @@ private slots:
             menusRounded=policy->isVisible()&&!menu->mask().isEmpty()&&!policy->mask().isEmpty()
                 &&!menu->mask().contains(menu->rect().bottomRight())&&!policy->mask().contains(policy->rect().bottomRight())
                 &&menu->windowFlags().testFlag(Qt::NoDropShadowWindowHint)&&policy->windowFlags().testFlag(Qt::NoDropShadowWindowHint);
+            const auto softShadow=[](QMenu* popup){
+                const auto image=popup->grab().toImage();
+                const int x=image.width()/2,y=image.height()-qRound(8*image.devicePixelRatio());
+                const int alpha=image.pixelColor(x,y).alpha();
+                return image.pixelColor(0,0).alpha()==0&&alpha>0&&alpha<100;
+            };
+            menusRounded=menusRounded&&softShadow(menu)&&softShadow(policy);
             menusSaved=saveEvidence(*menu,QStringLiteral("native-shop-rounded-menu.png"))&&saveEvidence(*policy,QStringLiteral("native-policy-rounded-menu.png"));
+            const auto evidence=qEnvironmentVariable("CPS_MERCHANT_EVIDENCE_DIR");
+            if(QGuiApplication::platformName()==QStringLiteral("windows")&&!evidence.isEmpty()){
+                const QRect area=menu->frameGeometry().united(policy->frameGeometry());
+                // Compose only our popup captures, without reading the shared desktop.
+                const qreal scale=menu->devicePixelRatioF();
+                QImage pair(qRound(area.width()*scale),qRound(area.height()*scale),QImage::Format_ARGB32_Premultiplied);
+                pair.setDevicePixelRatio(scale);pair.fill(Qt::white);
+                QPainter painter(&pair);painter.drawPixmap(menu->pos()-area.topLeft(),menu->grab());painter.drawPixmap(policy->pos()-area.topLeft(),policy->grab());painter.end();
+                menusSaved=menusSaved&&pair.save(QDir(evidence).filePath("native-menu-shadow-pair.png"));
+            }
             policy->close();menu->close();
         });
         auto* shopMenu=merchant.findChild<QPushButton*>("merchant_shop-menu_");
