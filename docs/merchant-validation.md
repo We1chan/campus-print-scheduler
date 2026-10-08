@@ -93,3 +93,10 @@ python tools/verify_package.py --archive-dir runtime/merchant-v3-archive --outpu
 - 在真实 IPC 六设备状态下检查三页前进与返回。三个设备管理按钮宽高、位置、对象均稳定；首尾点击提示可访问文本正确，并且不翻页、不隐藏。原有队列页、订单提交、打印和设备配置继续验证。首尾页面截图在 v7-native/native-devices-{first,last}-page.png。
 - 最终 ci Release / CTest 输出保存在 runtime/merchant-evidence/v7-ctest.txt；四页的最终无测试提示截图位于 v7-gallery/。独立 merchant-v7 发布包验收校对提交号、全部文件 SHA-256、无 SDK 启动、持久队列/模拟打印、Office 六格式和进程控制，日志为 v7-package-verification.txt。
 - 桌面店主启动器优先 v7，沿用既有 v1 店铺数据；学生 v13 发布包和入口、旧发布包、全部概念图保留。
+
+## v8 底部对齐与间距（2026-10-08）
+
+- 营业状态绿点下移 3px，按实际中文字形可见范围对齐中心；文字大小和位置保留。
+- 四页底部操作按钮统一为 y=875、54px 高，设备设置与打印测试页使用同一顶线和底线，绘制与点击区域同步。
+- 设备页当前选择、在线状态、纸张及墨粉摘要整体上移 12px，保留两行文字的间距，增加摘要与营业栏分隔线之间的留白。
+- 本版沿用已有窗口轮廓、系统阴影、图标和数据目录。构建/CTest、四页原生抓图及发布包验收证据分别在 runtime/merchant-evidence/v8-build.txt、v8-ctest.txt、v8-gallery/ 和 v8-package-verification.txt。

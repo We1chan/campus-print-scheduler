@@ -239,7 +239,7 @@ void workbenchFooter(Painter& d, const Snapshot& state, const Selection& selecti
     const QString forecast=order&&(order->state==QStringLiteral("已完成")||order->state==QStringLiteral("待取件"))?QStringLiteral("打印已完成"):minutes<0?QStringLiteral("暂无法估算完成时间"):QStringLiteral("预计 %1 分钟完成").arg(minutes);
     d.text(534,876,500,30,forecast,21,navy,true);
     d.text(535,907,495,26,!state.showcase?QStringLiteral("由后台自动匹配设备"):device ? QStringLiteral("发送至 %1").arg(device->name) : QStringLiteral("请先分配打印设备"),12,secondary);
-    d.button(QRectF(1078,875,188,53),QStringLiteral("打印取件单"),QStringLiteral("pickup-slip"),QString::number(selection.order));
+    d.button(QRectF(1078,875,188,54),QStringLiteral("打印取件单"),QStringLiteral("pickup-slip"),QString::number(selection.order));
     if(order&&order->state==QStringLiteral("待取件"))d.button(QRectF(1286,875,262,54),QStringLiteral("确认取件  →"),QStringLiteral("pickup"),order->id,true);
     else if(order&&(order->state==QStringLiteral("已完成")||order->state==QStringLiteral("已取消")))d.text(1286,875,262,54,order->state,18,secondary,true,false,Qt::AlignCenter);
     else d.button(QRectF(1286,875,262,54),QStringLiteral("开始打印  →"),QStringLiteral("start"),QString::number(selection.device),true);
@@ -456,7 +456,7 @@ void paintQueue(Painter& d, const Snapshot& state, const Selection& selection)
     d.text(535,876,504,30,state.clearMinutes<0?QStringLiteral("暂无法估算清空时间"):QStringLiteral("预计 %1 分钟清空队列").arg(state.clearMinutes),21,navy,true);
     d.text(535,906,504,28,QStringLiteral("按当前设备状态估算"),12,secondary);
     const bool blackPaused=black>=0 && !state.devices[black].enabled;
-    d.button(QRectF(1078,875,193,53),blackPaused ? QStringLiteral("启动黑白队列") : QStringLiteral("暂停黑白队列"),blackPaused ? QStringLiteral("start") : QStringLiteral("pause"),QString::number(black));
-    d.button(QRectF(1287,875,261,53),QStringLiteral("▷  启动彩色队列  →"),QStringLiteral("start"),QString::number(color),true);
+    d.button(QRectF(1078,875,193,54),blackPaused ? QStringLiteral("启动黑白队列") : QStringLiteral("暂停黑白队列"),blackPaused ? QStringLiteral("start") : QStringLiteral("pause"),QString::number(black));
+    d.button(QRectF(1287,875,261,54),QStringLiteral("▷  启动彩色队列  →"),QStringLiteral("start"),QString::number(color),true);
 }
 }

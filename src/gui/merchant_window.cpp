@@ -158,7 +158,7 @@ private:
             if(i==page){const qreal lineWidth=i==0?100:88;p.fillRect(QRectF(tab.center().x()-lineWidth/2,52,lineWidth,4),red);}}
         d.icon("shop",1240,18,23);d.text(1275,3,70,50,QStringLiteral("校园一店"),16);d.hit({1230,7,120,42},"shop-menu",{},QStringLiteral("店铺菜单"));
         p.fillRect(QRectF(0,942,1586,50),Qt::white);d.rule(39,942,1507);
-        p.setPen(Qt::NoPen);p.setBrush(state.connected||state.showcase?green:slate);p.drawEllipse(QPointF(44,963),3,3);p.setBrush(Qt::NoBrush);
+        p.setPen(Qt::NoPen);p.setBrush(state.connected||state.showcase?green:slate);p.drawEllipse(QPointF(44,966),3,3);p.setBrush(Qt::NoBrush);
         d.text(63,949,185,32,state.connected||state.showcase?QStringLiteral("店铺营业中"):QStringLiteral("连接后台中"),14,navy);
         const auto online=std::count_if(state.devices.cbegin(),state.devices.cend(),[](const Device& device){return device.online;});
         d.text(175,949,151,32,"06:00 - 23:00",13,slate);d.text(344,949,196,32,QStringLiteral("%1 台设备在线").arg(online),13,slate);

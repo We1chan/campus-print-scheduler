@@ -451,22 +451,22 @@ void paintDevices(Painter& d, const Snapshot& state, const Selection& selection)
     d.text(1031, 813, 80, 25, QStringLiteral("总计"), 14, faded);
     d.text(1031, 834, 89, 37, QStringLiteral("%1 页").arg(totalPages), 21, navy, true);
     deviceDetails(d, state, selected);
-    d.icon(QStringLiteral("printer"), 45, 895, 42);
-    d.text(110, 883, 158, 24, QStringLiteral("当前选择"), 12, faded);
-    d.text(110, 915, 158, 22, selected ? selected->name : QStringLiteral("尚未配置"), 14, navy, true);
+    d.icon(QStringLiteral("printer"), 45, 883, 42);
+    d.text(110, 871, 158, 24, QStringLiteral("当前选择"), 12, faded);
+    d.text(110, 903, 158, 22, selected ? selected->name : QStringLiteral("尚未配置"), 14, navy, true);
     if (selected) {
-        d.dot(280, 920, QStringLiteral("%1 · %2 · 队列 %3 单").arg(selected->online ? QStringLiteral("在线") : QStringLiteral("离线"), deviceState(*selected)).arg(selected->queued), selected->online ? green : slate);
-        vertical(d, 539, 889, 45);
-        d.icon(QStringLiteral("document"), 590, 896, 36);
-        d.text(648, 883, 115, 24, QStringLiteral("A4 纸张"), 12);
-        d.text(648, 915, 115, 22, supply(selected->paper, QStringLiteral(" 张")), 14);
-        vertical(d, 738, 889, 45);
-        d.p.save(); d.p.setPen(QPen(navy, 2.8)); d.p.setBrush(Qt::NoBrush); d.p.drawRoundedRect(QRectF(775, 901, 20, 31), 5, 5); d.p.drawEllipse(QRectF(775, 897, 20, 9)); d.p.restore();
-        d.text(821, 883, 189, 24, QStringLiteral("黑色墨粉"), 12);
-        d.text(821, 915, 189, 22, supply(selected->toner[0], QStringLiteral("%")), 14);
+        d.dot(280, 908, QStringLiteral("%1 · %2 · 队列 %3 单").arg(selected->online ? QStringLiteral("在线") : QStringLiteral("离线"), deviceState(*selected)).arg(selected->queued), selected->online ? green : slate);
+        vertical(d, 539, 877, 45);
+        d.icon(QStringLiteral("document"), 590, 884, 36);
+        d.text(648, 871, 115, 24, QStringLiteral("A4 纸张"), 12);
+        d.text(648, 903, 115, 22, supply(selected->paper, QStringLiteral(" 张")), 14);
+        vertical(d, 738, 877, 45);
+        d.p.save(); d.p.setPen(QPen(navy, 2.8)); d.p.setBrush(Qt::NoBrush); d.p.drawRoundedRect(QRectF(775, 889, 20, 31), 5, 5); d.p.drawEllipse(QRectF(775, 885, 20, 9)); d.p.restore();
+        d.text(821, 871, 189, 24, QStringLiteral("黑色墨粉"), 12);
+        d.text(821, 903, 189, 22, supply(selected->toner[0], QStringLiteral("%")), 14);
     }
-    d.button({1093, 889, 182, 50}, QStringLiteral("设备设置"), QStringLiteral("device-settings"), selected ? number(selected->index) : QString());
-    d.button({1291, 888, 257, 51}, QStringLiteral("打印测试页    →"), QStringLiteral("test-page"), selected ? number(selected->index) : QString(), true);
+    d.button({1093, 875, 182, 54}, QStringLiteral("设备设置"), QStringLiteral("device-settings"), selected ? number(selected->index) : QString());
+    d.button({1291, 875, 257, 54}, QStringLiteral("打印测试页    →"), QStringLiteral("test-page"), selected ? number(selected->index) : QString(), true);
 }
 
 void paintStats(Painter& d, const Snapshot& state, const Selection& selection) {
@@ -499,7 +499,7 @@ void paintStats(Painter& d, const Snapshot& state, const Selection& selection) {
     d.icon(QStringLiteral("clock"), 478, 883, 36);
     d.text(536, 874, 478, 34, QStringLiteral("统计截至 %1").arg(state.clock), 21, navy, true);
     d.text(536, 906, 478, 29, QStringLiteral("订单、页数与营业额同步汇总"), 12, faded);
-    d.button({1077, 875, 193, 52}, QStringLiteral("查看订单明细"), QStringLiteral("order-details"));
-    d.button({1286, 875, 262, 52}, QStringLiteral("导出营业报表    →"), QStringLiteral("export-report"), {}, true);
+    d.button({1077, 875, 193, 54}, QStringLiteral("查看订单明细"), QStringLiteral("order-details"));
+    d.button({1286, 875, 262, 54}, QStringLiteral("导出营业报表    →"), QStringLiteral("export-report"), {}, true);
 }
 }
