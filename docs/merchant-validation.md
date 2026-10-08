@@ -33,3 +33,14 @@ python tests/office_package_smoke.py --package-dir dist/merchant-v1
 `verify_package` 核对 manifest 的提交、clean 标记与全部 SHA-256；`package_smoke` 在移除 SDK PATH 的环境中检查原生启动、重开、持久队列、静默后台与 worker 输出；`office_package_smoke` 仅使用包内引擎，在移除 SDK PATH 后真实渲染 doc/docx/ppt/pptx/xls/xlsx 的两页输入。
 
 这次验证范围是本机 Windows；没有将本机结果当作 macOS、Linux、远端 CI、干净新机器或物理打印验证。真实后台尚缺的功能已在 [页面说明](merchant-frontend.md) 中明确，不把样例操作当成已新增的协议能力。
+
+## v2 局部修复验收（2026-10-08）
+
+- `ci` Release 增量构建通过，warnings-as-errors 保持开启；完整 CTest 14/14 通过。
+- 新增三个界面回归：选中设备图片点击/鼠标焦点/键盘焦点后的静止图像一致，淡红悬停改变像素且移开恢复；窗口最大化/还原/最小化/恢复/关闭和 Space 激活；店铺菜单能触发工作台和刷新，并正确退出弹出事件循环。
+- 三个新增场景额外在 Windows 原生平台运行：5 passed / 0 failed（含初始化和清理）。日志和截图在 `runtime/merchant-evidence/v2-native*`。
+- 真实已运行队列的四页抓图在 `runtime/merchant-evidence/v2-real/`；两张单色卡的“未配置”均在分隔线左侧留出 16px。照片交互区域没有点击后持续红框。设备外沿保留当前选中态。
+- 用户选择 A“门店招牌”。仅新增 `assets/merchant/brand-*.png` 和 `paperroom-merchant.ico`；学生端品牌 PNG/ICO、程序嵌入的原图标和学生启动脚本没有修改。
+- 新增源码根目录静默启动器 `start-merchant.vbs`，优先 v2，并继续使用已经存在的 v1 店铺数据目录；桌面独立店主快捷方式引用专用图标。
+
+v2 包生成后使用单独存放该 ZIP 的归档目录执行 `tools/verify_package.py`；该工具校验 manifest 全部哈希，并依次执行无 SDK 的 GUI/持久队列、完整 Office 六格式和进程控制验收。结果留在 `runtime/merchant-v2-package-check/`，保留 v1 包及其真实运行数据。

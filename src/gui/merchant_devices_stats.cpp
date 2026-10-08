@@ -1,4 +1,5 @@
 #include "merchant_painter.hpp"
+#include <QFontMetricsF>
 #include <QPainterPath>
 #include <QLinearGradient>
 #include <algorithm>
@@ -85,11 +86,22 @@ void deviceCard(Painter& d, const Snapshot& state, const Device& device,
         d.text(x + w - 173, y + 263, 54, 31, percent(ratio), 16, faded);
         d.rule(x + 22, y + 302, w - 44);
         const qreal half = (w - 64) / 2;
+        const qreal supplyDividerX = x + half + 20;
+        const qreal paperValueX = x + 109;
+        const qreal paperValueWidth = supplyDividerX - 16 - paperValueX;
+        const QString paperValue = device.paper < 0 ? QStringLiteral("未配置")
+            : QStringLiteral("%1 / %2 张").arg(device.paper).arg(device.capacity);
+        QFont paperValueFont(QStringLiteral("Microsoft YaHei"));
+        paperValueFont.setPixelSize(16);
+        // Keep the complete inventory value inside the gap before the divider.
+        while (paperValueFont.pixelSize() > 1
+               && QFontMetricsF(paperValueFont).horizontalAdvance(paperValue) > paperValueWidth)
+            paperValueFont.setPixelSize(paperValueFont.pixelSize() - 1);
         d.text(x + 22, y + 313, 90, 31, QStringLiteral("A4 纸张"), 16, navy, true);
-        d.text(x + 109, y + 313, half - 86, 31,
-               device.paper < 0 ? QStringLiteral("未配置") : QStringLiteral("%1 / %2 张").arg(device.paper).arg(device.capacity), 16, faded, false, false, Qt::AlignRight | Qt::AlignVCenter);
+        d.text(paperValueX, y + 313, paperValueWidth, 31,
+               paperValue, paperValueFont.pixelSize(), faded, false, false, Qt::AlignRight | Qt::AlignVCenter);
         supplyBar(d, {x + 22, y + 347, half - 24, 13}, device.paper, device.capacity, blue);
-        vertical(d, x + half + 20, y + 318, 55);
+        vertical(d, supplyDividerX, y + 318, 55);
         d.text(x + half + 50, y + 313, 120, 31, QStringLiteral("黑色墨粉"), 16, navy, true);
         const int toner = device.toner[0];
         d.text(x + w - 108, y + 313, 84, 31, supply(toner, QStringLiteral("%")), 16, toner >= 0 && toner < 20 ? red : faded, false, false, Qt::AlignRight | Qt::AlignVCenter);

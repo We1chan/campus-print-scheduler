@@ -123,6 +123,7 @@ shell.CurrentDirectory = root
 shell.Run Chr(34) & fs.BuildPath(root, "campus-print.exe") & Chr(34) & "''' + flags + ''' --data-dir " & Chr(34) & fs.BuildPath(root, "runtime\\shop") & Chr(34), 1, False
 ''', encoding="ascii")
         shutil.copy2(root / "assets" / "editorial" / "paperroom.ico", output / "paperroom.ico")
+        shutil.copy2(root / "assets" / "merchant" / "paperroom-merchant.ico", output / "paperroom-merchant.ico")
     shutil.copy2(root / "docs" / "clean-up.md", output / "clean-up.md")
     shutil.copytree(root / "examples", output / "examples")
     if args.preview_fixtures:

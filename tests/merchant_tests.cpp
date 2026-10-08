@@ -2,23 +2,30 @@
 #include "coordinator_test_client.hpp"
 
 #include <QApplication>
+#include <QAction>
 #include <QDialog>
 #include <QDir>
 #include <QDragEnterEvent>
 #include <QDropEvent>
 #include <QFile>
+#include <QFocusEvent>
+#include <QEnterEvent>
+#include <QImage>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QLabel>
 #include <QLineEdit>
 #include <QMimeData>
+#include <QMenu>
 #include <QPointer>
 #include <QPushButton>
 #include <QSet>
 #include <QSignalSpy>
 #include <QTemporaryDir>
 #include <QTest>
+#include <QTimer>
 #include <algorithm>
+#include <cstdlib>
 
 using namespace cps::gui;
 using namespace cps::gui::merchant;
@@ -49,6 +56,23 @@ class MerchantTests : public QObject {
     static bool saveEvidence(QWidget& window, const QString& name) {
         const auto directory = qEnvironmentVariable("CPS_MERCHANT_EVIDENCE_DIR");
         return directory.isEmpty() || (QDir().mkpath(directory) && window.grab().save(QDir(directory).filePath(name)));
+    }
+
+    static void setPointerInside(QWidget& widget, bool inside) {
+        // Deliver real Qt enter/leave events without moving the shared desktop
+        // cursor. Explicit UnderMouse also makes this deterministic offscreen.
+        widget.setAttribute(Qt::WA_UnderMouse, inside);
+        if (inside) {
+            const QPoint center = widget.rect().center();
+            QEnterEvent enter(QPointF(center), QPointF(widget.mapTo(widget.window(), center)),
+                              QPointF(widget.mapToGlobal(center)));
+            QApplication::sendEvent(&widget, &enter);
+        } else {
+            QEvent leave(QEvent::Leave);
+            QApplication::sendEvent(&widget, &leave);
+        }
+        widget.setAttribute(Qt::WA_UnderMouse, inside);
+        widget.repaint();
     }
 
 private slots:
@@ -409,6 +433,174 @@ private slots:
         window.model()->execute(QStringLiteral("pause"), QStringLiteral("1"));
         window.close();
         QVERIFY(!window.isVisible());
+    }
+
+    void selectedDeviceImageHoverAndFocusReturnToRest() {
+        MerchantWindow window({}, true);
+        window.setPage(2);
+        window.show();
+        QVERIFY(QTest::qWaitForWindowExposed(&window));
+        window.raise();
+        window.activateWindow();
+        QVERIFY(QTest::qWaitForWindowActive(&window));
+        QPushButton* image = nullptr;
+        for (auto* button : window.findChildren<QPushButton*>("merchant_select-device_0")) {
+            if (button->accessibleName() == window.model()->snapshot().devices[0].name)
+                image = button; // The large image hit area, not the separate details link.
+        }
+        QVERIFY(image && image->isVisible() && image->height() > 100);
+        QCOMPARE(image->focusPolicy(), Qt::StrongFocus);
+        image->clearFocus();
+        setPointerInside(*image, false);
+        const QImage rest = image->grab().toImage();
+        QVERIFY(!rest.isNull());
+        QVERIFY(saveEvidence(window, QStringLiteral("native-device-rest.png")));
+
+        QSignalSpy clicked(image, &QPushButton::clicked);
+        QTest::mouseClick(image, Qt::LeftButton);
+        QCOMPARE(clicked.size(), 1);
+        QVERIFY(image->hasFocus());
+        setPointerInside(*image, false);
+        // Clicking an already selected device must not latch a focus rectangle
+        // over the printer artwork after the pointer has left it.
+        QCOMPARE(image->grab().toImage(), rest);
+        QFocusEvent focusIn(QEvent::FocusIn, Qt::MouseFocusReason);
+        QApplication::sendEvent(image, &focusIn);
+        QCOMPARE(image->grab().toImage(), rest);
+        image->clearFocus();
+        image->setFocus(Qt::TabFocusReason);
+        QVERIFY(image->hasFocus());
+        QCOMPARE(image->grab().toImage(), rest);
+        QVERIFY(saveEvidence(window, QStringLiteral("native-device-focused-no-hover.png")));
+
+        setPointerInside(*image, true);
+        QVERIFY(image->underMouse());
+        const QImage hovered = image->grab().toImage();
+        QVERIFY(hovered != rest);
+        QCOMPARE(hovered.size(), rest.size());
+        int warmerPixels = 0;
+        int largestChange = 0;
+        for (int y = 0; y < rest.height(); ++y) {
+            for (int x = 0; x < rest.width(); ++x) {
+                const QColor before = rest.pixelColor(x, y);
+                const QColor after = hovered.pixelColor(x, y);
+                largestChange = std::max({largestChange, std::abs(after.red() - before.red()),
+                    std::abs(after.green() - before.green()), std::abs(after.blue() - before.blue())});
+                if (before.red() > 220 && before.green() > 220 && before.blue() > 220 &&
+                    after.red() - after.green() > before.red() - before.green() &&
+                    after.red() - after.blue() > before.red() - before.blue()) ++warmerPixels;
+            }
+        }
+        QVERIFY(warmerPixels > rest.width() * rest.height() / 100);
+        QVERIFY2(largestChange < 40, "Hover should be a faint tint, not an opaque red frame.");
+        QVERIFY(saveEvidence(window, QStringLiteral("native-device-hover.png")));
+        setPointerInside(*image, false);
+        QVERIFY(!image->underMouse());
+        QVERIFY(image->hasFocus());
+        QCOMPARE(image->grab().toImage(), rest);
+        QVERIFY(saveEvidence(window, QStringLiteral("native-device-hover-returned.png")));
+        window.close();
+    }
+
+    void nativeWindowControlsPreserveMouseFocusAndRestore() {
+        MerchantWindow window({}, true);
+        window.show();
+        QVERIFY(QTest::qWaitForWindowExposed(&window));
+        window.raise();
+        window.activateWindow();
+        QVERIFY(QTest::qWaitForWindowActive(&window));
+        QVERIFY(window.windowFlags().testFlag(Qt::FramelessWindowHint));
+        auto* maximize = window.findChild<QPushButton*>("windowMaximize");
+        auto* minimize = window.findChild<QPushButton*>("windowMinimize");
+        auto* close = window.findChild<QPushButton*>("windowClose");
+        auto* search = window.findChild<QLineEdit*>("merchantSearch");
+        QVERIFY(maximize && minimize && close && search);
+        for (const auto* control : {maximize, minimize, close}) {
+            QVERIFY(control->isVisible() && !control->accessibleName().isEmpty());
+            QCOMPARE(control->focusPolicy(), Qt::TabFocus);
+        }
+        search->setFocus();
+        QVERIFY(search->hasFocus());
+        const QSize originalSize = window.size();
+        QTest::mouseClick(maximize, Qt::LeftButton);
+        QTRY_VERIFY(window.isMaximized());
+        QVERIFY(!maximize->hasFocus());
+        QVERIFY(search->hasFocus());
+        QVERIFY(saveEvidence(window, QStringLiteral("native-window-maximized.png")));
+        QTest::mouseClick(maximize, Qt::LeftButton);
+        QTRY_VERIFY(!window.isMaximized());
+        QTRY_COMPARE(window.size(), originalSize);
+        QVERIFY(!maximize->hasFocus());
+        QTest::mouseClick(minimize, Qt::LeftButton);
+        QTRY_VERIFY(window.isMinimized());
+        QVERIFY(!minimize->hasFocus());
+        window.showNormal(); // Restore through the OS window state API, as a taskbar does.
+        QTRY_VERIFY(!window.isMinimized());
+        QVERIFY(QTest::qWaitForWindowExposed(&window));
+        window.raise();
+        window.activateWindow();
+        QVERIFY(QTest::qWaitForWindowActive(&window));
+        QTRY_COMPARE(window.size(), originalSize);
+        QVERIFY(saveEvidence(window, QStringLiteral("native-window-restored.png")));
+        maximize->setFocus(Qt::TabFocusReason);
+        QTRY_VERIFY(maximize->hasFocus());
+        QTest::keyClick(maximize, Qt::Key_Space);
+        QTRY_VERIFY(window.isMaximized()); // Tab focus still supports keyboard activation.
+        QTest::keyClick(maximize, Qt::Key_Space);
+        QTRY_VERIFY(!window.isMaximized());
+        QTest::mouseClick(close, Qt::LeftButton);
+        QTRY_VERIFY(!window.isVisible());
+    }
+
+    void nativeShopMenuKeepsBusinessActionsAndReturns() {
+        MerchantWindow window({}, true);
+        window.setPage(2);
+        window.show();
+        QVERIFY(QTest::qWaitForWindowExposed(&window));
+        auto* shop = window.findChild<QPushButton*>("merchant_shop-menu_");
+        auto* search = window.findChild<QLineEdit*>("merchantSearch");
+        QVERIFY(shop && search && !search->isVisible());
+        QSignalSpy feedback(window.model(), &MerchantData::feedback);
+        const QStringList businessActions{QStringLiteral("订单工作台"), QStringLiteral("刷新后台")};
+        for (int index = 0; index < businessActions.size(); ++index) {
+            bool visible = false, saved = false, activated = false;
+            QStringList labels;
+            // QMenu::exec enters a nested event loop. Always close its popup,
+            // including on a missing action, so a regression cannot hang CI.
+            QTimer watchdog;
+            watchdog.setSingleShot(true);
+            connect(&watchdog, &QTimer::timeout, &window, [] {
+                if (auto* popup = QApplication::activePopupWidget()) popup->close();
+            });
+            watchdog.start(2000);
+            QTimer::singleShot(0, &window, [&] {
+                auto* menu = window.findChild<QMenu*>("merchantShopMenu");
+                if (!menu) return; // The watchdog also handles a renamed popup.
+                visible = menu->isVisible();
+                QAction* selected = nullptr;
+                for (auto* action : menu->actions()) {
+                    if (!action->isSeparator()) labels.append(action->text());
+                    if (action->text() == businessActions[index]) selected = action;
+                }
+                saved = saveEvidence(*menu, QStringLiteral("native-shop-menu-%1.png").arg(index));
+                if (!visible || !selected || !selected->isEnabled()) { menu->close(); return; }
+                connect(selected, &QAction::triggered, &window, [&] { activated = true; });
+                QTest::mouseClick(menu, Qt::LeftButton, Qt::NoModifier, menu->actionGeometry(selected).center());
+                menu->close();
+            });
+            QTest::mouseClick(shop, Qt::LeftButton);
+            watchdog.stop();
+            QVERIFY(visible && saved && activated);
+            QCOMPARE(labels, businessActions); // Window controls have their own title-bar buttons.
+            QVERIFY(!window.findChild<QMenu*>("merchantShopMenu"));
+            QVERIFY(window.isVisible() && !window.isMinimized() && !window.isMaximized());
+            QVERIFY(search->isVisible());
+        }
+        QCOMPARE(feedback.size(), 1);
+        QVERIFY(!feedback[0][1].toBool());
+        QVERIFY(feedback[0][0].toString().contains(QStringLiteral("刷新")));
+        QVERIFY(saveEvidence(window, QStringLiteral("native-shop-menu-returned.png")));
+        window.close();
     }
 
     void persistentBackendReceivesOtherClientOrder() {
