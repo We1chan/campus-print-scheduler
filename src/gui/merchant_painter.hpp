@@ -15,7 +15,7 @@ inline QFont merchantFont(int size, bool bold = false, bool serif = false) {
     font.setWeight(bold?(!serif&&size<=22?QFont::DemiBold:QFont::Bold):QFont::Normal);
     return font;
 }
-struct Hit { QRectF rect; QString action, value, label; bool button = false, primary = false; };
+struct Hit { QRectF rect; QString action, value, label; bool button = false, primary = false, enabled = true; };
 inline bool requiresShowcase(const QString& action) {
     return action=="assign"||action=="transfer"||action=="reorder"||action=="test-page";
 }
@@ -35,6 +35,7 @@ public:
     void panel(QRectF rect,QColor fill=Qt::white,QColor border=ruleColor,qreal radius=6);
     void hit(QRectF rect,const QString& action,const QString& value={},const QString& label={});
     void button(QRectF rect,const QString& label,const QString& action,const QString& value={},bool primary=false);
+    void pageButton(QRectF rect,const QString& label,const QString& action,const QString& value,bool enabled);
     void icon(const QString& name,qreal x,qreal y,qreal size=26,QColor color=navy);
     void badge(QRectF rect,const QString& label,bool accent=false);
     void progress(QRectF rect,double value,QColor color=navy);

@@ -51,6 +51,12 @@ void Painter::button(QRectF r,const QString& label,const QString& action,const Q
     text(r.x()+12,r.y(),r.width()-24,r.height(),label,size,ink,primary,false,Qt::AlignCenter);
     hits.push_back({r,action,value,label,true,primary});
 }
+void Painter::pageButton(QRectF r,const QString& label,const QString& action,const QString& value,bool enabled) {
+    if(enabled){button(r,label,action,value);return;}
+    panel(r,QColor("#F7F8FA"),ruleColor,7);
+    text(r.x(),r.y(),r.width(),r.height(),label,14,slate,false,false,Qt::AlignCenter);
+    hits.push_back({r,action,value,label,false,false,false});
+}
 void Painter::badge(QRectF r,const QString& label,bool accent) {
     panel(r,accent?QColor("#FFF9F7"):QColor("#FAFBFD"),accent?red:QColor("#ADB7C8"),r.height()/2);
     text(r.x()+5,r.y(),r.width()-10,r.height(),label,15,accent?red:navy,false,false,Qt::AlignCenter);

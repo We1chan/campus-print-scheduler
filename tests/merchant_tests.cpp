@@ -669,8 +669,31 @@ private slots:
         QVERIFY(!merchant.model()->snapshot().showcase);
         QCOMPARE(merchant.model()->snapshot().devices.size(), 6);
         QCOMPARE(merchant.model()->snapshot().orders.size(), 0);
+        bool menusRounded=false,menusSaved=false;
+        QTimer menuWatchdog;
+        menuWatchdog.setSingleShot(true);
+        connect(&menuWatchdog,&QTimer::timeout,&merchant,[&]{for(auto* menu:merchant.findChildren<QMenu*>())menu->close();});
+        menuWatchdog.start(5000);
+        QTimer::singleShot(150,&merchant,[&]{
+            auto* menu=merchant.findChild<QMenu*>("merchantShopMenu");
+            auto* policy=merchant.findChild<QMenu*>("merchantPolicyMenu");
+            if(!menu||!policy||!menu->isVisible()){if(menu)menu->close();return;}
+            policy->popup(menu->mapToGlobal(QPoint(menu->width()-1,menu->actionGeometry(policy->menuAction()).top())));
+            QTest::qWait(50);
+            menusRounded=policy->isVisible()&&!menu->mask().isEmpty()&&!policy->mask().isEmpty()
+                &&!menu->mask().contains(menu->rect().bottomRight())&&!policy->mask().contains(policy->rect().bottomRight())
+                &&menu->windowFlags().testFlag(Qt::NoDropShadowWindowHint)&&policy->windowFlags().testFlag(Qt::NoDropShadowWindowHint);
+            menusSaved=saveEvidence(*menu,QStringLiteral("native-shop-rounded-menu.png"))&&saveEvidence(*policy,QStringLiteral("native-policy-rounded-menu.png"));
+            policy->close();menu->close();
+        });
+        auto* shopMenu=merchant.findChild<QPushButton*>("merchant_shop-menu_");
+        QVERIFY(shopMenu);
+        QTest::mouseClick(shopMenu,Qt::LeftButton);
+        menuWatchdog.stop();
+        QVERIFY(menusRounded&&menusSaved);
         merchant.setPage(1);
-        QVERIFY(!merchant.findChild<QPushButton*>("merchant_queue-device-page_-2"));
+        auto* queuePrevious=merchant.findChild<QPushButton*>("merchant_queue-device-page_-2");
+        QVERIFY(queuePrevious&&queuePrevious->isVisible()&&!queuePrevious->isEnabled());
         for(int target:{2,4}){
             auto* next=merchant.findChild<QPushButton*>(QStringLiteral("merchant_queue-device-page_%1").arg(target));
             QVERIFY(next && next->isVisible());
@@ -680,7 +703,8 @@ private slots:
                 QVERIFY(lane && lane->isVisible());
             }
         }
-        QVERIFY(!merchant.findChild<QPushButton*>("merchant_queue-device-page_6"));
+        auto* queueNext=merchant.findChild<QPushButton*>("merchant_queue-device-page_6");
+        QVERIFY(queueNext&&queueNext->isVisible()&&!queueNext->isEnabled());
         QVERIFY(saveEvidence(merchant,QStringLiteral("native-queue-last-device-page.png")));
         for(int target:{2,0}){
             auto* previous=merchant.findChild<QPushButton*>(QStringLiteral("merchant_queue-device-page_%1").arg(target));
@@ -688,7 +712,13 @@ private slots:
             QTest::mouseClick(previous,Qt::LeftButton);
         }
         QVERIFY(saveEvidence(merchant,QStringLiteral("native-queue-first-device-page.png")));
-        merchant.setPage(2);
+        merchant.setPage(0);
+        QSignalSpy navigationFeedback(merchant.model(),&MerchantData::feedback);
+        auto* allDevices=merchant.findChild<QPushButton*>("merchant_page_devices");
+        QVERIFY(allDevices&&allDevices->isVisible()&&allDevices->isEnabled());
+        QTest::mouseClick(allDevices,Qt::LeftButton);
+        QVERIFY(!merchant.findChild<QLineEdit*>("merchantSearch")->isVisible());
+        QCOMPARE(navigationFeedback.size(),0);
         auto* previousDevice=merchant.findChild<QPushButton*>("merchant_device-prev_");
         auto* nextDevice=merchant.findChild<QPushButton*>("merchant_device-next_");
         auto* addDevice=merchant.findChild<QPushButton*>("merchant_add-device_");
@@ -698,8 +728,11 @@ private slots:
         QCOMPARE(previousDevice->size(),addDevice->size());
         QCOMPARE(nextDevice->size(),addDevice->size());
         QCOMPARE(addDevice->accessibleName(),QStringLiteral("添加设备"));
+        QVERIFY(previousDevice->isVisible()&&!previousDevice->isEnabled());
+        QVERIFY(nextDevice->isEnabled());
         QTest::mouseClick(previousDevice,Qt::LeftButton);
-        QCOMPARE(canvas->accessibleDescription(),QStringLiteral("已经是第一页"));
+        QVERIFY(canvas->accessibleDescription().isEmpty());
+        QCOMPARE(navigationFeedback.size(),0);
         for(int target:{2,4}){
             QTest::mouseClick(nextDevice,Qt::LeftButton);
             for(int device:{target,target+1}){
@@ -708,15 +741,19 @@ private slots:
             }
             QCOMPARE(previousDevice->geometry(),previousGeometry);
             QCOMPARE(nextDevice->geometry(),nextGeometry);
+            QVERIFY(previousDevice->isEnabled());
         }
+        QVERIFY(!nextDevice->isEnabled());
         QTest::mouseClick(nextDevice,Qt::LeftButton);
-        QCOMPARE(canvas->accessibleDescription(),QStringLiteral("已经是最后一页"));
+        QVERIFY(canvas->accessibleDescription().isEmpty());
+        QCOMPARE(navigationFeedback.size(),0);
         QVERIFY(previousDevice->isVisible()&&nextDevice->isVisible());
         QVERIFY(saveEvidence(merchant,QStringLiteral("native-devices-last-page.png")));
         for(int target:{2,0}){
             QTest::mouseClick(previousDevice,Qt::LeftButton);
             QVERIFY(merchant.findChild<QPushButton*>(QStringLiteral("merchant_select-device_%1").arg(target)));
         }
+        QVERIFY(!previousDevice->isEnabled()&&nextDevice->isEnabled());
         QVERIFY(saveEvidence(merchant,QStringLiteral("native-devices-first-page.png")));
         merchant.setPage(0);
         merchant.model()->execute(QStringLiteral("pause-all"));

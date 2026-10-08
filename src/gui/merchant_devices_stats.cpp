@@ -413,8 +413,8 @@ void paintDevices(Painter& d, const Snapshot& state, const Selection& selection)
     const qsizetype groupStart = (selectedPosition / 2) * 2;
     const qsizetype pageCount=std::max<qsizetype>(1,(state.devices.size()+1)/2);
     d.text(632,297,88,41,QStringLiteral("%1 / %2 页").arg(groupStart/2+1).arg(pageCount),12,slate,false,false,Qt::AlignRight|Qt::AlignVCenter);
-    d.button({734,297,120,41},QStringLiteral("上一页"),QStringLiteral("device-prev"));
-    d.button({866,297,120,41},QStringLiteral("下一页"),QStringLiteral("device-next"));
+    d.pageButton({734,297,120,41},QStringLiteral("上一页"),QStringLiteral("device-prev"),{},groupStart>0);
+    d.pageButton({866,297,120,41},QStringLiteral("下一页"),QStringLiteral("device-next"),{},groupStart+2<state.devices.size());
     for (qsizetype i = groupStart; i < std::min<qsizetype>(groupStart + 2, state.devices.size()); ++i) {
         const Device& device = state.devices[i];
         deviceCard(d, state, device, i == groupStart ? QRectF(40, 347, 544, 394) : QRectF(596, 347, 525, 394), selected && selected->index == device.index);

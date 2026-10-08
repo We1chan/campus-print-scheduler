@@ -28,6 +28,8 @@
 #include <QDropEvent>
 #include <QMouseEvent>
 #include <QFontMetricsF>
+#include <QPainterPath>
+#include <QRegion>
 #include <functional>
 #include <algorithm>
 static void initializeMerchantBrand() { Q_INIT_RESOURCE(merchant_assets); }
@@ -116,8 +118,8 @@ public:
             button->setProperty("dropOrderId",orderHit?state.orders[row].id:QString());
             button->setProperty("dragOrderId",orderHit&&page==1&&state.showcase&&state.orders[row].state==QStringLiteral("待打印")?state.orders[row].id:QString());
             const bool unsupported=!state.showcase&&requiresShowcase(hit.action);
-            button->setEnabled(!unsupported);
-            button->setCursor(unsupported?Qt::ArrowCursor:Qt::PointingHandCursor);
+            button->setEnabled(hit.enabled&&!unsupported);
+            button->setCursor(button->isEnabled()?Qt::PointingHandCursor:Qt::ArrowCursor);
             if(unsupported)button->setToolTip(QStringLiteral("共享后台尚未提供该手动操作；可在店铺菜单选择自动调度策略。"));
         }
         for(auto i=buttons_.begin();i!=buttons_.end();) {if(!active.contains(i.key())) {delete i.value();i=buttons_.erase(i);}else ++i;}
@@ -168,6 +170,19 @@ private:
     }
     MerchantData* data_;Assets assets_;QHash<QString,QPushButton*> buttons_;QLineEdit* search_;QVector<EditorialWindowButton*> windowControls_;
 };
+class MerchantMenu : public QMenu {
+public:
+    explicit MerchantMenu(QWidget* parent):QMenu(parent) {
+        setWindowFlags(windowFlags()|Qt::FramelessWindowHint|Qt::NoDropShadowWindowHint);
+        setAttribute(Qt::WA_TranslucentBackground);
+    }
+protected:
+    void resizeEvent(QResizeEvent* event) override {
+        QMenu::resizeEvent(event);
+        QPainterPath outline;outline.addRoundedRect(QRectF(rect()),8,8);
+        setMask(QRegion(outline.toFillPolygon().toPolygon()));
+    }
+};
 static void styleMerchantMenu(QMenu& menu) {
     menu.setStyleSheet("QMenu{background:#FAFAF9;color:#14213E;border:1px solid #DADDE2;border-radius:8px;padding:6px;font-family:'Microsoft YaHei UI';font-size:14px;}QMenu::item{padding:9px 24px 9px 15px;border-radius:5px;}QMenu::item:selected{background:#FFF6F2;color:#D63D29;}QMenu::separator{height:1px;background:#DADDE2;margin:6px 10px;}");
 }
@@ -203,6 +218,7 @@ void MerchantWindow::viewFile() {
 }
 void MerchantWindow::action(const QString& name,const QString& value) {
     if(name=="nav"){setPage(value.toInt());return;}if(name=="select-order"){canvas_->selection.order=value.toInt();canvas_->refresh();return;}
+    if(name=="page"&&value=="devices"){setPage(2);return;}
     if(name=="select-device"){canvas_->selection.device=value.toInt();canvas_->refresh();return;}if(name=="filter"){canvas_->selection.filter=value.toInt();canvas_->selection.offset=0;canvas_->refresh();return;}
     if(name=="queue-device-page"){canvas_->selection.device=value.toInt();canvas_->selection.queueOffset=0;canvas_->refresh();return;}
     if(name=="table-prev"||name=="table-next"){int maximum=std::max(0,int(visibleOrders(model_->snapshot(),canvas_->selection).size())-5);canvas_->selection.offset=std::clamp(canvas_->selection.offset+(name=="table-next"?5:-5),0,maximum);canvas_->refresh();return;}
@@ -216,12 +232,11 @@ void MerchantWindow::action(const QString& name,const QString& value) {
         for(qsizetype i=0;i<state.devices.size();++i)if(state.devices[i].index==canvas_->selection.device){current=i;break;}
         const qsizetype start=(current/2)*2;
         const qsizetype target=start+(name=="device-next"?2:-2);
-        if(target<0){notify(QStringLiteral("已经是第一页"));return;}
-        if(target>=state.devices.size()){notify(QStringLiteral("已经是最后一页"));return;}
+        if(target<0||target>=state.devices.size())return;
         canvas_->selection.device=state.devices[target].index;canvas_->refresh();return;
     }
-    if(name=="order-menu"){int index=value.toInt();if(index<0||index>=state.orders.size())return;canvas_->selection.order=index;canvas_->refresh();const auto order=state.orders[index];QMenu menu(this);menu.setObjectName("merchantOrderMenu");styleMerchantMenu(menu);menu.addAction(QStringLiteral("查看文件"),this,&MerchantWindow::viewFile);if(order.state==QStringLiteral("待打印"))menu.addAction(QStringLiteral("取消订单"),this,[this,order]{model_->execute("cancel",order.id);});if(order.state==QStringLiteral("待取件")&&state.showcase)menu.addAction(QStringLiteral("确认取件"),this,[this,order]{model_->execute("pickup",order.id);});menu.exec(QCursor::pos());return;}
-    if(name=="shop-menu") {QMenu menu(this);menu.setObjectName("merchantShopMenu");styleMerchantMenu(menu);menu.addAction(QStringLiteral("订单工作台"),this,[this]{setPage(0);});menu.addAction(QStringLiteral("刷新后台"),this,[this]{model_->execute("refresh");});if(!state.showcase){menu.addSeparator();auto* policy=menu.addMenu(QStringLiteral("自动调度策略"));const QStringList labels{QStringLiteral("先来先服务"),QStringLiteral("短作业优先"),QStringLiteral("优先级优先"),QStringLiteral("期限优先"),QStringLiteral("收入优先")};const QStringList values{"fcfs","sjf","priority","deadline","revenue"};for(int i=0;i<5;++i)policy->addAction(labels[i],this,[this,values,i]{model_->execute("policy",values[i]);});menu.addAction(state.paused?QStringLiteral("恢复全部派发"):QStringLiteral("暂停全部派发"),this,[this]{model_->execute(model_->snapshot().paused?"resume-all":"pause-all");});}auto* trigger=canvas_->findChild<QPushButton*>("merchant_shop-menu_");menu.exec(trigger?trigger->mapToGlobal(QPoint(0,trigger->height()+4)):QCursor::pos());return;}
+    if(name=="order-menu"){int index=value.toInt();if(index<0||index>=state.orders.size())return;canvas_->selection.order=index;canvas_->refresh();const auto order=state.orders[index];MerchantMenu menu(this);menu.setObjectName("merchantOrderMenu");styleMerchantMenu(menu);menu.addAction(QStringLiteral("查看文件"),this,&MerchantWindow::viewFile);if(order.state==QStringLiteral("待打印"))menu.addAction(QStringLiteral("取消订单"),this,[this,order]{model_->execute("cancel",order.id);});if(order.state==QStringLiteral("待取件")&&state.showcase)menu.addAction(QStringLiteral("确认取件"),this,[this,order]{model_->execute("pickup",order.id);});menu.exec(QCursor::pos());return;}
+    if(name=="shop-menu") {MerchantMenu menu(this);menu.setObjectName("merchantShopMenu");styleMerchantMenu(menu);menu.addAction(QStringLiteral("订单工作台"),this,[this]{setPage(0);});menu.addAction(QStringLiteral("刷新后台"),this,[this]{model_->execute("refresh");});if(!state.showcase){menu.addSeparator();auto* policy=new MerchantMenu(&menu);policy->setTitle(QStringLiteral("自动调度策略"));policy->setObjectName("merchantPolicyMenu");styleMerchantMenu(*policy);menu.addMenu(policy);const QStringList labels{QStringLiteral("先来先服务"),QStringLiteral("短作业优先"),QStringLiteral("优先级优先"),QStringLiteral("期限优先"),QStringLiteral("收入优先")};const QStringList values{"fcfs","sjf","priority","deadline","revenue"};for(int i=0;i<5;++i)policy->addAction(labels[i],this,[this,values,i]{model_->execute("policy",values[i]);});menu.addAction(state.paused?QStringLiteral("恢复全部派发"):QStringLiteral("暂停全部派发"),this,[this]{model_->execute(model_->snapshot().paused?"resume-all":"pause-all");});}auto* trigger=canvas_->findChild<QPushButton*>("merchant_shop-menu_");menu.exec(trigger?trigger->mapToGlobal(QPoint(0,trigger->height()+4)):QCursor::pos());return;}
     if(name=="pickup-slip") {if(state.orders.isEmpty())return;const auto& o=state.orders[canvas_->selection.order];QString path=QFileDialog::getSaveFileName(this,QStringLiteral("保存取件单"),o.id+"-取件单.txt","Text (*.txt)");if(path.isEmpty())return;QSaveFile file(path);if(file.open(QIODevice::WriteOnly)){file.write((QStringLiteral("纸间 · 校园一店\n订单：%1\n文件：%2\n学号：%3\n规格：%4\n金额：%5\n取件时间：%6\n").arg(o.id,o.title,o.student,specs(o),money(o.amountCents),o.pickupTime)).toUtf8());file.commit();notify(QStringLiteral("取件单已保存"));}return;}
     if(name=="device-settings"||name=="add-device") {
         const bool adding=name=="add-device"&&state.showcase;

@@ -405,8 +405,7 @@ void paintQueue(Painter& d, const Snapshot& state, const Selection& selection)
     const int base=page*2;
     d.text(651,310,142,39,QStringLiteral("第 %1 / %2 页").arg(page+1).arg(pageCount),12,secondary,false,false,Qt::AlignRight|Qt::AlignVCenter);
     const auto pageButton=[&](QRectF rect,const QString& label,int target,bool enabled){
-        if(enabled)d.button(rect,label,QStringLiteral("queue-device-page"),QString::number(target));
-        else{d.panel(rect,QColor("#F7F8FA"),ruleColor,7);d.text(rect.x(),rect.y(),rect.width(),rect.height(),label,14,secondary,false,false,Qt::AlignCenter);}
+        d.pageButton(rect,label,QStringLiteral("queue-device-page"),QString::number(target),enabled);
     };
     pageButton(QRectF(807,310,101,39),QStringLiteral("上一页"),base-2,page>0);
     pageButton(QRectF(920,310,101,39),QStringLiteral("下一页"),base+2,page+1<pageCount);
