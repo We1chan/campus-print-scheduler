@@ -1198,11 +1198,14 @@ private slots:
 
     void ownerConsoleShowsForecast() {
         BackendDirectory root;
-        PrintWindow window({root.path(), 40, false}); window.show();
+        PrintWindow window({root.path(), 40, false});
+        QSignalSpy backendReady(&window, &PrintWindow::backendReady);
+        window.show();
         auto* pause = window.findChild<QPushButton*>("pauseDispatch");
         QVERIFY(pause);
-        // The real control stays disabled until the coordinator is ready. Do
-        // not send a mutation during startup, when it can correctly be rejected.
+        // Receive a connected snapshot first; the widget's initial enabled
+        // property by itself does not prove the coordinator is ready.
+        QTRY_VERIFY_WITH_TIMEOUT(!backendReady.isEmpty(), 10000);
         QTRY_VERIFY_WITH_TIMEOUT(pause->isEnabled(), 10000);
         window.pauseRequested(true);
         QTRY_VERIFY_WITH_TIMEOUT(pause->isChecked(), 10000);
