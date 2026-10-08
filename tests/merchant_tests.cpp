@@ -528,23 +528,7 @@ private slots:
         setPointerInside(*image, true);
         QVERIFY(image->underMouse());
         const QImage hovered = image->grab().toImage();
-        QVERIFY(hovered != rest);
-        QCOMPARE(hovered.size(), rest.size());
-        int warmerPixels = 0;
-        int largestChange = 0;
-        for (int y = 0; y < rest.height(); ++y) {
-            for (int x = 0; x < rest.width(); ++x) {
-                const QColor before = rest.pixelColor(x, y);
-                const QColor after = hovered.pixelColor(x, y);
-                largestChange = std::max({largestChange, std::abs(after.red() - before.red()),
-                    std::abs(after.green() - before.green()), std::abs(after.blue() - before.blue())});
-                if (before.red() > 220 && before.green() > 220 && before.blue() > 220 &&
-                    after.red() - after.green() > before.red() - before.green() &&
-                    after.red() - after.blue() > before.red() - before.blue()) ++warmerPixels;
-            }
-        }
-        QVERIFY(warmerPixels > rest.width() * rest.height() / 100);
-        QVERIFY2(largestChange < 40, "Hover should be a faint tint, not an opaque red frame.");
+        QCOMPARE(hovered, rest); // Artwork stays unchanged on hover, like student navigation.
         QVERIFY(saveEvidence(window, QStringLiteral("native-device-hover.png")));
         setPointerInside(*image, false);
         QVERIFY(!image->underMouse());

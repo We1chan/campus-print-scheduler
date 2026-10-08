@@ -451,18 +451,18 @@ void paintDevices(Painter& d, const Snapshot& state, const Selection& selection)
     d.text(1031, 834, 89, 37, QStringLiteral("%1 页").arg(totalPages), 27, navy, true);
     deviceDetails(d, state, selected);
     d.icon(QStringLiteral("printer"), 45, 895, 42);
-    d.text(110, 890, 350, 27, QStringLiteral("当前选择"), 16, faded);
-    d.text(110, 913, 158, 29, selected ? selected->name : QStringLiteral("尚未配置"), 20, navy, true);
+    d.text(110, 883, 158, 24, QStringLiteral("当前选择"), 15, faded);
+    d.text(110, 915, 158, 22, selected ? selected->name : QStringLiteral("尚未配置"), 18, navy, true);
     if (selected) {
         d.dot(280, 920, QStringLiteral("%1 · %2 · 队列 %3 单").arg(selected->online ? QStringLiteral("在线") : QStringLiteral("离线"), deviceState(*selected)).arg(selected->queued), selected->online ? green : slate);
         vertical(d, 539, 889, 45);
         d.icon(QStringLiteral("document"), 590, 896, 36);
-        d.text(648, 890, 115, 27, QStringLiteral("A4 纸张"), 17);
-        d.text(648, 916, 115, 29, supply(selected->paper, QStringLiteral(" 张")), 17);
+        d.text(648, 883, 115, 24, QStringLiteral("A4 纸张"), 15);
+        d.text(648, 915, 115, 22, supply(selected->paper, QStringLiteral(" 张")), 16);
         vertical(d, 738, 889, 45);
         d.p.save(); d.p.setPen(QPen(navy, 2.8)); d.p.setBrush(Qt::NoBrush); d.p.drawRoundedRect(QRectF(775, 901, 20, 31), 5, 5); d.p.drawEllipse(QRectF(775, 897, 20, 9)); d.p.restore();
-        d.text(821, 890, 189, 27, QStringLiteral("黑色墨粉"), 17);
-        d.text(821, 916, 189, 29, supply(selected->toner[0], QStringLiteral("%")), 17);
+        d.text(821, 883, 189, 24, QStringLiteral("黑色墨粉"), 15);
+        d.text(821, 915, 189, 22, supply(selected->toner[0], QStringLiteral("%")), 16);
     }
     d.button({1093, 889, 182, 50}, QStringLiteral("设备设置"), QStringLiteral("device-settings"), selected ? number(selected->index) : QString());
     d.button({1291, 888, 257, 51}, QStringLiteral("打印测试页    →"), QStringLiteral("test-page"), selected ? number(selected->index) : QString(), true);

@@ -37,10 +37,10 @@ void Painter::rule(qreal x,qreal y,qreal w) {p.setPen(QPen(ruleColor,1)); p.draw
 void Painter::panel(QRectF r,QColor fill,QColor border,qreal radius) { p.setPen(QPen(border,1));p.setBrush(fill);p.drawRoundedRect(r,radius,radius);p.setBrush(Qt::NoBrush); }
 void Painter::hit(QRectF r,const QString& action,const QString& value,const QString& label) {hits.push_back({r,action,value,label.isEmpty()?action:label});}
 void Painter::button(QRectF r,const QString& label,const QString& action,const QString& value,bool primary) {
-    panel(r,primary?red:QColor(Qt::white),primary?red:navy,6);
+    panel(r,primary?red:QColor(Qt::white),primary?red:QColor("#D9DCE2"),6);
     const int size=r.height()<=41?16:r.height()<=50?19:21;
     text(r.x()+12,r.y(),r.width()-24,r.height(),label,size,primary?QColor(Qt::white):navy,true,false,Qt::AlignCenter);
-    hit(r,action,value,label);
+    hits.push_back({r,action,value,label,true,primary});
 }
 void Painter::badge(QRectF r,const QString& label,bool accent) {
     panel(r,accent?QColor("#FFF9F7"):QColor("#FAFBFD"),accent?red:QColor("#ADB7C8"),r.height()/2);

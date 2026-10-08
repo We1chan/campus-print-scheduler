@@ -27,6 +27,7 @@
 #include <QDragEnterEvent>
 #include <QDropEvent>
 #include <QMouseEvent>
+#include <QFontMetricsF>
 #include <functional>
 #include <algorithm>
 static void initializeMerchantBrand() { Q_INIT_RESOURCE(merchant_assets); }
@@ -40,12 +41,23 @@ QIcon merchantBrandIcon() {
 class MerchantButton : public QPushButton {
 public:
     explicit MerchantButton(QWidget* parent):QPushButton(parent){setAttribute(Qt::WA_Hover);}
+    void setHit(const Hit& hit) { hit_ = hit; }
 protected:
     void paintEvent(QPaintEvent*) override {
-        if(!isEnabled()||(!underMouse()&&!isDown()))return;
-        QPainter painter(this);painter.setRenderHint(QPainter::Antialiasing);painter.setPen(Qt::NoPen);
-        // A soft hover tint fades towards the edge. Pointer focus never paints a border.
-        for(int inset=0;inset<3;++inset){painter.setBrush(QColor(217,62,41,isDown()?6:4));painter.drawRoundedRect(QRectF(rect()).adjusted(inset*2,inset*2,-inset*2,-inset*2),6,6);}
+        // Match student buttons: flat color/border feedback, transparent navigation and artwork.
+        if(!hit_.button||!isEnabled()||(!underMouse()&&!isDown()&&!hasFocus()))return;
+        QPainter painter(this);painter.setRenderHint(QPainter::Antialiasing);
+        painter.scale(width()/hit_.rect.width(),height()/hit_.rect.height());
+        const bool hovered=underMouse()||isDown();
+        const QColor accent("#D6402C");
+        painter.setPen(QPen(accent,hasFocus()?2:1));
+        painter.setBrush(hit_.primary?(hovered?QColor("#BF3322"):red):(hovered?QColor("#FFF6F2"):QColor(Qt::white)));
+        const QRectF box(0,0,hit_.rect.width(),hit_.rect.height());
+        painter.drawRoundedRect(box.adjusted(1,1,-1,-1),6,6);
+        const int size=box.height()<=41?16:box.height()<=50?19:21;
+        const QFont font=merchantFont(size,true);
+        painter.setFont(font);painter.setPen(hit_.primary?QColor(Qt::white):navy);
+        painter.drawText(box.adjusted(12,0,-12,0),Qt::AlignCenter,QFontMetricsF(font).elidedText(hit_.label,Qt::ElideRight,box.width()-24));
     }
     void enterEvent(QEnterEvent* event) override {QPushButton::enterEvent(event);update();}
     void leaveEvent(QEvent* event) override {QPushButton::leaveEvent(event);update();}
@@ -59,6 +71,7 @@ protected:
     }
 private:
     QPoint dragOrigin_;
+    Hit hit_;
 };
 class MerchantCanvas : public QWidget {
 public:
@@ -92,6 +105,7 @@ public:
                 button->setAccessibleName(hit.label);button->setToolTip(hit.label);button->setCursor(Qt::PointingHandCursor);button->setFocusPolicy(Qt::StrongFocus);
                 QObject::connect(button,&QPushButton::clicked,this,[this,hit]{if(invoked)invoked(hit.action,hit.value);});}
             if(hit.action=="select-order"&&!button->property("orderMenuWired").toBool()){button->setProperty("orderMenuWired",true);button->setContextMenuPolicy(Qt::CustomContextMenu);QObject::connect(button,&QWidget::customContextMenuRequested,this,[this,hit]{if(invoked)invoked("order-menu",hit.value);});}
+            static_cast<MerchantButton*>(button)->setHit(hit);
             button->setGeometry(QRect(qRound(hit.rect.x()*sx),qRound(hit.rect.y()*sy),qRound(hit.rect.width()*sx),qRound(hit.rect.height()*sy)));button->show();
             const int row=hit.value.toInt();const bool orderHit=hit.action=="select-order"&&row>=0&&row<state.orders.size();
             button->setProperty("dropOrderId",orderHit?state.orders[row].id:QString());

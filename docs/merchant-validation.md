@@ -80,6 +80,8 @@ python tools/verify_package.py --archive-dir runtime/merchant-v3-archive --outpu
 
 - 两端共享窗口框架接入 Windows DWM：保留自绘标题栏，恢复系统窗口轮廓、圆角和柔和的窗口外阴影。活动窗口使用低对比度浅灰轮廓，失焦后进一步淡化；最大化时移除扩展边距，继续按工作区避开任务栏。
 - Windows 原生测试读取 DWM 非客户区渲染状态和圆角属性，并在自建纯色背景上捕获合成器实际桌面画面、检查窗口底部阴影像素。截图为 `runtime/merchant-evidence/v6-native/merchant-native-frame.png`，不是 QWidget 内部抓图；辅助窗口仅在验收期间置顶。
-- 原生窗口最小化、最大化/还原、键盘操作与店主独立任务栏图标测试通过（4 passed / 0 failed，含初始化/清理）。学生分支同步相同实现，原生窗口、文档预览和指标卡回归通过（5 passed / 0 failed）。完整 Release CTest 结果见 `runtime/native-frame-ctest.txt`。
+- 原生窗口最小化、最大化/还原、键盘操作与店主独立任务栏图标测试通过（6 passed / 0 failed，含初始化/清理）。学生分支同步相同实现，原生窗口、文档预览和指标卡回归通过（5 passed / 0 failed）。完整 Release CTest 结果见 `runtime/native-frame-ctest.txt`。
 - 独立发布版本为 `merchant-v6`；数据仍使用既有 v1 的 `runtime/shop`。桌面入口、原图标和旧发布包保留。包内完整哈希、无 SDK 启动、六种 Office 格式和进程控制验证日志为 `runtime/merchant-evidence/v6-package-verification.txt`。
 - 使用 [Microsoft DWM 窗口属性](https://learn.microsoft.com/en-us/windows/win32/api/dwmapi/ne-dwmapi-dwmwindowattribute) 和 [扩展系统窗口框架](https://learn.microsoft.com/en-us/windows/win32/api/dwmapi/nf-dwmapi-dwmextendframeintoclientarea)；Windows 11 的圆角/轮廓属性在旧版本系统上由 DWM 忽略。本机视觉效果已验证，其他系统结果以对应环境为准。
+
+同版追加：设备页底部的当前选择、A4 纸张及黑色墨粉信息拉开上下两行间距，并增加底部留白。去除店主全域悬停的分层淡红阴影，导航和设备图片保持透明；普通按钮/主按钮仅保留与学生端相同的平面颜色与边框反馈。原生回归核对设备图片在悬停、鼠标/键盘焦点和移开后的完整像素保持一致，真实设备操作仍可点击。最终日志与设备页截图在 `runtime/merchant-evidence/v6-final-native*`。

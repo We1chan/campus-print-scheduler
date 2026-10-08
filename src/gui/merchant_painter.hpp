@@ -14,7 +14,7 @@ inline QFont merchantFont(int size, bool bold = false, bool serif = false) {
     font.setBold(bold);
     return font;
 }
-struct Hit { QRectF rect; QString action, value, label; };
+struct Hit { QRectF rect; QString action, value, label; bool button = false, primary = false; };
 struct Selection { int order = 0, device = 0, filter = 0, offset = 0, queueOffset = 0; QString search, range = QStringLiteral("今天"); };
 struct Assets {
     QImage workbench, queue, devices, stats, texture;
