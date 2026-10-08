@@ -7,28 +7,18 @@
 #include <cmath>
 static void initializeMerchantArt() { Q_INIT_RESOURCE(merchant_assets); }
 namespace cps::gui::merchant {
-static QImage featherDecoration(QImage image,qreal left,qreal right,qreal bottom) {
-    image=image.convertToFormat(QImage::Format_ARGB32_Premultiplied);
-    QPainter mask(&image);mask.setCompositionMode(QPainter::CompositionMode_DestinationIn);
-    QLinearGradient horizontal(0,0,image.width(),0);
-    horizontal.setColorAt(0,QColor(0,0,0,left>0?0:255));
-    if(left>0)horizontal.setColorAt(left/image.width(),Qt::black);
-    if(right>0)horizontal.setColorAt(1-right/image.width(),Qt::black);
-    horizontal.setColorAt(1,QColor(0,0,0,right>0?0:255));
-    mask.fillRect(image.rect(),horizontal);
-    if(bottom>0){QLinearGradient vertical(0,0,0,image.height());vertical.setColorAt(0,Qt::black);vertical.setColorAt(1-bottom/image.height(),Qt::black);vertical.setColorAt(1,Qt::transparent);mask.fillRect(image.rect(),vertical);}
-    mask.end();
-    return image;
-}
 Assets::Assets() {
     initializeMerchantArt();
     workbench.load(":/merchant/workbench.png"); queue.load(":/merchant/queue.png");
     devices.load(":/merchant/devices.png"); stats.load(":/merchant/stats.png");
     // A text-free material swatch; application content is never an image layer.
     texture=workbench.copy(700,76,128,128);
-    // Fade only the photograph's edges; keep the complete clip and its shadow inside the opaque area.
-    heroCoffee=featherDecoration(workbench.copy(860,56,274,160),36,0,12);
-    heroLeaf=featherDecoration(workbench.copy(0,56,55,145),0,12,15);
+    // A single photographic plate keeps the paper's light, texture and shadows
+    // continuous. Only live text/metrics are painted above it, never UI pixels.
+    const QImage paper(":/merchant/hero-paper-v10.png");
+    paperBackground=paper.copy(0,56,1134,236);
+    const QImage dispatch(":/merchant/dispatch-paper-v10.png");
+    dispatchBackground=dispatch.copy(0,56,1586,162);
 }
 void Painter::text(qreal x,qreal y,qreal w,qreal h,const QString& value,int size,QColor color,bool bold,bool serif,int align) {
     QFont font=merchantFont(size,bold,serif);

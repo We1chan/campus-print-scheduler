@@ -99,6 +99,7 @@ def main():
         shutil.copy2(root / "docs" / name, output / name)
     shutil.copy2(root / "docs" / "merchant-frontend.md", output / "merchant-frontend.md")
     shutil.copy2(root / "docs" / "merchant-validation.md", output / "merchant-validation.md")
+    shutil.copy2(root / "docs" / "merchant-materials-v10.md", output / "merchant-materials-v10.md")
     # Keep the design evidence links usable in the redistributed document.
     image_output = output / "images"
     image_output.mkdir()

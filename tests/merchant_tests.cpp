@@ -3,6 +3,7 @@
 #include "native_frame_evidence.hpp"
 
 #include <QApplication>
+#include <QComboBox>
 #include <QAction>
 #include <QDialog>
 #include <QDir>
@@ -88,6 +89,41 @@ class MerchantTests : public QObject {
 
 private slots:
     void initTestCase() { initializeMerchantTestResources(); }
+
+    void nativeDispatchWorkspaceIsInteractiveAndIsolated() {
+        MerchantWindow window({},true);window.show();
+        QTRY_VERIFY(window.isVisible());
+        const auto initial=window.model()->snapshot();
+        const auto orderSignature=[](const Snapshot& state){QStringList result;for(const auto& order:state.orders)result<<order.id+":"+order.state+":"+QString::number(order.printer);return result;};
+        window.setPage(1);
+        auto* entry=window.findChild<QPushButton*>("merchant_dispatch-open_");QVERIFY(entry&&entry->isVisible());entry->click();
+        auto* canvas=window.findChild<QWidget*>("merchantCanvas");QVERIFY(canvas);
+        auto* scenario=window.findChild<QComboBox*>("merchantDispatchScenario");
+        auto* speed=window.findChild<QComboBox*>("merchantDispatchSpeed");QVERIFY(scenario&&speed&&scenario->isVisible()&&speed->isVisible());
+        QCOMPARE(scenario->count(),4);QCOMPARE(speed->count(),3);
+        const auto press=[&](const QString& name){auto* control=window.findChild<QPushButton*>("merchant_"+name);if(!control||!control->isVisible())return false;control->click();return true;};
+        for(const QSize size:{QSize(950,594),QSize(1269,794),QSize(1586,992)}){
+            window.resize(size);QApplication::processEvents();
+            QVERIFY(canvas->rect().contains(scenario->geometry()));QVERIFY(canvas->rect().contains(speed->geometry()));
+            for(const auto* control:window.findChildren<QPushButton*>())if(control->isVisible()&&control->objectName().startsWith("merchant_dispatch-"))QVERIFY(canvas->rect().contains(control->geometry()));
+            QVERIFY(!scenario->geometry().intersects(speed->geometry()));
+        }
+        QVERIFY(press("dispatch-step_"));QVERIFY(canvas->property("dispatchTimeMs").toLongLong()>0);
+        QVERIFY(press("dispatch-policy_3"));QCOMPARE(canvas->property("dispatchPolicy").toInt(),3);
+        QVERIFY(press("dispatch-order_A"));
+        QVERIFY(press("dispatch-reset_"));
+        for(int index=0;index<scenario->count();++index){scenario->setCurrentIndex(index);QCOMPARE(canvas->property("dispatchTimeMs").toLongLong(),qlonglong(0));}
+        speed->setCurrentIndex(2);
+        QVERIFY(press("dispatch-play_"));QTRY_VERIFY_WITH_TIMEOUT(canvas->property("dispatchTimeMs").toLongLong()>0,1000);
+        QVERIFY(press("dispatch-play_"));QVERIFY(!canvas->property("dispatchPlaying").toBool());
+        const auto paused=canvas->property("dispatchTimeMs").toLongLong();QTest::qWait(120);QCOMPARE(canvas->property("dispatchTimeMs").toLongLong(),paused);
+        QVERIFY(press("dispatch-reset_"));QCOMPARE(canvas->property("dispatchTimeMs").toLongLong(),qlonglong(0));
+        QVERIFY(saveEvidence(window,QStringLiteral("native-dispatch-workspace.png")));
+        QCOMPARE(orderSignature(window.model()->snapshot()),orderSignature(initial));QCOMPARE(window.model()->snapshot().waiting,initial.waiting);
+        QCOMPARE(window.model()->snapshot().devices[0].printed,initial.devices[0].printed);
+        QVERIFY(press("dispatch-back_"));QVERIFY(!scenario->isVisible());
+        QVERIFY(window.findChild<QPushButton*>("merchant_dispatch-open_"));
+    }
 
     void showcaseBaselineRemainsStationary() {
         MerchantData data({}, true);

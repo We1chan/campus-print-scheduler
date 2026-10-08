@@ -77,9 +77,11 @@ if(CPS_BUILD_QT_APPS)
     # GUI and child programs live together in build/<preset>/bin on every OS.
     add_library(cps_gui src/gui/event_stream.cpp src/gui/control_client.cpp src/gui/print_controller.cpp src/gui/print_window.cpp src/gui/student_window.cpp src/gui/document_preview.cpp src/gui/office_preview.cpp src/gui/preview_check.cpp src/gui/editorial_chrome.cpp)
     target_sources(cps_gui PRIVATE src/gui/merchant_data.cpp src/gui/merchant_painter.cpp
-        src/gui/merchant_orders.cpp src/gui/merchant_devices_stats.cpp src/gui/merchant_window.cpp src/gui/merchant_shell.cpp)
+        src/gui/merchant_orders.cpp src/gui/merchant_devices_stats.cpp src/gui/merchant_window.cpp src/gui/merchant_shell.cpp
+        src/gui/merchant_dispatch_model.cpp src/gui/merchant_dispatch_painter.cpp)
     qt_add_resources(cps_gui merchant_assets PREFIX "/merchant" BASE "assets/merchant"
         FILES assets/merchant/workbench.png assets/merchant/queue.png assets/merchant/devices.png assets/merchant/stats.png
+        assets/merchant/hero-paper-v10.png assets/merchant/dispatch-paper-v10.png
         assets/merchant/brand-16.png assets/merchant/brand-24.png assets/merchant/brand-32.png
         assets/merchant/brand-48.png assets/merchant/brand-64.png assets/merchant/brand-128.png
         assets/merchant/brand-256.png
@@ -139,6 +141,9 @@ if(CPS_BUILD_QT_APPS)
         set_target_properties(merchant_tests PROPERTIES AUTOMOC ON)
         target_link_libraries(merchant_tests PRIVATE cps_gui Qt6::Test cps_options)
         add_test(NAME merchant COMMAND merchant_tests -o "${CMAKE_BINARY_DIR}/merchant-results.xml,junitxml" -o -,txt)
+        add_executable(merchant_dispatch_tests tests/merchant_dispatch_tests.cpp)
+        target_link_libraries(merchant_dispatch_tests PRIVATE cps_gui cps_options)
+        add_test(NAME merchant_dispatch COMMAND merchant_dispatch_tests)
         set_tests_properties(merchant PROPERTIES TIMEOUT 90 ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
 
         add_executable(runtime_state_tests tests/runtime_state_tests.cpp)

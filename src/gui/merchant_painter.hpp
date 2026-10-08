@@ -22,7 +22,7 @@ inline bool requiresShowcase(const QString& action) {
 }
 struct Selection { int order = 0, device = 0, filter = 0, offset = 0, queueOffset = 0; QString search, range = QStringLiteral("今天"); };
 struct Assets {
-    QImage workbench, queue, devices, stats, texture, heroCoffee, heroLeaf;
+    QImage workbench, queue, devices, stats, texture, heroCoffee, heroLeaf, paperBackground, dispatchBackground;
     Assets();
 };
 class Painter {

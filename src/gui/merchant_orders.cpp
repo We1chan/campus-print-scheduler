@@ -388,6 +388,7 @@ void paintQueue(Painter& d, const Snapshot& state, const Selection& selection)
 {
     hero(d,state,true);
     d.text(39,307,520,52,QStringLiteral("打印队列"),18,navy,true);
+    d.button({453,310,155,39},QStringLiteral("调度工作台"),"dispatch-open");
     const int pageCount=std::max(1,(int(state.devices.size())+1)/2);
     const int page=std::clamp(selection.device/2,0,pageCount-1);
     const int base=page*2;

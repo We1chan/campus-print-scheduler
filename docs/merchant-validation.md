@@ -111,3 +111,11 @@ python tools/verify_package.py --archive-dir runtime/merchant-v3-archive --outpu
 - 叶子和咖啡/夹子照片仅在渲染缓存边缘做透明渐隐，融合到当前纸张底纹；夹子取图范围扩大并避开淡出区域，完整保留物体及自然阴影。原素材图片不覆盖。
 - 调度工作台本轮仅生成概念预览，未新增该页面或修改调度算法。
 - 构建、完整 CTest、四页实际截图和发布检查证据分别为 runtime/merchant-evidence/v9-build.txt、v9-ctest.txt、v9-gallery/、v9-package-verification.txt。桌面启动器优先 v9，继续使用原有 v1 数据目录。
+
+## v10 预览落地与连续摄影纸面（2026-10-09）
+
+- 四个业务页面使用同一张完整的无文字摄影纸面；取消叶子、咖啡和夹子的矩形局部贴图，保留完整夹子和自然光影。原始概念资源保留，新素材为 `hero-paper-v10.png`；调度页独立素材为 `dispatch-paper-v10.png`。批准预览保存为 `docs/images/dispatch-approved.png`，实际截图为 `merchant-dispatch.png`，两者区分记录。
+- 新增打印队列的调度工作台入口。时间轴、五种策略、固定订单色、解释区与顶部控制均按已批准布局实现；使用原生按钮及下拉框，支持四场景、播放暂停、单步、速度、重置、订单跨策略高亮及返回。持续保留学生端的字体角色、深色导航、红色动作和平面交互，原生窗口框架与店主专用图标继续有效。
+- 演示模型直接调用 `replayShop`，不修改调度核心和真实后台协议。输入与输出均采用统一教学时钟，等待、期限、派发、完成、历史及指标通过独立测试逐项与原始回放核对。覆盖 SJF 平均等待改善、期限策略改善、老化使旧低优先级订单提前、未来到达不可提前派发、五策略相同负载与全部完成。
+- Windows 原生测试在 950×594、1269×794、1586×992 检查控制区域没有越界；验证场景选择、单步推进、播放暂停、策略/订单选择、重置及返回；核对原有订单状态、设备打印量与等待数不变。原生窗口控件、DWM 圆角阴影和店铺菜单回归同时通过。证据在 `runtime/merchant-evidence/v10-native-tests.txt` 与 `v10-native/`。
+- Release 构建和完整 15 项 CTest 全部通过，结果为 `runtime/merchant-evidence/v10-ctest.txt`；四页及新调度页原生抓图为 `v10-gallery/`。正式 `merchant-v10` 包从已提交且 clean 的工作树打包，继续沿用 v1 的持久数据目录。打包和独立发布验证输出分别保存在 `v10-package.txt`、`v10-package-verification.txt`；部署完成证据为 `v10-completion.json`。

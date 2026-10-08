@@ -1,5 +1,6 @@
 #include "merchant_window.hpp"
 #include "merchant_shell.hpp"
+#include "merchant_dispatch_painter.hpp"
 #include "editorial_chrome.hpp"
 #include "document_preview.hpp"
 #include <QApplication>
@@ -30,6 +31,8 @@
 #include <QFontMetricsF>
 #include <QPainterPath>
 #include <QRegion>
+#include <QElapsedTimer>
+#include <QAbstractItemView>
 #include <functional>
 #include <algorithm>
 static void initializeMerchantBrand() { Q_INIT_RESOURCE(merchant_assets); }
@@ -52,6 +55,11 @@ protected:
         painter.scale(width()/hit_.rect.width(),height()/hit_.rect.height());
         const bool hovered=isEnabled()&&(underMouse()||isDown());
         const QColor accent("#D6402C");
+        if(hit_.action.startsWith("dispatch-")){
+            painter.setPen(QPen(accent,hasFocus()?2:1));
+            painter.setBrush(hovered?QColor(hit_.primary?0:214,hit_.primary?0:61,hit_.primary?0:41,isDown()?35:18):QColor(Qt::transparent));
+            painter.drawRoundedRect(QRectF(1,1,hit_.rect.width()-2,hit_.rect.height()-2),6,6);return;
+        }
         QColor fill=hit_.primary?(hovered?QColor("#BF3322"):red):(hovered?QColor("#FFF6F2"):QColor(Qt::white));
         QColor border=hit_.primary?fill:accent;
         QColor ink=hit_.primary?QColor(Qt::white):navy;
@@ -80,6 +88,18 @@ private:
     QPoint dragOrigin_;
     Hit hit_;
 };
+class MerchantComboBox : public QComboBox {
+public:
+    explicit MerchantComboBox(QWidget* parent):QComboBox(parent){
+        view()->window()->setWindowFlag(Qt::NoDropShadowWindowHint);
+    }
+protected:
+    void paintEvent(QPaintEvent* event) override{
+        QComboBox::paintEvent(event);QPainter painter(this);painter.setRenderHint(QPainter::Antialiasing);
+        painter.setPen(QPen(navy,1.4));const qreal x=width()-23,y=height()/2.;
+        painter.drawLine(QPointF(x-5,y-2),QPointF(x,y+3));painter.drawLine(QPointF(x,y+3),QPointF(x+5,y-2));
+    }
+};
 class MerchantCanvas : public QWidget {
 public:
     MerchantCanvas(MerchantWindow* owner,MerchantData* data):QWidget(owner),data_(data) {
@@ -90,11 +110,41 @@ public:
         search_->setStyleSheet("QLineEdit{border:none;background:transparent;color:#14213E;font-family:'Microsoft YaHei UI';font-size:14px;selection-background-color:#F4D9D1;selection-color:#14213E;}QLineEdit:focus{border-bottom:1px solid #D6402C;}");
         QObject::connect(search_,&QLineEdit::textChanged,this,[this](const QString& value){selection.search=value;selection.offset=0;refresh();});
         QObject::connect(data_,&MerchantData::changed,this,[this]{refresh();});
+        demo=makeDispatchDemo(0);
+        const QString comboStyle="QComboBox{background:white;border:1px solid #DADDE2;border-radius:6px;color:#14213E;padding:7px 14px;font-family:'Microsoft YaHei UI';}QComboBox:hover,QComboBox:focus{border:1px solid #D63D29;}QComboBox::drop-down{border:none;width:30px;}QComboBox QAbstractItemView{background:#FAFAF9;color:#14213E;selection-background-color:#FFF6F2;selection-color:#D63D29;border:1px solid #DADDE2;padding:6px;}";
+        scenario_=new MerchantComboBox(this);scenario_->setObjectName("merchantDispatchScenario");scenario_->setAccessibleName(QStringLiteral("调度演示场景"));scenario_->setStyleSheet(comboStyle);scenario_->addItems(dispatchScenarioNames());
+        speed_=new MerchantComboBox(this);speed_->setObjectName("merchantDispatchSpeed");speed_->setAccessibleName(QStringLiteral("演示播放速度"));speed_->setStyleSheet(comboStyle);speed_->addItems({"1×","2×","4×"});
+        QObject::connect(scenario_,&QComboBox::currentIndexChanged,this,[this](int index){demo=makeDispatchDemo(index);demoSelection.nowMs=0;demoSelection.order.clear();pauseDispatch();refresh();});
+        demoTimer_.setParent(this);demoTimer_.setInterval(50);
+        QObject::connect(&demoTimer_,&QTimer::timeout,this,[this]{
+            demoSelection.nowMs=std::min(demo.horizonMs,demoSelection.nowMs+demoClock_.restart()*20*(1<<speed_->currentIndex()));
+            if(demoSelection.nowMs>=demo.horizonMs)pauseDispatch();
+            refresh();
+        });
         const EditorialWindowButton::Action actions[]{EditorialWindowButton::Minimize,EditorialWindowButton::Maximize,EditorialWindowButton::Close};
         const QStringList names{"windowMinimize","windowMaximize","windowClose"};
         for(int i=0;i<3;++i){auto* control=new EditorialWindowButton(owner,actions[i],names[i]);control->setParent(this);control->setFocusPolicy(Qt::TabFocus);windowControls_<<control;}
     }
     int page=0;Selection selection;
+    DispatchDemo demo;DispatchDemoSelection demoSelection;
+    void pauseDispatch(){demoTimer_.stop();demoSelection.playing=false;}
+    void dispatchAction(const QString& action,const QString& value){
+        if(action=="dispatch-policy"){demoSelection.policy=std::clamp(value.toInt(),0,4);}
+        else if(action=="dispatch-order"){demoSelection.order=demoSelection.order==value?QString():value;}
+        else if(action=="dispatch-reset"){pauseDispatch();demoSelection.nowMs=0;demoSelection.order.clear();}
+        else if(action=="dispatch-play"){
+            if(demoSelection.playing)pauseDispatch();
+            else{if(demoSelection.nowMs>=demo.horizonMs)demoSelection.nowMs=0;demoSelection.playing=true;demoClock_.start();demoTimer_.start();}
+        }else if(action=="dispatch-step"){
+            pauseDispatch();cps::TimeMs next=demo.horizonMs;
+            for(const auto& dispatch:demo.runs[static_cast<std::size_t>(demoSelection.policy)].result.dispatches){
+                if(dispatch.startedMs>demoSelection.nowMs)next=std::min(next,dispatch.startedMs);
+                if(dispatch.finishedMs>demoSelection.nowMs)next=std::min(next,dispatch.finishedMs);
+            }
+            demoSelection.nowMs=next;
+        }
+        refresh();
+    }
     std::function<void(const QString&,const QString&)> invoked;
     QString toast;bool toastProblem=false;
     void refresh() {
@@ -106,7 +156,7 @@ public:
         const qreal sx=width()/1586.,sy=height()/992.;
         for(const auto& hit:controls) {
             if(hit.action=="search")continue;
-            const QString key=hit.action+"\n"+hit.value+"\n"+hit.label;active.insert(key);
+            const QString key=hit.action+"\n"+hit.value+"\n"+hit.label+QString("\n%1,%2,%3,%4").arg(hit.rect.x()).arg(hit.rect.y()).arg(hit.rect.width()).arg(hit.rect.height());active.insert(key);
             auto* button=buttons_.value(key,nullptr);
             if(!button) {button=new MerchantButton(this);buttons_.insert(key,button);button->setObjectName("merchant_"+hit.action+"_"+hit.value);
                 button->setAccessibleName(hit.label);button->setToolTip(hit.label);button->setCursor(Qt::PointingHandCursor);button->setFocusPolicy(Qt::StrongFocus);
@@ -124,9 +174,14 @@ public:
         }
         for(auto i=buttons_.begin();i!=buttons_.end();) {if(!active.contains(i.key())) {delete i.value();i=buttons_.erase(i);}else ++i;}
         search_->setGeometry(qRound(826*sx),qRound(317*sy),qRound(180*sx),qRound(33*sy));search_->setVisible(page==0);search_->raise();
+        scenario_->setGeometry(qRound(92*sx),qRound(231*sy),qRound(245*sx),qRound(47*sy));
+        speed_->setGeometry(qRound(763*sx),qRound(231*sy),qRound(127*sx),qRound(47*sy));
+        const auto comboFont=merchantFont(std::max(10,qRound(16*std::min(sx,sy))));scenario_->setFont(comboFont);speed_->setFont(comboFont);
+        scenario_->setVisible(page==4);speed_->setVisible(page==4);scenario_->raise();speed_->raise();
+        setProperty("dispatchTimeMs",QVariant::fromValue<qlonglong>(demoSelection.nowMs));setProperty("dispatchPolicy",demoSelection.policy);setProperty("dispatchPlaying",demoSelection.playing);
         for(int i=0;i<windowControls_.size();++i){windowControls_[i]->setGeometry(qRound((1447+i*46)*sx),qRound(3*sy),qRound(43*sx),qRound(49*sy));windowControls_[i]->show();windowControls_[i]->raise();}update();
     }
-    void focusSearch() {page=0;refresh();search_->setFocus();}
+    void focusSearch() {pauseDispatch();page=0;refresh();search_->setFocus();}
 protected:
     void dragEnterEvent(QDragEnterEvent* event) override {if(page==1&&data_->snapshot().showcase&&event->mimeData()->hasFormat("application/x-paperroom-order"))event->acceptProposedAction();}
     void dragMoveEvent(QDragMoveEvent* event) override {if(page==1&&data_->snapshot().showcase&&event->mimeData()->hasFormat("application/x-paperroom-order"))event->acceptProposedAction();}
@@ -143,13 +198,23 @@ private:
         const auto& state=data_->snapshot();Painter d(p,controls,assets_,state.showcase);
         p.fillRect(QRectF(0,0,1586,992),Qt::white);
         p.save();p.setOpacity(.18);p.drawTiledPixmap(QRectF(0,0,1586,992),QPixmap::fromImage(assets_.texture));p.restore();
-        p.drawTiledPixmap(QRectF(0,56,1134,heroBottom-56),QPixmap::fromImage(assets_.texture));
-        d.art("coffee",{860,56,274,160});d.art("leaf",{0,56,55,145});
-        p.setPen(QPen(ruleColor,1));p.drawLine(QPointF(1145,65),QPointF(1145,852));
-        if(page==0)paintWorkbench(d,state,selection);else if(page==1)paintQueue(d,state,selection);else if(page==2)paintDevices(d,state,selection);else paintStats(d,state,selection);
+        if(page==4)paintDispatch(d,demo,demoSelection);
+        else{
+            p.drawImage(QRectF(0,56,1134,heroBottom-56),assets_.paperBackground);
+            p.setPen(QPen(ruleColor,1));p.drawLine(QPointF(1145,65),QPointF(1145,852));
+            if(page==0)paintWorkbench(d,state,selection);else if(page==1)paintQueue(d,state,selection);else if(page==2)paintDevices(d,state,selection);else paintStats(d,state,selection);
+        }
         p.fillRect(QRectF(0,0,1586,56),QColor("#FAFAF9"));d.rule(0,55,1586);
         p.drawImage(QRectF(39,10,41,35),QImage(":/editorial/brand-128.png"));
         d.text(92,8,63,38,QStringLiteral("纸间"),24,navy,true);p.setPen(ruleColor);p.drawLine(163,16,163,40);d.text(181,8,92,38,QStringLiteral("店主端"),16,slate);
+        if(page==4){
+            d.text(690,5,205,45,QStringLiteral("调度工作台"),18,navy,true,false,Qt::AlignCenter);p.fillRect(QRectF(735,52,115,4),red);
+            d.button({1187,10,168,39},QStringLiteral("‹  返回打印队列"),"dispatch-back");
+            p.fillRect(QRectF(0,942,1586,50),Qt::white);d.rule(0,941,1586);p.setPen(Qt::NoPen);p.setBrush(green);p.drawEllipse(QPointF(42,965),4,4);p.setBrush(Qt::NoBrush);
+            d.text(70,947,395,35,QStringLiteral("独立演示 · 不影响真实队列"),13);
+            d.text(1060,947,495,35,QStringLiteral("本地仿真 · 教学时钟 3 页/分 · 整批结果"),13,slate,false,false,Qt::AlignRight|Qt::AlignVCenter);
+            return;
+        }
         const QStringList nav{QStringLiteral("订单工作台"),QStringLiteral("打印队列"),QStringLiteral("设备管理"),QStringLiteral("营业统计")};
         const int positions[4]={562,706,826,947};
         for(int i=0;i<4;++i) {
@@ -168,6 +233,7 @@ private:
         if(!toast.isEmpty()) {d.panel({480,795,625,51},toastProblem?QColor("#FFF2EE"):QColor("#F5F7FA"),toastProblem?red:ruleColor,8);d.text(499,797,590,47,toast,16,toastProblem?red:navy);}
     }
     MerchantData* data_;Assets assets_;QHash<QString,QPushButton*> buttons_;QLineEdit* search_;QVector<EditorialWindowButton*> windowControls_;
+    QComboBox* scenario_;QComboBox* speed_;QTimer demoTimer_;QElapsedTimer demoClock_;
 };
 class MerchantMenu : public QMenu {
 public:
@@ -199,13 +265,16 @@ MerchantWindow::MerchantWindow(WindowOptions options,bool showcase):model_(new M
     QTimer::singleShot(0,model_,&MerchantData::start);
 }
 void MerchantWindow::setPage(int index) {
-    deviceSelections_[canvas_->page]=canvas_->selection.device;
+    if(canvas_->page<4)deviceSelections_[canvas_->page]=canvas_->selection.device;
+    canvas_->pauseDispatch();
     canvas_->page=std::clamp(index,0,3);canvas_->selection.device=deviceSelections_[canvas_->page];canvas_->refresh();
 }
+void MerchantWindow::openDispatchWorkspace(){if(canvas_->page<4)deviceSelections_[canvas_->page]=canvas_->selection.device;canvas_->page=4;canvas_->refresh();}
 void MerchantWindow::notify(const QString& value,bool problem) {canvas_->toast=value;canvas_->toastProblem=problem;canvas_->setAccessibleDescription(value);canvas_->update();QTimer::singleShot(4800,canvas_,[this,value]{if(canvas_->toast==value){canvas_->toast.clear();canvas_->setAccessibleDescription({});canvas_->update();}});}
 void MerchantWindow::captureAll(const QString& directory) {
     QDir().mkpath(directory);resize(qRound(1586/devicePixelRatioF()),qRound(992/devicePixelRatioF()));const QStringList names{"workbench","queue","devices","stats"};
-    for(int i=0;i<4;++i){setPage(i);QApplication::processEvents();if(auto* focus=QApplication::focusWidget())focus->clearFocus();canvas_->grab().toImage().scaled(1586,992,Qt::IgnoreAspectRatio,Qt::SmoothTransformation).save(QDir(directory).filePath(names[i]+".png"));}setPage(0);
+    for(int i=0;i<4;++i){setPage(i);QApplication::processEvents();if(auto* focus=QApplication::focusWidget())focus->clearFocus();canvas_->grab().toImage().scaled(1586,992,Qt::IgnoreAspectRatio,Qt::SmoothTransformation).save(QDir(directory).filePath(names[i]+".png"));}
+    openDispatchWorkspace();QApplication::processEvents();canvas_->grab().toImage().scaled(1586,992,Qt::IgnoreAspectRatio,Qt::SmoothTransformation).save(QDir(directory).filePath("dispatch.png"));setPage(0);
 }
 void MerchantWindow::viewFile() {
     const auto& state=model_->snapshot();if(state.orders.isEmpty())return;const auto& order=state.orders[canvas_->selection.order];
@@ -216,6 +285,9 @@ void MerchantWindow::viewFile() {
     auto* pick=new QPushButton(QStringLiteral("选择本机文件核对"));connect(pick,&QPushButton::clicked,dialog,[this]{const auto file=QFileDialog::getOpenFileName(this,QStringLiteral("核对本机订单文件"));if(!file.isEmpty())QDesktopServices::openUrl(QUrl::fromLocalFile(file));});layout->addWidget(pick);dialog->resize(550,650);dialog->setWindowModality(Qt::WindowModal);dialog->open();
 }
 void MerchantWindow::action(const QString& name,const QString& value) {
+    if(name=="dispatch-open"){openDispatchWorkspace();return;}
+    if(name=="dispatch-back"){setPage(1);return;}
+    if(name.startsWith("dispatch-")){canvas_->dispatchAction(name,value);return;}
     if(name=="nav"){setPage(value.toInt());return;}if(name=="select-order"){canvas_->selection.order=value.toInt();canvas_->refresh();return;}
     if(name=="page"&&value=="devices"){setPage(2);return;}
     if(name=="select-device"){canvas_->selection.device=value.toInt();canvas_->refresh();return;}if(name=="filter"){canvas_->selection.filter=value.toInt();canvas_->selection.offset=0;canvas_->refresh();return;}
