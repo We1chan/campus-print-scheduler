@@ -1,6 +1,7 @@
 #include "editorial_chrome.hpp"
 #ifdef Q_OS_WIN
 #include <qt_windows.h>
+#include <dwmapi.h>
 #endif
 
 namespace cps::gui {
@@ -16,11 +17,30 @@ EditorialChrome::EditorialChrome(QWidget *window, qreal titleHeight, qreal refer
 #endif
     }
 EditorialChrome::~EditorialChrome() { qApp->removeNativeEventFilter(this); }
+void EditorialChrome::updateSystemFrame(bool active) {
+#ifdef Q_OS_WIN
+        if (!window_ || QGuiApplication::platformName() != QLatin1String("windows") || !window_->internalWinId()) return;
+        const auto hwnd = reinterpret_cast<HWND>(window_->internalWinId());
+        const DWMNCRENDERINGPOLICY policy = DWMNCRP_ENABLED;
+        DwmSetWindowAttribute(hwnd, DWMWA_NCRENDERING_POLICY, &policy, sizeof(policy));
+        const int edge = window_->isMaximized() || window_->isFullScreen() ? 0 : 1;
+        const MARGINS margins{edge, edge, edge, edge};
+        DwmExtendFrameIntoClientArea(hwnd, &margins);
+        // Windows 11 attributes; older DWM versions simply ignore these hints.
+        const DWORD corners = 2; // DWMWCP_ROUND
+        DwmSetWindowAttribute(hwnd, 33, &corners, sizeof(corners));
+        const COLORREF border = active ? RGB(206,210,216) : RGB(224,227,231);
+        DwmSetWindowAttribute(hwnd, 34, &border, sizeof(border));
+#else
+        Q_UNUSED(active);
+#endif
+    }
 bool EditorialChrome::nativeEventFilter(const QByteArray &, void *message, qintptr *result) {
 #ifdef Q_OS_WIN
         if (!window_ || QGuiApplication::platformName() != QLatin1String("windows")) return false;
         const auto *msg = static_cast<MSG *>(message);
         if (msg->hwnd != reinterpret_cast<HWND>(window_->internalWinId())) return false;
+        if (msg->message == WM_DWMCOMPOSITIONCHANGED) updateSystemFrame(window_->isActiveWindow());
         if (msg->message == WM_NCCALCSIZE && msg->wParam) { *result = 0; return true; }
         if (msg->message == WM_GETMINMAXINFO && resizable_) {
             auto *info = reinterpret_cast<MINMAXINFO *>(msg->lParam);
@@ -64,14 +84,17 @@ bool EditorialChrome::eventFilter(QObject *object, QEvent *event) {
             if (QGuiApplication::platformName() == QLatin1String("windows")) {
                 const auto hwnd = reinterpret_cast<HWND>(window_->winId());
                 auto style = GetWindowLongPtrW(hwnd, GWL_STYLE);
-                style |= WS_SYSMENU;
+                style |= WS_CAPTION | WS_SYSMENU;
                 if (resizable_) style |= WS_THICKFRAME | WS_MINIMIZEBOX | WS_MAXIMIZEBOX;
                 SetWindowLongPtrW(hwnd, GWL_STYLE, style);
                 SetWindowPos(hwnd, nullptr, 0, 0, 0, 0,
                              SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED);
+                updateSystemFrame(window_->isActiveWindow());
             }
 #endif
         }
+        if (object == window_ && (event->type() == QEvent::WindowActivate || event->type() == QEvent::WindowDeactivate || event->type() == QEvent::WindowStateChange))
+            updateSystemFrame(event->type() == QEvent::WindowActivate || (event->type() != QEvent::WindowDeactivate && window_->isActiveWindow()));
         if (event->type() != QEvent::MouseButtonPress && event->type() != QEvent::MouseButtonDblClick)
             return false;
         auto *widget = qobject_cast<QWidget *>(object);

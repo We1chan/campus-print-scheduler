@@ -1,4 +1,9 @@
 # 纸间第二版：俯视印刷编辑台
+## v13 原生窗口轮廓和阴影（2026-10-08）
+
+与店主端共用窗口框架，Windows DWM 绘制低对比度浅灰轮廓、圆角和柔和外部阴影；失焦时轮廓淡化，最大化时取消扩展边距并继续按工作区避开任务栏。自绘顶部导航及原窗口操作保留。Windows 11 圆角/边色提示在旧版本系统上由 DWM 忽略。
+
+原生窗口、文档预览和订单/排队指标回归共 5 passed / 0 failed（含初始化/清理），日志为 `runtime/student-v13-native-tests.txt`。原生外框验收读取 DWM 属性，并在自建纯色背景上捕获实际合成画面、检查底部阴影像素；截图在 `runtime/student-v13-frame/student-native-frame.png`。完整 Release CTest 与独立发布包验收日志分别为 `runtime/native-frame-ctest.txt`、`runtime/student-v13-package-verification.txt`。独立包 `editorial-v13` 沿用 `runtime/editorial-shop`，学生原图标、旧包和所有概念图保留。
 
 ## v12 指标卡文字完整性修复（2026-10-08）
 
@@ -12,7 +17,7 @@
 
 ## 运行
 
-Windows 双击桌面的“纸间打印”快捷方式或仓库根目录 `start-editorial.vbs`，只显示 UI，不打开命令行窗口。优先运行 `dist/editorial-v10` 的 Release 发布包，兼容旧的 v9/v8/v7/v6/v5/v4/v3/v2，否则运行 `build/dev/bin`；构建版本需要匹配的 Qt 在 PATH 中。`start-editorial.cmd` 保留用于命令行兼容。独立发布包也提供 `start-student.vbs`，其数据使用默认用户目录。启动参数为 `--role student`，数据独立存放在本工作树的 `runtime/editorial-shop`，不共用第一版的数据目录。
+Windows 双击桌面的“纸间打印”快捷方式或仓库根目录 `start-editorial.vbs`，只显示 UI，不打开命令行窗口。优先运行 `dist/editorial-v13` 的 Release 发布包，兼容旧的 v12/v11/v10/v9/v8/v7/v6/v5/v4/v3/v2，否则运行 `build/dev/bin`；构建版本需要匹配的 Qt 在 PATH 中。`start-editorial.cmd` 保留用于命令行兼容。独立发布包也提供 `start-student.vbs`，其数据使用默认用户目录。启动参数为 `--role student`，数据独立存放在本工作树的 `runtime/editorial-shop`，不共用第一版的数据目录。
 
 空白状态展示明确标注的示例报告；选择文件后，纸张会显示本机文件内容。可拖入文件或按 Ctrl+O，Ctrl+1/2/3 切换下单、我的订单与排队情况。
 

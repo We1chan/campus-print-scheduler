@@ -6,6 +6,7 @@
 #include "payment_receipt.hpp"
 #include "office_preview.hpp"
 #include "coordinator_test_client.hpp"
+#include "native_frame_evidence.hpp"
 #include "cps/runtime/job_io.hpp"
 #include <QProcess>
 #include <memory>
@@ -507,6 +508,8 @@ private slots:
         QVERIFY(QTest::qWaitForWindowExposed(&student));
         QVERIFY(student.windowFlags().testFlag(Qt::FramelessWindowHint));
         QVERIFY(!student.windowIcon().isNull());
+        const auto frameError=verifyNativeFrame(student,qEnvironmentVariable("CPS_GUI_EVIDENCE_DIR"),"student-native-frame.png");
+        QVERIFY2(frameError.isEmpty(),qPrintable(frameError));
         auto *maximize = student.findChild<QPushButton*>("windowMaximize");
         auto *minimize = student.findChild<QPushButton*>("windowMinimize");
         auto *close = student.findChild<QPushButton*>("windowClose");
