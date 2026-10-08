@@ -4,7 +4,9 @@
 
 本分支 `feat/print-editorial` 的 README 开头新增三页功能表、学生启动方式，以及摘要文字适配和 Windows 外框阴影的修复说明；明确本地原件、模拟支付与共享后台的数据目录边界。
 
-本机 Release 构建及完整 CTest 13/13 通过，Windows 原生窗口外框、文档阅读器、下单/支付/订单与排队摘要检查全部通过（含初始化/清理为 5 passed）。摘要检查覆盖三种窗口尺寸及空队列、暂停派发、可取件状态，本机 DPR 为 1.25。日志为 `runtime/student-final-ctest.txt` 和 `runtime/student-final-native.txt`。现有 `editorial-v13` 运行版本保留；本轮学生端仅补充说明，不变更程序行为。
+本机 Release 构建及完整 CTest 13/13 通过，Windows 原生窗口外框、文档阅读器、下单/支付/订单与排队摘要检查全部通过（含初始化/清理为 5 passed）。摘要检查覆盖三种窗口尺寸及空队列、暂停派发、可取件状态，本机 DPR 为 1.25。日志为 `runtime/student-final-ctest.txt` 和 `runtime/student-final-native.txt`。现有 `editorial-v13` 运行版本保留；本轮补充说明并修正测试的后台就绪等待，不变更运行程序行为。
+
+远端 Windows 的预测回归曾在后台连接尚未就绪时直接发出暂停请求，慢启动时请求会被正确拒绝，随后订单开始打印。测试现先等待实际暂停控件可用，再等待后台暂停状态显示，之后才提交三个预测任务；保留全部原有预测时间与恢复派发断言。本机修正后的完整 CTest 13/13 通过。远端平台结果以最终提交对应的 Actions 为准。
 
 ## v13 原生窗口轮廓和阴影（2026-10-08）
 
