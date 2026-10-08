@@ -1188,7 +1188,13 @@ private slots:
     void ownerConsoleShowsForecast() {
         BackendDirectory root;
         PrintWindow window({root.path(), 40, false}); window.show();
+        auto* pause = window.findChild<QPushButton*>("pauseDispatch");
+        QVERIFY(pause);
+        // The real control stays disabled until the coordinator is ready. Do
+        // not send a mutation during startup, when it can correctly be rejected.
+        QTRY_VERIFY_WITH_TIMEOUT(pause->isEnabled(), 10000);
         window.pauseRequested(true);
+        QTRY_VERIFY_WITH_TIMEOUT(pause->isChecked(), 10000);
         for (int i = 0; i < 3; ++i) window.submitRequested(QStringLiteral("预计 %1").arg(i), 100, 1, 0);
         auto* table = window.findChild<QTableView*>("jobsTable");
         QTRY_COMPARE(table->model()->rowCount(), 3);

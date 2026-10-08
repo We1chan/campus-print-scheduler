@@ -2,6 +2,8 @@
 
 ## v13 跨平台提交前修正（2026-10-09）
 
+同步学生端预测回归的后台握手等待：先等暂停控件可用、再等暂停确认，随后才提交测试订单，避免慢启动时向尚未连接的后台发送操作。原有预测、恢复派发及队列断言不变。此项只改测试与说明；发布包运行代码与已提交的 v13 构建一致。
+
 店主分支首次远端构建暴露了本机 MinGW 未报出的兼容性问题：Qt `qint64` 与 Linux `TimeMs` 的底层类型不同；MSVC 对 32 位移位结果升至 64 位给出警告；任务栏属性函数缺少 Windows SDK 的直接声明；新版 Clang 将旧的空可变参数 Qt 测试宏作为 C++20 扩展警告。分别统一演示时钟的 `TimeMs` 运算、使用 64 位移位、显式包含 `shellapi.h`，并沿用学生分支已有的 `QTest::qSkip` 调用。保留 C++17 与 warnings-as-errors，不降低检查要求，也不改变调度规则、界面和现有数据。
 
 本机最终 Release 完整 CTest 15/15 及 Windows 原生菜单/调度/IPC 检查保留为 `runtime/merchant-evidence/v13-ctest.txt` 和 `v13-native-menu.txt`；最终本地运行包改为独立 `merchant-v13`，验收输出为 `v13-package-verification.txt`。两端 README 的功能表与调度工作台入口说明继续保留。远端各平台和独立运行检查以最终提交的 Actions 结果为准。
