@@ -1262,6 +1262,44 @@ private slots:
         QVERIFY(hint->isVisible() && hint->text().contains(QStringLiteral("选择要打印的文件")));
         QVERIFY(screenshot(&student, "student-00-empty.png"));
 
+        // The summary strip scales with the editorial canvas. Check the actual
+        // polished fonts against label rectangles, including the CJK idle text.
+        auto checkSummaryText = [&](const QString& state) -> QString {
+            for (const QSize size : {QSize(920, 640), QSize(1180, 820), QSize(1420, 888)}) {
+                student.resize(size);
+                for (const auto* navigation : {"navMine", "navQueue"}) {
+                    student.findChild<QPushButton*>(navigation)->click();
+                    QTest::qWait(30);
+                    auto* pages = student.findChild<QWidget*>("studentPages");
+                    for (auto* text : student.findChildren<QLabel*>()) {
+                        const auto role = text->property("role").toString();
+                        if (!text->isVisible() || (!role.startsWith("metric") && !pages->isAncestorOf(text))
+                            || text->text().isEmpty()) continue;
+                        const auto metrics = text->fontMetrics();
+                        const auto area = text->contentsRect();
+                        const auto required = text->wordWrap()
+                            ? metrics.boundingRect(QRect(0, 0, area.width(), 100000), Qt::TextWordWrap, text->text()).size()
+                            : QSize(metrics.horizontalAdvance(text->text()), metrics.height());
+                        const auto detail = QStringLiteral("%1 %2 %3: '%4', label %5x%6, text %7x%8")
+                            .arg(state, navigation, QString::number(size.width()), text->text())
+                            .arg(area.width()).arg(area.height())
+                            .arg(required.width()).arg(required.height());
+                        if (area.height() < required.height() || area.width() < required.width())
+                            return detail;
+                    }
+                    if (!screenshot(&student, QStringLiteral("student-summary-%1-%2-%3.png")
+                        .arg(state, navigation, QString::number(size.width())))) return "Cannot save summary screenshot";
+                }
+            }
+            student.resize(1180, 820);
+            student.findChild<QPushButton*>("navOrder")->click();
+            return {};
+        };
+        QTRY_COMPARE(student.findChild<QLabel*>("studentMetric1")->text(), QStringLiteral("无需等待"));
+        qInfo() << "Student text checks, device pixel ratio:" << student.devicePixelRatioF();
+        const auto idleTextFailure = checkSummaryText("idle");
+        QVERIFY2(idleTextFailure.isEmpty(), qPrintable(idleTextFailure));
+
         // Render the reference composition with a real metadata selection and backend quote.
         if (!evidence.isEmpty()) {
             student.setDocument(textPath);
@@ -1364,6 +1402,8 @@ private slots:
         }
         // Newest first: row 0 is the last order, row 1 the one placed before it.
         QTRY_VERIFY(orders->item(1, 4)->text().contains(QStringLiteral("派发已暂停")));
+        const auto pausedTextFailure = checkSummaryText("paused");
+        QVERIFY2(pausedTextFailure.isEmpty(), qPrintable(pausedTextFailure));
         QCOMPARE(orders->item(0, 2)->text(), QStringLiteral("¥11.48 · 微信已支付"));
         QVERIFY(screenshot(&student, "student-03-orders.png"));
         auto* waiting = student.findChild<QTableWidget*>("shopQueue");
@@ -1395,6 +1435,8 @@ private slots:
         QCOMPARE(client.request("set_paused", {{"paused", false}}).value("type").toString(), QString("accepted"));
         QTRY_COMPARE_WITH_TIMEOUT(orders->item(0, 3)->text(), QStringLiteral("已完成"), 10000);
         QTRY_COMPARE(student.findChild<QLabel*>("studentMetric3")->text(), QStringLiteral("2 单"));
+        const auto readyTextFailure = checkSummaryText("ready");
+        QVERIFY2(readyTextFailure.isEmpty(), qPrintable(readyTextFailure));
 
         // The owner console reads the same coordinator state.
         PrintWindow boss({root.path(), 20, false, true}); boss.resize(1200, 800); boss.show();

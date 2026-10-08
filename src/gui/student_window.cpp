@@ -63,6 +63,29 @@ using ui::label;
 using ui::tone;
 constexpr qint64 MaxDocumentBytes = 64 * 1024 * 1024;
 
+// The outer editorial canvas scales the strip's geometry. Its layout-managed
+// labels must use that same scale, rather than compressing three fixed-size
+// text rows into a shorter widget at compact window sizes.
+class StudentMetricStrip : public QWidget {
+  protected:
+    void resizeEvent(QResizeEvent *event) override {
+        QWidget::resizeEvent(event);
+        const qreal scale = std::min(width() / 1498., height() / 100.);
+        layout()->setSpacing(std::max(2, qRound(6 * scale)));
+        for (auto *box : findChildren<QFrame *>(QString(), Qt::FindDirectChildrenOnly)) {
+            box->layout()->setContentsMargins(qRound(16 * scale), std::max(2, qRound(4 * scale)),
+                                              qRound(12 * scale), std::max(2, qRound(4 * scale)));
+            box->layout()->setSpacing(std::max(2, qRound(4 * scale)));
+            for (auto *text : box->findChildren<QLabel *>()) {
+                const int referenceSize = text->property("role") == "metricValue" ? 26 : 12;
+                text->setStyleSheet(QStringLiteral("font-size:%1px;")
+                    .arg(std::max(10, qRound(referenceSize * scale))));
+                text->ensurePolished();
+            }
+        }
+    }
+};
+
 QString sizeText(qint64 bytes) {
     if (bytes < 1024)
         return QStringLiteral("%1 B").arg(bytes);
@@ -213,7 +236,7 @@ StudentWindow::StudentWindow(WindowOptions options, const QString &studentId, QW
                            : action == EditorialWindowButton::Maximize ? "windowMaximize" : "windowClose";
         put(new EditorialWindowButton(this, action, id), {1447. + control++ * 46, 3, 43, 49}, 0);
     }
-    auto *metricsBox = new QWidget;
+    auto *metricsBox = new StudentMetricStrip;
     auto *metrics = new QHBoxLayout(metricsBox);
     metrics->setContentsMargins(0, 0, 0, 0);
     const QStringList titles{QStringLiteral("当前排队"), QStringLiteral("预计清空队列"),
