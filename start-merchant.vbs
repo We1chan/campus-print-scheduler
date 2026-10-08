@@ -5,14 +5,15 @@ Set fs = CreateObject("Scripting.FileSystemObject")
 Set shell = CreateObject("WScript.Shell")
 root = fs.GetParentFolderName(WScript.ScriptFullName)
 executable = ""
-For Each version In Array("merchant-v2", "merchant-v1")
-    candidate = fs.BuildPath(root, "dist\" & version & "\campus-print.exe")
+For Each version In Array("merchant-v3", "merchant-v2", "merchant-v1")
+    candidate = fs.BuildPath(root, "dist\" & version & "\campus-print-merchant.exe")
+    If Not fs.FileExists(candidate) Then candidate = fs.BuildPath(root, "dist\" & version & "\campus-print.exe")
     If fs.FileExists(candidate) Then
         executable = candidate
         Exit For
     End If
 Next
-If executable = "" Then executable = fs.BuildPath(root, "build\ci\bin\campus-print.exe")
+If executable = "" Then executable = fs.BuildPath(root, "build\ci\bin\campus-print-merchant.exe")
 If Not fs.FileExists(executable) Then
     MsgBox "Build the merchant application first. See docs/merchant-frontend.md.", 48, "Paperroom Merchant"
     WScript.Quit 1

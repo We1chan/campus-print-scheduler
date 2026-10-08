@@ -1,6 +1,7 @@
 #include "print_window.hpp"
 #include "student_window.hpp"
 #include "merchant_window.hpp"
+#include "merchant_shell.hpp"
 #include "preview_check.hpp"
 #include "editorial_chrome.hpp"
 #include "cps/runtime/job_io.hpp"
@@ -72,6 +73,7 @@ int main(int argc, char* argv[]) {
         if (parser.isSet("smoke-test"))
             QObject::connect(client, &cps::gui::StudentWindow::backendReady, client, &QWidget::close, Qt::QueuedConnection);
     } else if (!parser.isSet("classic-owner") && !parser.isSet("legacy-mode") && !parser.isSet("demo-workload")) {
+        cps::gui::configureMerchantProcess();
         auto* console = new cps::gui::MerchantWindow(options, parser.isSet("merchant-showcase"));
         window.reset(console);
         if (parser.isSet("merchant-capture")) {

@@ -77,12 +77,15 @@ if(CPS_BUILD_QT_APPS)
     # GUI and child programs live together in build/<preset>/bin on every OS.
     add_library(cps_gui src/gui/event_stream.cpp src/gui/control_client.cpp src/gui/print_controller.cpp src/gui/print_window.cpp src/gui/student_window.cpp src/gui/document_preview.cpp src/gui/office_preview.cpp src/gui/preview_check.cpp src/gui/editorial_chrome.cpp)
     target_sources(cps_gui PRIVATE src/gui/merchant_data.cpp src/gui/merchant_painter.cpp
-        src/gui/merchant_orders.cpp src/gui/merchant_devices_stats.cpp src/gui/merchant_window.cpp)
+        src/gui/merchant_orders.cpp src/gui/merchant_devices_stats.cpp src/gui/merchant_window.cpp src/gui/merchant_shell.cpp)
     qt_add_resources(cps_gui merchant_assets PREFIX "/merchant" BASE "assets/merchant"
         FILES assets/merchant/workbench.png assets/merchant/queue.png assets/merchant/devices.png assets/merchant/stats.png
         assets/merchant/brand-16.png assets/merchant/brand-24.png assets/merchant/brand-32.png
         assets/merchant/brand-48.png assets/merchant/brand-64.png assets/merchant/brand-128.png
-        assets/merchant/brand-256.png)
+        assets/merchant/brand-256.png
+        assets/merchant/icons-v3/brand-16.png assets/merchant/icons-v3/brand-24.png assets/merchant/icons-v3/brand-32.png
+        assets/merchant/icons-v3/brand-48.png assets/merchant/icons-v3/brand-64.png assets/merchant/icons-v3/brand-128.png
+        assets/merchant/icons-v3/brand-256.png)
     qt_add_resources(cps_gui editorial_assets PREFIX "/editorial" BASE "assets/editorial"
         FILES assets/editorial/desk.png assets/editorial/campus.png
         assets/editorial/brand-16.png assets/editorial/brand-24.png assets/editorial/brand-32.png
@@ -97,9 +100,17 @@ if(CPS_BUILD_QT_APPS)
     target_link_libraries(cps_gui PUBLIC cps_runtime Qt6::Widgets Qt6::Network PRIVATE cps_options)
     add_executable(campus-print src/gui/main.cpp)
     if(WIN32)
+        target_link_libraries(cps_gui PRIVATE shell32 shlwapi ole32 propsys uuid)
         set_target_properties(campus-print PROPERTIES WIN32_EXECUTABLE TRUE)
         configure_file(assets/editorial/app.rc.in editorial-icon.rc @ONLY)
         target_sources(campus-print PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/editorial-icon.rc")
+        add_executable(campus-print-merchant WIN32 src/gui/main.cpp)
+        configure_file(assets/merchant/app.rc.in merchant-icon.rc @ONLY)
+        target_sources(campus-print-merchant PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/merchant-icon.rc")
+        target_link_libraries(campus-print-merchant PRIVATE cps_gui cps_options)
+        add_custom_command(TARGET campus-print-merchant POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different "${CMAKE_CURRENT_SOURCE_DIR}/assets/merchant/icons-v3/paperroom-merchant.ico"
+            "$<TARGET_FILE_DIR:campus-print-merchant>/paperroom-merchant-v3.ico")
     endif()
     target_link_libraries(campus-print PRIVATE cps_gui cps_options)
     if(CPS_PDFIUM_LIBRARY)

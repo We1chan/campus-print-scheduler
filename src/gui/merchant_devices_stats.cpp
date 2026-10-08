@@ -25,7 +25,7 @@ void vertical(Painter& d, qreal x, qreal y, qreal h) {
     d.p.save(); d.p.setPen(QPen(ruleColor, 1)); d.p.drawLine(QPointF(x, y), QPointF(x, y + h)); d.p.restore();
 }
 void section(Painter& d, qreal x, qreal y, const QString& label, qreal width = 450) {
-    d.text(x, y, width, 45, label, 30, navy, true, true);
+    d.text(x, y, width, 45, label, 28, navy, true);
 }
 void smallArrow(Painter& d, qreal x, qreal y, QColor color = navy) {
     d.p.save(); d.p.setPen(QPen(color, 1.5));
@@ -91,8 +91,7 @@ void deviceCard(Painter& d, const Snapshot& state, const Device& device,
         const qreal paperValueWidth = supplyDividerX - 16 - paperValueX;
         const QString paperValue = device.paper < 0 ? QStringLiteral("未配置")
             : QStringLiteral("%1 / %2 张").arg(device.paper).arg(device.capacity);
-        QFont paperValueFont(QStringLiteral("Microsoft YaHei"));
-        paperValueFont.setPixelSize(16);
+        QFont paperValueFont=merchantFont(16);
         // Keep the complete inventory value inside the gap before the divider.
         while (paperValueFont.pixelSize() > 1
                && QFontMetricsF(paperValueFont).horizontalAdvance(paperValue) > paperValueWidth)
@@ -166,8 +165,16 @@ void deviceDetails(Painter& d, const Snapshot& state, const Device* device) {
 void statisticsMetric(Painter& d, qreal x, qreal w, const QString& label,
                       const QString& value, const QString& unit = {}) {
     d.text(x, 211, w, 36, label, 18, faded);
-    d.text(x, 245, w, 62, value, 51, navy, true, true);
-    if (!unit.isEmpty()) d.text(x + 76, 267, w - 76, 31, unit, 19, navy, true);
+    const qreal unitWidth=unit.isEmpty() ? 0 : QFontMetricsF(merchantFont(19,true)).horizontalAdvance(unit);
+    const qreal valueWidth=w-(unit.isEmpty() ? 0 : unitWidth+8);
+    QFont valueFont=merchantFont(51,true);
+    while(valueFont.pixelSize()>1 && QFontMetricsF(valueFont).horizontalAdvance(value)>valueWidth)
+        valueFont.setPixelSize(valueFont.pixelSize()-1);
+    d.text(x,245,valueWidth,62,value,valueFont.pixelSize(),navy,true);
+    if (!unit.isEmpty()) {
+        const qreal unitX=x+QFontMetricsF(valueFont).horizontalAdvance(value)+8;
+        d.text(unitX,267,unitWidth+1,31,unit,19,navy,true);
+    }
 }
 QPainterPath receiptPath(QRectF rect) {
     QPainterPath path;
@@ -205,7 +212,7 @@ void receipt(Painter& d, const Snapshot& state) {
         d.p.setOpacity(0.12); d.p.drawImage(QRectF(1190, 143, 338, 516), d.assets.texture); d.p.setOpacity(1);
     }
     d.p.restore();
-    d.text(1217, 165, 291, 40, QStringLiteral("纸间 · 校园一店"), 25, navy, true, true);
+    d.text(1217, 165, 291, 40, QStringLiteral("纸间 · 校园一店"), 25, navy, true);
     d.text(1217, 204, 291, 35, state.rangeDate, 18, faded);
     dashed(d, 1217, 244, 291);
     receiptRow(d, 258, QStringLiteral("营业额"), money(state.revenueCents));
@@ -375,8 +382,7 @@ void breakdown(Painter& d, const Snapshot& state) {
 }
 
 void paintDevices(Painter& d, const Snapshot& state, const Selection& selection) {
-    d.text(58, 81, 411, 80, QStringLiteral("每台设备，都在"), 61, navy, true, true);
-    d.text(472, 81, 340, 80, QStringLiteral("好状态。"), 61, red, true, true);
+    d.headline(58,81,80,QStringLiteral("每台设备，都在"),QStringLiteral("好状态。"));
     d.text(59, 157, 685, 42, QStringLiteral("设备、耗材与任务，随时心中有数。"), 23, faded);
     int connected = 0, printing = 0, idle = 0, alerts = 0, lowDevice = -1;
     for (const Device& device : state.devices) {
@@ -392,7 +398,7 @@ void paintDevices(Painter& d, const Snapshot& state, const Selection& selection)
     const std::array<qreal, 4> xs{{59, 268, 488, 716}};
     for (int i = 0; i < 4; ++i) {
         d.text(xs[static_cast<std::size_t>(i)], 202, 176, 32, labels[i], 17, faded);
-        d.text(xs[static_cast<std::size_t>(i)], 228, 176, 51, number(values[static_cast<std::size_t>(i)]), 39, i == 3 && alerts > 0 ? red : navy, true, true);
+        d.text(xs[static_cast<std::size_t>(i)], 228, 176, 51, number(values[static_cast<std::size_t>(i)]), 39, i == 3 && alerts > 0 ? red : navy, true);
         if (i < 3) vertical(d, i == 0 ? 211 : i == 1 ? 428 : 658, 210, 55);
     }
     section(d, 40, 294, QStringLiteral("我的打印设备"), 500);
@@ -442,7 +448,7 @@ void paintDevices(Painter& d, const Snapshot& state, const Selection& selection)
     }
     vertical(d, 637, 822, 40); vertical(d, 991, 822, 40);
     d.text(1031, 813, 80, 25, QStringLiteral("总计"), 16, faded);
-    d.text(1031, 834, 89, 37, QStringLiteral("%1 页").arg(totalPages), 27, navy, true, true);
+    d.text(1031, 834, 89, 37, QStringLiteral("%1 页").arg(totalPages), 27, navy, true);
     deviceDetails(d, state, selected);
     d.icon(QStringLiteral("printer"), 45, 895, 42);
     d.text(110, 890, 350, 27, QStringLiteral("当前选择"), 16, faded);
@@ -463,12 +469,11 @@ void paintDevices(Painter& d, const Snapshot& state, const Selection& selection)
 }
 
 void paintStats(Painter& d, const Snapshot& state, const Selection& selection) {
-    d.text(58, 80, 334, 81, QStringLiteral("今天的生意，"), 61, navy, true, true);
-    d.text(395, 80, 337, 81, QStringLiteral("一目了然。"), 61, red, true, true);
+    d.headline(58,80,81,QStringLiteral("今天的生意，"),QStringLiteral("一目了然。"));
     d.text(59, 156, 650, 43, QStringLiteral("把每一份打印，记成清楚的账。"), 23, faded);
     d.text(59, 211, 218, 36, state.rangeLabel+QStringLiteral("营业额"), 18, faded);
-    d.text(56, 263, 30, 36, QStringLiteral("¥"), 29, navy, true, true);
-    d.text(79, 244, 213, 62, money(state.revenueCents).mid(1), 52, navy, true, true);
+    d.text(56, 263, 30, 36, QStringLiteral("¥"), 29, navy, true);
+    d.text(79, 244, 213, 62, money(state.revenueCents).mid(1), 52, navy, true);
     statisticsMetric(d, 340, 116, QStringLiteral("订单总数"), number(state.todayOrders));
     statisticsMetric(d, 498, 140, QStringLiteral("打印页数"), number(state.printedPages));
     statisticsMetric(d, 672, 157, QStringLiteral("平均完成"), QString::number(state.averageMinutes, 'f', 1), QStringLiteral("分钟"));

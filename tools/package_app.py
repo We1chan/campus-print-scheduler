@@ -43,6 +43,8 @@ def main():
                 parser.error("--preview-fixtures must contain all six generated Office formats")
     suffix = ".exe" if windows else ""
     names = ["campus-print", "print-coordinator", "print-supervisor", "print-worker", "scheduler-replay", "shop-experiments"]
+    if windows:
+        names.append("campus-print-merchant")
     deploy = qt_bin / ("windeployqt.exe" if windows else "macdeployqt")
     for path in [deploy, *(source / (name + suffix) for name in names)]:
         if not path.is_file():
@@ -120,10 +122,11 @@ Set fs = CreateObject("Scripting.FileSystemObject")
 Set shell = CreateObject("WScript.Shell")
 root = fs.GetParentFolderName(WScript.ScriptFullName)
 shell.CurrentDirectory = root
-shell.Run Chr(34) & fs.BuildPath(root, "campus-print.exe") & Chr(34) & "''' + flags + ''' --data-dir " & Chr(34) & fs.BuildPath(root, "runtime\\shop") & Chr(34), 1, False
+shell.Run Chr(34) & fs.BuildPath(root, "campus-print-merchant.exe") & Chr(34) & "''' + flags + ''' --data-dir " & Chr(34) & fs.BuildPath(root, "runtime\\shop") & Chr(34), 1, False
 ''', encoding="ascii")
         shutil.copy2(root / "assets" / "editorial" / "paperroom.ico", output / "paperroom.ico")
         shutil.copy2(root / "assets" / "merchant" / "paperroom-merchant.ico", output / "paperroom-merchant.ico")
+        shutil.copy2(root / "assets" / "merchant" / "icons-v3" / "paperroom-merchant.ico", output / "paperroom-merchant-v3.ico")
     shutil.copy2(root / "docs" / "clean-up.md", output / "clean-up.md")
     shutil.copytree(root / "examples", output / "examples")
     if args.preview_fixtures:

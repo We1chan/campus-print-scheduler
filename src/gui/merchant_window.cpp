@@ -1,4 +1,5 @@
 #include "merchant_window.hpp"
+#include "merchant_shell.hpp"
 #include "editorial_chrome.hpp"
 #include "document_preview.hpp"
 #include <QApplication>
@@ -28,8 +29,14 @@
 #include <QMouseEvent>
 #include <functional>
 #include <algorithm>
+static void initializeMerchantBrand() { Q_INIT_RESOURCE(merchant_assets); }
 namespace cps::gui {
 using namespace merchant;
+QIcon merchantBrandIcon() {
+    initializeMerchantBrand();QIcon icon;
+    for(int size:{16,24,32,48,64,128,256})icon.addFile(QStringLiteral(":/merchant/icons-v3/brand-%1.png").arg(size),QSize(size,size));
+    return icon;
+}
 class MerchantButton : public QPushButton {
 public:
     explicit MerchantButton(QWidget* parent):QPushButton(parent){setAttribute(Qt::WA_Hover);}
@@ -121,12 +128,12 @@ private:
         if(page==0)paintWorkbench(d,state,selection);else if(page==1)paintQueue(d,state,selection);else if(page==2)paintDevices(d,state,selection);else paintStats(d,state,selection);
         p.fillRect(QRectF(0,0,1586,56),QColor("#FAFAF9"));d.rule(0,55,1586);
         p.drawImage(QRectF(39,10,41,35),QImage(":/editorial/brand-128.png"));
-        d.text(91,4,62,48,QStringLiteral("纸间"),28,navy,true,true);p.setPen(ruleColor);p.drawLine(163,16,163,40);d.text(181,4,92,48,QStringLiteral("店主端"),21,slate);
+        d.text(92,8,63,38,QStringLiteral("纸间"),24,navy,true);p.setPen(ruleColor);p.drawLine(163,16,163,40);d.text(181,8,92,38,QStringLiteral("店主端"),16,slate);
         const QStringList nav{QStringLiteral("订单工作台"),QStringLiteral("打印队列"),QStringLiteral("设备管理"),QStringLiteral("营业统计")};
         const int positions[4]={562,706,826,947};
-        for(int i=0;i<4;++i) {d.text(positions[i],0,i==0?108:96,55,nav[i],21,i==page?navy:slate,i==page);d.hit({qreal(positions[i]-6),0.,qreal(i==0?114:106),56.},"nav",QString::number(i),nav[i]);
+        for(int i=0;i<4;++i) {d.text(positions[i],0,i==0?108:96,55,nav[i],18,i==page?navy:slate);d.hit({qreal(positions[i]-6),0.,qreal(i==0?114:106),56.},"nav",QString::number(i),nav[i]);
             if(i==page){p.fillRect(QRectF(positions[i]-2,52,i==0?100:88,4),red);}}
-        d.icon("shop",1240,18,23);d.text(1275,3,140,50,QStringLiteral("校园一店⌄"),20);d.hit({1227,1,205,52},"shop-menu",{},QStringLiteral("店铺菜单"));
+        d.icon("shop",1240,18,23);d.text(1275,3,140,50,QStringLiteral("校园一店⌄"),16);d.hit({1227,1,205,52},"shop-menu",{},QStringLiteral("店铺菜单"));
         p.fillRect(QRectF(0,942,1586,50),Qt::white);d.rule(39,942,1507);
         d.dot(44,963,state.connected||state.showcase?QStringLiteral("店铺营业中"):QStringLiteral("连接后台中"),state.connected||state.showcase?green:slate);
         const auto online=std::count_if(state.devices.cbegin(),state.devices.cend(),[](const Device& device){return device.online;});
@@ -141,9 +148,11 @@ static void styleMerchantMenu(QMenu& menu) {
     menu.setStyleSheet("QMenu{background:#FAFAF9;color:#14213E;border:1px solid #DADDE2;border-radius:8px;padding:6px;font-family:'Microsoft YaHei';font-size:14px;}QMenu::item{padding:9px 24px 9px 15px;border-radius:5px;}QMenu::item:selected{background:#FBEDE8;color:#D93E29;}QMenu::separator{height:1px;background:#DADDE2;margin:6px 10px;}");
 }
 MerchantWindow::MerchantWindow(WindowOptions options,bool showcase):model_(new MerchantData(options,showcase,this)),canvas_(new MerchantCanvas(this,model_)) {
-    QIcon icon;for(int size:{16,24,32,48,64,128,256})icon.addFile(QStringLiteral(":/merchant/brand-%1.png").arg(size),QSize(size,size));
-    setObjectName("merchantWindow");setWindowTitle(QStringLiteral("纸间 · 店主端"));setWindowIcon(icon);setCentralWidget(canvas_);
+    setFont(QFont(QStringLiteral("Microsoft YaHei UI"),10));
+    setObjectName("merchantWindow");setWindowTitle(QStringLiteral("纸间 · 店主端"));setCentralWidget(canvas_);
     setMinimumSize(950,594);resize(1269,794);new EditorialChrome(this,56,992);
+    setWindowIcon(merchantBrandIcon());
+    configureMerchantTaskbar(this);
     canvas_->invoked=[this](const QString& a,const QString& v){action(a,v);};
     connect(model_,&MerchantData::feedback,this,&MerchantWindow::notify);connect(model_,&MerchantData::backendReady,this,&MerchantWindow::backendReady);
     for(int i=0;i<4;++i){auto* key=new QShortcut(QKeySequence(QStringLiteral("Ctrl+%1").arg(i+1)),this);connect(key,&QShortcut::activated,this,[this,i]{setPage(i);});}

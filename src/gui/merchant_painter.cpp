@@ -14,14 +14,24 @@ Assets::Assets() {
     texture=workbench.copy(700,76,128,128);
 }
 void Painter::text(qreal x,qreal y,qreal w,qreal h,const QString& value,int size,QColor color,bool bold,bool serif,int align) {
-    QFont font(serif?QStringLiteral("华文中宋"):QStringLiteral("Microsoft YaHei"));
-    font.setPixelSize(size); font.setWeight(bold?QFont::Bold:QFont::Normal);
+    QFont font=merchantFont(size,bold,serif);
     if(serif && size>=50) {
         const qreal advance=QFontMetricsF(font).horizontalAdvance(value);
         if(advance>w)font.setPixelSize(std::max(1,int(std::floor(size*w/advance))));
     }
     p.setFont(font); p.setPen(color);
     p.drawText(QRectF(x,y,w,h),align,QFontMetricsF(font).elidedText(value,Qt::ElideRight,w));
+}
+void Painter::headline(qreal x,qreal y,qreal h,const QString& prefix,const QString& accent) {
+    const QFont font=merchantFont(60,true,true);
+    const QFontMetricsF metrics(font);
+    const qreal prefixWidth=metrics.horizontalAdvance(prefix);
+    const qreal accentWidth=metrics.horizontalAdvance(accent);
+    // The accent follows the same measured baseline as print_proof.hpp.
+    p.setFont(font);p.setPen(navy);
+    p.drawText(QRectF(x,y,prefixWidth+2,h),Qt::AlignLeft|Qt::AlignVCenter,prefix);
+    p.setPen(red);
+    p.drawText(QRectF(x+prefixWidth,y,accentWidth+2,h),Qt::AlignLeft|Qt::AlignVCenter,accent);
 }
 void Painter::rule(qreal x,qreal y,qreal w) {p.setPen(QPen(ruleColor,1)); p.drawLine(QPointF(x,y),QPointF(x+w,y));}
 void Painter::panel(QRectF r,QColor fill,QColor border,qreal radius) { p.setPen(QPen(border,1));p.setBrush(fill);p.drawRoundedRect(r,radius,radius);p.setBrush(Qt::NoBrush); }

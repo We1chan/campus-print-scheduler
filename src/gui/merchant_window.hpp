@@ -6,6 +6,7 @@
 #include <QPushButton>
 #include <QHash>
 namespace cps::gui {
+QIcon merchantBrandIcon();
 class MerchantCanvas;
 class MerchantWindow : public QMainWindow {
     Q_OBJECT

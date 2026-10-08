@@ -23,6 +23,16 @@
 #include <QSignalSpy>
 #include <QTemporaryDir>
 #include <QTest>
+#include <QScreen>
+#include "editorial_chrome.hpp"
+#ifdef Q_OS_WIN
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#include <shobjidl.h>
+#include <propkey.h>
+#endif
 #include <QTimer>
 #include <algorithm>
 #include <cstdlib>
@@ -433,6 +443,47 @@ private slots:
         window.model()->execute(QStringLiteral("pause"), QStringLiteral("1"));
         window.close();
         QVERIFY(!window.isVisible());
+    }
+
+    void nativeMerchantShellUsesStorefrontIcon() {
+        MerchantWindow window({}, true);
+        window.show();
+        QVERIFY(QTest::qWaitForWindowExposed(&window));
+        QVERIFY(!window.windowIcon().isNull());
+        QVERIFY(!window.windowIcon().pixmap(32,32).isNull());
+        QVERIFY(window.windowIcon().pixmap(32,32).toImage()!=editorialBrandIcon().pixmap(32,32).toImage());
+#ifdef Q_OS_WIN
+        if(QGuiApplication::platformName()==QStringLiteral("windows")) {
+            IPropertyStore* store=nullptr;
+            QVERIFY(SUCCEEDED(SHGetPropertyStoreForWindow(reinterpret_cast<HWND>(window.winId()),IID_PPV_ARGS(&store))));
+            auto read=[store](const PROPERTYKEY& key){
+                PROPVARIANT value;PropVariantInit(&value);QString text;
+                if(SUCCEEDED(store->GetValue(key,&value))&&value.vt==VT_LPWSTR)text=QString::fromWCharArray(value.pwszVal);
+                PropVariantClear(&value);return text;
+            };
+            const QString identity=read(PKEY_AppUserModel_ID);
+            const QString command=read(PKEY_AppUserModel_RelaunchCommand);
+            const QString icon=read(PKEY_AppUserModel_RelaunchIconResource);
+            store->Release();
+            QCOMPARE(identity,QStringLiteral("Paperroom.Merchant"));
+            QVERIFY(command.contains(QDir::toNativeSeparators(QCoreApplication::applicationFilePath())));
+            QVERIFY(icon.endsWith(",0"));
+            QVERIFY(QFileInfo::exists(icon.chopped(2)));
+            QVERIFY(!QIcon(icon.chopped(2)).isNull());
+            if(qEnvironmentVariableIsSet("CPS_MERCHANT_TASKBAR_CAPTURE")) {
+                window.raise();window.activateWindow();QTest::qWait(1000);
+                auto* screen=window.screen();const QRect desktop=screen->geometry();
+                const int barHeight=std::max(1,desktop.bottom()-screen->availableGeometry().bottom());
+                const auto strip=screen->grabWindow(0,desktop.x(),desktop.bottom()-barHeight+1,desktop.width(),barHeight);
+                QVERIFY(!strip.isNull());
+                const auto directory=qEnvironmentVariable("CPS_MERCHANT_EVIDENCE_DIR");
+                QVERIFY(!directory.isEmpty()&&QDir().mkpath(directory));
+                QVERIFY(strip.save(QDir(directory).filePath("native-taskbar.png")));
+            }
+        }
+#endif
+        QVERIFY(saveEvidence(window,QStringLiteral("native-merchant-brand.png")));
+        window.close();
     }
 
     void selectedDeviceImageHoverAndFocusReturnToRest() {

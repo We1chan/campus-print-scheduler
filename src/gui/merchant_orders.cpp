@@ -50,7 +50,7 @@ void serviceBadge(Painter& d, const QRectF& rect, const QString& service)
 void metric(Painter& d, qreal x, const QString& label, int value, bool accent=false)
 {
     d.text(x,206,150,27,label,17,secondary);
-    d.text(x,235,158,43,QString::number(value),39,accent ? red : navy,true,true);
+    d.text(x,235,158,43,QString::number(value),39,accent ? red : navy,true);
 }
 
 void refreshButton(Painter& d, const QRectF& rect)
@@ -73,8 +73,7 @@ void browseArrow(Painter& d, const QRectF& rect, bool next, const QString& actio
 void hero(Painter& d, const Snapshot& state, bool queue)
 {
     if (queue) {
-        d.text(58,81,356,80,QStringLiteral("每一单，都有"),61,navy,true,true);
-        d.text(413,81,279,80,QStringLiteral("好次序。"),61,red,true,true);
+        d.headline(58,81,80,QStringLiteral("每一单，都有"),QStringLiteral("好次序。"));
         d.text(59,159,690,37,state.showcase?QStringLiteral("按设备查看进度，拖动工单调整顺序。"):QStringLiteral("按设备查看进度，自动调度等待任务。"),23,secondary);
         int assigned=0, unassigned=0;
         for (const auto& order : state.orders) {
@@ -89,8 +88,7 @@ void hero(Painter& d, const Snapshot& state, bool queue)
         verticalRule(d,431,211,56);
         verticalRule(d,666,211,56);
     } else {
-        d.text(58,81,424,80,QStringLiteral("每一份，都值得"),61,navy,true,true);
-        d.text(479,81,253,80,QStringLiteral("印好。"),61,red,true,true);
+        d.headline(58,81,80,QStringLiteral("每一份，都值得"),QStringLiteral("印好。"));
         d.text(59,159,630,37,QStringLiteral("订单、队列与设备，一眼掌握。"),23,secondary);
         metric(d,59,state.rangeLabel+QStringLiteral("订单"),state.todayOrders);
         metric(d,274,QStringLiteral("待打印"),state.waiting,true);
@@ -100,7 +98,7 @@ void hero(Painter& d, const Snapshot& state, bool queue)
         verticalRule(d,426,211,56);
         verticalRule(d,642,211,56);
         d.text(971,210,134,29,state.rangeLabel+QStringLiteral("营收"),17,secondary,false,false,Qt::AlignRight|Qt::AlignVCenter);
-        d.text(937,238,168,40,money(state.revenueCents),31,navy,true,true,Qt::AlignRight|Qt::AlignVCenter);
+        d.text(937,238,168,40,money(state.revenueCents),31,navy,true,false,Qt::AlignRight|Qt::AlignVCenter);
     }
 }
 
@@ -129,7 +127,7 @@ void documentPreview(Painter& d, const Order& order, const QRectF& rect)
 
 void sidebarHeading(Painter& d, const Order* order, bool queue, bool showcase)
 {
-    d.text(1175,79,375,52,queue ? QStringLiteral("队列详情") : QStringLiteral("订单详情"),36,navy,true,true);
+    d.text(1175,79,375,52,queue ? QStringLiteral("队列详情") : QStringLiteral("订单详情"),32,navy,true);
     if (!order) {
         d.text(1175,140,370,36,QStringLiteral("暂无订单"),21,secondary);
         d.icon(QStringLiteral("document"),1321,267,70,ruleColor);
@@ -199,7 +197,7 @@ void queueSidebar(Painter& d, const Snapshot& state, const Selection& selection)
 
 void deviceStrip(Painter& d, const Snapshot& state, const Selection& selection)
 {
-    d.text(39,726,400,30,QStringLiteral("设备与队列"),25,navy,true,true);
+    d.text(39,726,400,30,QStringLiteral("设备与队列"),25,navy,true);
     d.text(958,729,158,27,QStringLiteral("查看全部设备  ›"),16,secondary,false,false,Qt::AlignRight|Qt::AlignVCenter);
     d.hit(QRectF(957,727,163,28),QStringLiteral("page"),QStringLiteral("devices"),QStringLiteral("查看全部设备"));
     const int base=std::max(0,selection.device/2*2);
@@ -342,7 +340,7 @@ void queueLane(Painter& d, const Snapshot& state, const Selection& selection, in
 void paintWorkbench(Painter& d, const Snapshot& state, const Selection& selection)
 {
     hero(d,state,false);
-    d.text(39,307,224,54,QStringLiteral("订单工作台"),35,navy,true,true);
+    d.text(39,307,224,54,QStringLiteral("订单工作台"),32,navy,true);
     const QString labels[]={QStringLiteral("待打印"),QStringLiteral("打印中"),QStringLiteral("待取件"),QStringLiteral("已完成")};
     const int values[]={state.waiting,state.printing,state.ready,state.completed};
     const qreal tabX[]={267,382,497,627};
@@ -401,7 +399,7 @@ void paintWorkbench(Painter& d, const Snapshot& state, const Selection& selectio
 void paintQueue(Painter& d, const Snapshot& state, const Selection& selection)
 {
     hero(d,state,true);
-    d.text(39,307,520,52,QStringLiteral("打印队列"),35,navy,true,true);
+    d.text(39,307,520,52,QStringLiteral("打印队列"),32,navy,true);
     d.panel(QRectF(847,310,174,39),Qt::white,QColor("#C5CDDC"),7);
     d.text(860,313,135,32,QStringLiteral("全部设备"),17,secondary);
     d.text(987,313,25,32,QStringLiteral("⌄"),22,navy);

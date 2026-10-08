@@ -17,9 +17,15 @@ def main():
     windows = sys.platform == "win32"
     binaries = package if windows else package / "CampusPrint.app" / "Contents" / "MacOS"
     suffix = ".exe" if windows else ""
+    student_gui = binaries / ("campus-print" + suffix)
+    owner_gui = student_gui
     if windows:
         from windows_desktop import check_gui_binary, check_backend_consoles
-        check_gui_binary(binaries / "campus-print.exe")
+        check_gui_binary(student_gui, expected_icon=package / "paperroom.ico")
+        merchant_gui = binaries / "campus-print-merchant.exe"
+        if merchant_gui.is_file():
+            owner_gui = merchant_gui
+            check_gui_binary(owner_gui, expected_icon=package / "paperroom-merchant-v3.ico")
     env = {key: value for key, value in os.environ.items()
            if not key.startswith(("QT_", "QML", "DYLD_")) and key not in ("QTDIR", "QT_PLUGIN_PATH")}
     env["PATH"] = str(Path(env.get("SystemRoot", "C:/Windows")) / "System32") if windows else "/usr/bin:/bin"
@@ -28,13 +34,13 @@ def main():
     with tempfile.TemporaryDirectory(prefix="package-test-") as temp:
         root = Path(temp) / "中文 空格路径"
         root.mkdir()
-        result = subprocess.run([str(binaries / ("campus-print" + suffix)), "--smoke-test", "--data-dir", str(root)],
+        result = subprocess.run([str(owner_gui), "--smoke-test", "--data-dir", str(root)],
                                 env=env, cwd=root, capture_output=True, timeout=20)
         if result.returncode:
             raise RuntimeError(f"Deployed GUI failed ({result.returncode}): {result.stderr!r}")
         # A separate directory exercises the student's own detached backend launch.
         student_root = root / "student"
-        student = subprocess.run([str(binaries / ("campus-print" + suffix)), "--role", "student",
+        student = subprocess.run([str(student_gui), "--role", "student",
                                   "--smoke-test", "--data-dir", str(student_root)],
                                  env=env, cwd=root, capture_output=True, timeout=20)
         if student.returncode:
@@ -70,7 +76,7 @@ def main():
                 dict(job_id="persist-a", title="发布包持久队列", pages=20, copies=1),
                 dict(job_id="persist-b", title="关闭后恢复", pages=2, copies=1)]))
             # The first GUI already exited. A second GUI must attach to the same queue.
-            again = subprocess.run([str(binaries / ("campus-print" + suffix)), "--smoke-test",
+            again = subprocess.run([str(owner_gui), "--smoke-test",
                                     "--data-dir", str(root)], env=env, cwd=root, capture_output=True, timeout=20)
             if again.returncode:
                 raise RuntimeError(f"Deployed GUI reopen failed: {again.stderr!r}")
@@ -118,7 +124,7 @@ def main():
             raise RuntimeError("Deployed worker output does not match the requested job")
     print("Deployed GUI reopen, persistent coordinator queue and supervisor/worker printing passed with SDK paths removed.")
     if windows:
-        print("Windows GUI subsystem, embedded app icon and console-free coordinator/supervisor/worker verified.")
+        print("Windows GUI subsystem, all embedded app icon sizes/bytes and console-free coordinator/supervisor/worker verified.")
 
 
 if __name__ == "__main__":

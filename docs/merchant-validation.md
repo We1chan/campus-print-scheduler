@@ -44,3 +44,20 @@ python tests/office_package_smoke.py --package-dir dist/merchant-v1
 - 新增源码根目录静默启动器 `start-merchant.vbs`，优先 v2，并继续使用已经存在的 v1 店铺数据目录；桌面独立店主快捷方式引用专用图标。
 
 v2 包生成后使用单独存放该 ZIP 的归档目录执行 `tools/verify_package.py`；该工具校验 manifest 全部哈希，并依次执行无 SDK 的 GUI/持久队列、完整 Office 六格式和进程控制验收。结果留在 `runtime/merchant-v2-package-check/`，保留 v1 包及其真实运行数据。
+
+## v3 图标和字体统一验收（2026-10-08）
+
+- 按学生端实际源码对齐字体角色：品牌、导航、栏目、表格和数据使用微软雅黑；四页大标语及纸面文档使用宋体。品牌为 24px 粗体，导航为 18px 常规，主标语为 60px 粗体。统计数值和单位按实际字体宽度排版。
+- 用户选定 A 门店招牌后，新增 `assets/merchant/icons-v3/`，扩大门店标识。原学生品牌、v2 店主图标及旧发布包保留。
+- Windows 新增独立 `campus-print-merchant.exe`，嵌入新版图标；原 `campus-print.exe` 保留学生图标。两者的七种尺寸嵌入图标已逐帧校验完整图像载荷。
+- 修复共享窗口框架覆盖店主窗口图标的问题。在框架初始化后设置店主图标，并设置独立 AppUserModelID、重启命令和任务栏图标资源。原生测试直接读取窗口 IPropertyStore 核对这些属性，截图留在 `runtime/merchant-evidence/v3-native/`。
+- `ci` Release 构建通过，完整 CTest 14/14 通过。最终 Windows 原生图标、悬停焦点、窗口控件及店铺菜单回归共 6 passed / 0 failed（含初始化和清理），没有属性设置警告；日志为 `runtime/merchant-evidence/v3-native-tests.txt`。
+- 四页源程序原生抓图在 `runtime/merchant-evidence/v3-showcase/`。桌面启动器优先选择 v3 专用程序，继续使用既有 v1 店铺数据目录。
+
+发布验收使用单独的 v3 归档目录，结果以运行时输出为准：
+
+```powershell
+python tools/verify_package.py --archive-dir runtime/merchant-v3-archive --output-dir runtime/merchant-v3-package-check
+```
+
+验证包括完整 manifest 哈希、移除 SDK PATH 后的两端原生启动及持久队列、包内 Office 六格式两页预览、进程控制；范围仍限于本机 Windows。
