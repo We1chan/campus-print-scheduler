@@ -22,6 +22,12 @@ void Painter::text(qreal x,qreal y,qreal w,qreal h,const QString& value,int size
     p.setFont(font); p.setPen(color);
     p.drawText(QRectF(x,y,w,h),align,QFontMetricsF(font).elidedText(value,Qt::ElideRight,w));
 }
+void Painter::navigationText(QRectF rect,const QString& value) {
+    QFont font(QStringLiteral("Microsoft YaHei UI"));
+    font.setPixelSize(18);font.setBold(false);
+    p.setFont(font);p.setPen(QColor("#17233E"));
+    p.drawText(rect,Qt::AlignCenter,value);
+}
 void Painter::headline(qreal x,qreal y,qreal h,const QString& prefix,const QString& accent) {
     const QFont font=merchantFont(60,true,true);
     const QFontMetricsF metrics(font);
@@ -37,9 +43,12 @@ void Painter::rule(qreal x,qreal y,qreal w) {p.setPen(QPen(ruleColor,1)); p.draw
 void Painter::panel(QRectF r,QColor fill,QColor border,qreal radius) { p.setPen(QPen(border,1));p.setBrush(fill);p.drawRoundedRect(r,radius,radius);p.setBrush(Qt::NoBrush); }
 void Painter::hit(QRectF r,const QString& action,const QString& value,const QString& label) {hits.push_back({r,action,value,label.isEmpty()?action:label});}
 void Painter::button(QRectF r,const QString& label,const QString& action,const QString& value,bool primary) {
-    panel(r,primary?red:QColor(Qt::white),primary?red:QColor("#D9DCE2"),6);
-    const int size=r.height()<=41?16:r.height()<=50?19:21;
-    text(r.x()+12,r.y(),r.width()-24,r.height(),label,size,primary?QColor(Qt::white):navy,true,false,Qt::AlignCenter);
+    const bool enabled=showcase_||!requiresShowcase(action);
+    const QColor fill=enabled?(primary?red:QColor(Qt::white)):(primary?QColor("#CFA097"):QColor("#F1F0ED"));
+    panel(r,fill,enabled?(primary?red:QColor("#D9DCE2")):(primary?fill:QColor("#E2E0DB")),6);
+    const int size=primary?21:16;
+    const QColor ink=enabled?(primary?QColor(Qt::white):navy):(primary?QColor("#FFF7F4"):QColor("#A2A7B0"));
+    text(r.x()+12,r.y(),r.width()-24,r.height(),label,size,ink,primary,false,Qt::AlignCenter);
     hits.push_back({r,action,value,label,true,primary});
 }
 void Painter::badge(QRectF r,const QString& label,bool accent) {
@@ -53,8 +62,8 @@ void Painter::progress(QRectF r,double value,QColor color) {
     p.setBrush(Qt::NoBrush);
 }
 void Painter::dot(qreal x,qreal y,const QString& label,QColor color) {
-    p.setPen(Qt::NoPen);p.setBrush(color);p.drawEllipse(QPointF(x,y),6,6);p.setBrush(Qt::NoBrush);
-    text(x+15,y-14,220,28,label,16,color);
+    p.setPen(Qt::NoPen);p.setBrush(color);p.drawEllipse(QPointF(x,y),4,4);p.setBrush(Qt::NoBrush);
+    text(x+15,y-14,220,28,label,14,color);
 }
 void Painter::art(const QString& name,QRectF target) {
     if(name=="printer-black")p.drawImage(target,assets.devices,QRectF(150,402,297,179));
@@ -76,7 +85,7 @@ void Painter::cover(QRectF target) {
     p.setClipPath(clip.subtracted(oldStatus));p.drawImage(target,assets.queue,QRectF(1238,143,265,317));p.restore();
 }
 void Painter::detailRow(qreal y,const QString& key,const QString& value,QColor color) {
-    text(1175,y,168,30,key,18,slate);text(1338,y,216,30,value,18,color,false,false,Qt::AlignRight|Qt::AlignVCenter);
+    text(1175,y,168,30,key,14,slate);text(1338,y,216,30,value,14,color,false,false,Qt::AlignRight|Qt::AlignVCenter);
 }
 void Painter::icon(const QString& name,qreal x,qreal y,qreal size,QColor color) {
     p.save();p.translate(x,y);p.scale(size/32.,size/32.);p.setPen(QPen(color,2.,Qt::SolidLine,Qt::RoundCap,Qt::RoundJoin));p.setBrush(Qt::NoBrush);

@@ -600,6 +600,14 @@ private slots:
         QVERIFY(shop && search && !search->isVisible());
         auto* queue = window.findChild<QPushButton*>("merchant_nav_1");
         QVERIFY(queue);
+        const auto navigationText=[](QPushButton* button){
+            const QImage image=button->grab().toImage();
+            return image.copy(0,0,image.width(),image.height()*48/56); // Exclude current-page underline.
+        };
+        const auto unselectedText=navigationText(queue);
+        QTest::mouseClick(queue,Qt::LeftButton);
+        QCOMPARE(navigationText(queue),unselectedText);
+        window.setPage(2);
         setPointerInside(*queue, true);
         QVERIFY(saveEvidence(window, QStringLiteral("native-header-nav-hover.png")));
         setPointerInside(*queue, false);
@@ -680,6 +688,36 @@ private slots:
             QTest::mouseClick(previous,Qt::LeftButton);
         }
         QVERIFY(saveEvidence(merchant,QStringLiteral("native-queue-first-device-page.png")));
+        merchant.setPage(2);
+        auto* previousDevice=merchant.findChild<QPushButton*>("merchant_device-prev_");
+        auto* nextDevice=merchant.findChild<QPushButton*>("merchant_device-next_");
+        auto* addDevice=merchant.findChild<QPushButton*>("merchant_add-device_");
+        auto* canvas=merchant.findChild<QWidget*>("merchantCanvas");
+        QVERIFY(previousDevice&&nextDevice&&addDevice&&canvas);
+        const QRect previousGeometry=previousDevice->geometry(),nextGeometry=nextDevice->geometry();
+        QCOMPARE(previousDevice->size(),addDevice->size());
+        QCOMPARE(nextDevice->size(),addDevice->size());
+        QCOMPARE(addDevice->accessibleName(),QStringLiteral("添加设备"));
+        QTest::mouseClick(previousDevice,Qt::LeftButton);
+        QCOMPARE(canvas->accessibleDescription(),QStringLiteral("已经是第一页"));
+        for(int target:{2,4}){
+            QTest::mouseClick(nextDevice,Qt::LeftButton);
+            for(int device:{target,target+1}){
+                auto* card=merchant.findChild<QPushButton*>(QStringLiteral("merchant_select-device_%1").arg(device));
+                QVERIFY(card&&card->isVisible());
+            }
+            QCOMPARE(previousDevice->geometry(),previousGeometry);
+            QCOMPARE(nextDevice->geometry(),nextGeometry);
+        }
+        QTest::mouseClick(nextDevice,Qt::LeftButton);
+        QCOMPARE(canvas->accessibleDescription(),QStringLiteral("已经是最后一页"));
+        QVERIFY(previousDevice->isVisible()&&nextDevice->isVisible());
+        QVERIFY(saveEvidence(merchant,QStringLiteral("native-devices-last-page.png")));
+        for(int target:{2,0}){
+            QTest::mouseClick(previousDevice,Qt::LeftButton);
+            QVERIFY(merchant.findChild<QPushButton*>(QStringLiteral("merchant_select-device_%1").arg(target)));
+        }
+        QVERIFY(saveEvidence(merchant,QStringLiteral("native-devices-first-page.png")));
         merchant.setPage(0);
         merchant.model()->execute(QStringLiteral("pause-all"));
         QTRY_VERIFY(merchant.model()->snapshot().paused);

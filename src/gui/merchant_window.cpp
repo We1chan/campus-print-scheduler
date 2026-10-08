@@ -45,18 +45,23 @@ public:
 protected:
     void paintEvent(QPaintEvent*) override {
         // Match student buttons: flat color/border feedback, transparent navigation and artwork.
-        if(!hit_.button||!isEnabled()||(!underMouse()&&!isDown()&&!hasFocus()))return;
+        if(!hit_.button||(isEnabled()&&!underMouse()&&!isDown()&&!hasFocus()))return;
         QPainter painter(this);painter.setRenderHint(QPainter::Antialiasing);
         painter.scale(width()/hit_.rect.width(),height()/hit_.rect.height());
-        const bool hovered=underMouse()||isDown();
+        const bool hovered=isEnabled()&&(underMouse()||isDown());
         const QColor accent("#D6402C");
-        painter.setPen(QPen(accent,hasFocus()?2:1));
-        painter.setBrush(hit_.primary?(hovered?QColor("#BF3322"):red):(hovered?QColor("#FFF6F2"):QColor(Qt::white)));
+        QColor fill=hit_.primary?(hovered?QColor("#BF3322"):red):(hovered?QColor("#FFF6F2"):QColor(Qt::white));
+        QColor border=hit_.primary?fill:accent;
+        QColor ink=hit_.primary?QColor(Qt::white):navy;
+        if(isDown()){fill=hit_.primary?QColor("#A72C1E"):QColor("#F7E9E3");border=hit_.primary?fill:accent;}
+        if(!isEnabled()){fill=hit_.primary?QColor("#CFA097"):QColor("#F1F0ED");border=hit_.primary?fill:QColor("#E2E0DB");ink=hit_.primary?QColor("#FFF7F4"):QColor("#A2A7B0");}
+        painter.setPen(QPen(border,isEnabled()&&hasFocus()?2:1));
+        painter.setBrush(fill);
         const QRectF box(0,0,hit_.rect.width(),hit_.rect.height());
         painter.drawRoundedRect(box.adjusted(1,1,-1,-1),6,6);
-        const int size=box.height()<=41?16:box.height()<=50?19:21;
-        const QFont font=merchantFont(size,true);
-        painter.setFont(font);painter.setPen(hit_.primary?QColor(Qt::white):navy);
+        const int size=hit_.primary?21:16;
+        const QFont font=merchantFont(size,hit_.primary);
+        painter.setFont(font);painter.setPen(ink);
         painter.drawText(box.adjusted(12,0,-12,0),Qt::AlignCenter,QFontMetricsF(font).elidedText(hit_.label,Qt::ElideRight,box.width()-24));
     }
     void enterEvent(QEnterEvent* event) override {QPushButton::enterEvent(event);update();}
@@ -80,7 +85,7 @@ public:
         setObjectName("merchantCanvas");setMouseTracking(true);setAcceptDrops(true);setAttribute(Qt::WA_OpaquePaintEvent);
         search_=new QLineEdit(this);search_->setObjectName("merchantSearch");search_->setPlaceholderText(QStringLiteral("搜索订单 / 文件名"));
         search_->setAccessibleName(QStringLiteral("搜索订单、文件名或学号"));
-        search_->setStyleSheet("QLineEdit{border:none;background:transparent;color:#0B1B3B;font-family:'Microsoft YaHei';font-size:14px;}QLineEdit:focus{border-bottom:1px solid #D93E29;}");
+        search_->setStyleSheet("QLineEdit{border:none;background:transparent;color:#14213E;font-family:'Microsoft YaHei UI';font-size:14px;selection-background-color:#F4D9D1;selection-color:#14213E;}QLineEdit:focus{border-bottom:1px solid #D6402C;}");
         QObject::connect(search_,&QLineEdit::textChanged,this,[this](const QString& value){selection.search=value;selection.offset=0;refresh();});
         QObject::connect(data_,&MerchantData::changed,this,[this]{refresh();});
         const EditorialWindowButton::Action actions[]{EditorialWindowButton::Minimize,EditorialWindowButton::Maximize,EditorialWindowButton::Close};
@@ -110,8 +115,9 @@ public:
             const int row=hit.value.toInt();const bool orderHit=hit.action=="select-order"&&row>=0&&row<state.orders.size();
             button->setProperty("dropOrderId",orderHit?state.orders[row].id:QString());
             button->setProperty("dragOrderId",orderHit&&page==1&&state.showcase&&state.orders[row].state==QStringLiteral("待打印")?state.orders[row].id:QString());
-            const bool unsupported=!state.showcase&&(hit.action=="assign"||hit.action=="transfer"||hit.action=="reorder"||hit.action=="test-page");
+            const bool unsupported=!state.showcase&&requiresShowcase(hit.action);
             button->setEnabled(!unsupported);
+            button->setCursor(unsupported?Qt::ArrowCursor:Qt::PointingHandCursor);
             if(unsupported)button->setToolTip(QStringLiteral("共享后台尚未提供该手动操作；可在店铺菜单选择自动调度策略。"));
         }
         for(auto i=buttons_.begin();i!=buttons_.end();) {if(!active.contains(i.key())) {delete i.value();i=buttons_.erase(i);}else ++i;}
@@ -132,7 +138,7 @@ protected:
     void paintEvent(QPaintEvent*) override {QPainter painter(this);painter.setRenderHint(QPainter::Antialiasing);painter.setRenderHint(QPainter::SmoothPixmapTransform);painter.scale(width()/1586.,height()/992.);QVector<Hit> controls;paintScene(painter,controls);}
 private:
     void paintScene(QPainter& p,QVector<Hit>& controls) {
-        const auto& state=data_->snapshot();Painter d(p,controls,assets_);
+        const auto& state=data_->snapshot();Painter d(p,controls,assets_,state.showcase);
         p.fillRect(QRectF(0,0,1586,992),Qt::white);
         p.save();p.setOpacity(.18);p.drawTiledPixmap(QRectF(0,0,1586,992),QPixmap::fromImage(assets_.texture));p.restore();
         const int heroBottom=page==3?315:page==2?286:292;
@@ -147,22 +153,23 @@ private:
         const int positions[4]={562,706,826,947};
         for(int i=0;i<4;++i) {
             const QRectF tab(positions[i]-6,0,i==0?114:106,56);
-            d.text(tab.x(),tab.y(),tab.width(),tab.height(),nav[i],18,i==page?navy:slate,false,false,Qt::AlignCenter);
+            d.navigationText(tab,nav[i]);
             d.hit(tab,"nav",QString::number(i),nav[i]);
             if(i==page){const qreal lineWidth=i==0?100:88;p.fillRect(QRectF(tab.center().x()-lineWidth/2,52,lineWidth,4),red);}}
         d.icon("shop",1240,18,23);d.text(1275,3,70,50,QStringLiteral("校园一店"),16);d.hit({1230,7,120,42},"shop-menu",{},QStringLiteral("店铺菜单"));
         p.fillRect(QRectF(0,942,1586,50),Qt::white);d.rule(39,942,1507);
-        d.dot(44,963,state.connected||state.showcase?QStringLiteral("店铺营业中"):QStringLiteral("连接后台中"),state.connected||state.showcase?green:slate);
+        p.setPen(Qt::NoPen);p.setBrush(state.connected||state.showcase?green:slate);p.drawEllipse(QPointF(44,963),3,3);p.setBrush(Qt::NoBrush);
+        d.text(63,949,185,32,state.connected||state.showcase?QStringLiteral("店铺营业中"):QStringLiteral("连接后台中"),14,navy);
         const auto online=std::count_if(state.devices.cbegin(),state.devices.cend(),[](const Device& device){return device.online;});
-        d.text(175,946,151,40,"06:00 - 23:00",15,slate);d.text(344,946,196,40,QStringLiteral("%1 台设备在线").arg(online),15,slate);
-        if(state.showcase)d.text(556,946,215,40,QStringLiteral("样例模式 · 独立演示"),14,slate);
-        d.text(1331,946,221,40,state.date+" "+state.clock,14,slate,false,false,Qt::AlignRight|Qt::AlignVCenter);
+        d.text(175,949,151,32,"06:00 - 23:00",13,slate);d.text(344,949,196,32,QStringLiteral("%1 台设备在线").arg(online),13,slate);
+        if(state.showcase)d.text(556,949,215,32,QStringLiteral("样例模式 · 独立演示"),13,slate);
+        d.text(1331,949,221,32,state.date+" "+state.clock,13,slate,false,false,Qt::AlignRight|Qt::AlignVCenter);
         if(!toast.isEmpty()) {d.panel({480,795,625,51},toastProblem?QColor("#FFF2EE"):QColor("#F5F7FA"),toastProblem?red:ruleColor,8);d.text(499,797,590,47,toast,16,toastProblem?red:navy);}
     }
     MerchantData* data_;Assets assets_;QHash<QString,QPushButton*> buttons_;QLineEdit* search_;QVector<EditorialWindowButton*> windowControls_;
 };
 static void styleMerchantMenu(QMenu& menu) {
-    menu.setStyleSheet("QMenu{background:#FAFAF9;color:#14213E;border:1px solid #DADDE2;border-radius:8px;padding:6px;font-family:'Microsoft YaHei';font-size:14px;}QMenu::item{padding:9px 24px 9px 15px;border-radius:5px;}QMenu::item:selected{background:#FBEDE8;color:#D93E29;}QMenu::separator{height:1px;background:#DADDE2;margin:6px 10px;}");
+    menu.setStyleSheet("QMenu{background:#FAFAF9;color:#14213E;border:1px solid #DADDE2;border-radius:8px;padding:6px;font-family:'Microsoft YaHei UI';font-size:14px;}QMenu::item{padding:9px 24px 9px 15px;border-radius:5px;}QMenu::item:selected{background:#FFF6F2;color:#D63D29;}QMenu::separator{height:1px;background:#DADDE2;margin:6px 10px;}");
 }
 MerchantWindow::MerchantWindow(WindowOptions options,bool showcase):model_(new MerchantData(options,showcase,this)),canvas_(new MerchantCanvas(this,model_)) {
     setFont(QFont(QStringLiteral("Microsoft YaHei UI"),10));
@@ -181,7 +188,7 @@ void MerchantWindow::setPage(int index) {
     deviceSelections_[canvas_->page]=canvas_->selection.device;
     canvas_->page=std::clamp(index,0,3);canvas_->selection.device=deviceSelections_[canvas_->page];canvas_->refresh();
 }
-void MerchantWindow::notify(const QString& value,bool problem) {canvas_->toast=value;canvas_->toastProblem=problem;canvas_->update();QTimer::singleShot(4800,canvas_,[this,value]{if(canvas_->toast==value){canvas_->toast.clear();canvas_->update();}});}
+void MerchantWindow::notify(const QString& value,bool problem) {canvas_->toast=value;canvas_->toastProblem=problem;canvas_->setAccessibleDescription(value);canvas_->update();QTimer::singleShot(4800,canvas_,[this,value]{if(canvas_->toast==value){canvas_->toast.clear();canvas_->setAccessibleDescription({});canvas_->update();}});}
 void MerchantWindow::captureAll(const QString& directory) {
     QDir().mkpath(directory);resize(qRound(1586/devicePixelRatioF()),qRound(992/devicePixelRatioF()));const QStringList names{"workbench","queue","devices","stats"};
     for(int i=0;i<4;++i){setPage(i);QApplication::processEvents();if(auto* focus=QApplication::focusWidget())focus->clearFocus();canvas_->grab().toImage().scaled(1586,992,Qt::IgnoreAspectRatio,Qt::SmoothTransformation).save(QDir(directory).filePath(names[i]+".png"));}setPage(0);
@@ -204,6 +211,15 @@ void MerchantWindow::action(const QString& name,const QString& value) {
     if(name=="range") {QString range=value==QStringLiteral("今天")?"today":value==QStringLiteral("本周")?"week":value==QStringLiteral("本月")?"month":value;if(range==QStringLiteral("自定义")){QString date=QInputDialog::getText(this,QStringLiteral("统计日期"),QStringLiteral("输入日期（yyyy-MM-dd）"));if(date.isEmpty())return;if(!QDate::fromString(date,Qt::ISODate).isValid()){notify(QStringLiteral("请输入有效的 yyyy-MM-dd 日期"),true);return;}range=date;}canvas_->selection.range=value;model_->setRange(range);canvas_->refresh();return;}
     if(name=="export-report") {QString path=QFileDialog::getSaveFileName(this,QStringLiteral("导出营业报表"),"营业报表.json","JSON (*.json)");if(!path.isEmpty())model_->exportReport(path);return;}
     const auto& state=model_->snapshot();
+    if(name=="device-prev"||name=="device-next"){
+        qsizetype current=0;
+        for(qsizetype i=0;i<state.devices.size();++i)if(state.devices[i].index==canvas_->selection.device){current=i;break;}
+        const qsizetype start=(current/2)*2;
+        const qsizetype target=start+(name=="device-next"?2:-2);
+        if(target<0){notify(QStringLiteral("已经是第一页"));return;}
+        if(target>=state.devices.size()){notify(QStringLiteral("已经是最后一页"));return;}
+        canvas_->selection.device=state.devices[target].index;canvas_->refresh();return;
+    }
     if(name=="order-menu"){int index=value.toInt();if(index<0||index>=state.orders.size())return;canvas_->selection.order=index;canvas_->refresh();const auto order=state.orders[index];QMenu menu(this);menu.setObjectName("merchantOrderMenu");styleMerchantMenu(menu);menu.addAction(QStringLiteral("查看文件"),this,&MerchantWindow::viewFile);if(order.state==QStringLiteral("待打印"))menu.addAction(QStringLiteral("取消订单"),this,[this,order]{model_->execute("cancel",order.id);});if(order.state==QStringLiteral("待取件")&&state.showcase)menu.addAction(QStringLiteral("确认取件"),this,[this,order]{model_->execute("pickup",order.id);});menu.exec(QCursor::pos());return;}
     if(name=="shop-menu") {QMenu menu(this);menu.setObjectName("merchantShopMenu");styleMerchantMenu(menu);menu.addAction(QStringLiteral("订单工作台"),this,[this]{setPage(0);});menu.addAction(QStringLiteral("刷新后台"),this,[this]{model_->execute("refresh");});if(!state.showcase){menu.addSeparator();auto* policy=menu.addMenu(QStringLiteral("自动调度策略"));const QStringList labels{QStringLiteral("先来先服务"),QStringLiteral("短作业优先"),QStringLiteral("优先级优先"),QStringLiteral("期限优先"),QStringLiteral("收入优先")};const QStringList values{"fcfs","sjf","priority","deadline","revenue"};for(int i=0;i<5;++i)policy->addAction(labels[i],this,[this,values,i]{model_->execute("policy",values[i]);});menu.addAction(state.paused?QStringLiteral("恢复全部派发"):QStringLiteral("暂停全部派发"),this,[this]{model_->execute(model_->snapshot().paused?"resume-all":"pause-all");});}auto* trigger=canvas_->findChild<QPushButton*>("merchant_shop-menu_");menu.exec(trigger?trigger->mapToGlobal(QPoint(0,trigger->height()+4)):QCursor::pos());return;}
     if(name=="pickup-slip") {if(state.orders.isEmpty())return;const auto& o=state.orders[canvas_->selection.order];QString path=QFileDialog::getSaveFileName(this,QStringLiteral("保存取件单"),o.id+"-取件单.txt","Text (*.txt)");if(path.isEmpty())return;QSaveFile file(path);if(file.open(QIODevice::WriteOnly)){file.write((QStringLiteral("纸间 · 校园一店\n订单：%1\n文件：%2\n学号：%3\n规格：%4\n金额：%5\n取件时间：%6\n").arg(o.id,o.title,o.student,specs(o),money(o.amountCents),o.pickupTime)).toUtf8());file.commit();notify(QStringLiteral("取件单已保存"));}return;}

@@ -85,3 +85,11 @@ python tools/verify_package.py --archive-dir runtime/merchant-v3-archive --outpu
 - 使用 [Microsoft DWM 窗口属性](https://learn.microsoft.com/en-us/windows/win32/api/dwmapi/ne-dwmapi-dwmwindowattribute) 和 [扩展系统窗口框架](https://learn.microsoft.com/en-us/windows/win32/api/dwmapi/nf-dwmapi-dwmextendframeintoclientarea)；Windows 11 的圆角/轮廓属性在旧版本系统上由 DWM 忽略。本机视觉效果已验证，其他系统结果以对应环境为准。
 
 同版追加：设备页底部的当前选择、A4 纸张及黑色墨粉信息拉开上下两行间距，并增加底部留白。去除店主全域悬停的分层淡红阴影，导航和设备图片保持透明；普通按钮/主按钮仅保留与学生端相同的平面颜色与边框反馈。原生回归核对设备图片在悬停、鼠标/键盘焦点和移开后的完整像素保持一致，真实设备操作仍可点击。最终日志与设备页截图在 `runtime/merchant-evidence/v6-final-native*`。
+
+## v7 全页面文字与交互一致性（2026-10-08）
+
+- 以学生端 src/gui/student_window.cpp、editorial_surface.hpp、editorial_chrome.hpp 的角色为依据，核对导航、品牌、栏目/数据/辅助文字、底部摘要与营业栏、普通/主要/禁用按钮、选择态、菜单、弹窗及系统窗口控件。校正店主四页的字号、字重、正文和辅助色；保留品牌、纸张大标语、店主独立图标和状态语义。
+- 顶部导航切换前后截取文字区域做像素一致性比较，排除红色下划线；hover 和设备图片焦点回归继续通过。原生导航/搜索/文件弹窗与独立图标检查通过。两份原生日志合计 10 passed / 0 failed（包括两次初始化/清理），位于 runtime/merchant-evidence/v7-{native,pages}-tests.txt。
+- 在真实 IPC 六设备状态下检查三页前进与返回。三个设备管理按钮宽高、位置、对象均稳定；首尾点击提示可访问文本正确，并且不翻页、不隐藏。原有队列页、订单提交、打印和设备配置继续验证。首尾页面截图在 v7-native/native-devices-{first,last}-page.png。
+- 最终 ci Release / CTest 输出保存在 runtime/merchant-evidence/v7-ctest.txt；四页的最终无测试提示截图位于 v7-gallery/。独立 merchant-v7 发布包验收校对提交号、全部文件 SHA-256、无 SDK 启动、持久队列/模拟打印、Office 六格式和进程控制，日志为 v7-package-verification.txt。
+- 桌面店主启动器优先 v7，沿用既有 v1 店铺数据；学生 v13 发布包和入口、旧发布包、全部概念图保留。
