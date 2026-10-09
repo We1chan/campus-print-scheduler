@@ -168,6 +168,9 @@ if(CPS_BUILD_QT_APPS)
         add_test(NAME package_layout COMMAND "${Python3_EXECUTABLE}"
             "${CMAKE_SOURCE_DIR}/tests/package_layout_test.py")
         set_tests_properties(package_layout PROPERTIES TIMEOUT 10)
+        add_test(NAME native_test_runner COMMAND "${Python3_EXECUTABLE}"
+            "${CMAKE_SOURCE_DIR}/tests/native_test_runner_test.py")
+        set_tests_properties(native_test_runner PROPERTIES TIMEOUT 15)
         add_test(NAME workload_tools COMMAND "${Python3_EXECUTABLE}"
             "${CMAKE_SOURCE_DIR}/tests/workload_tools_test.py"
             --replay "$<TARGET_FILE:scheduler-replay>"

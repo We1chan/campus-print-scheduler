@@ -7,6 +7,9 @@ import sys
 
 
 def main():
+    # Windows CI redirects stdout and may choose cp1252 despite UTF-8 reports.
+    # Keep Chinese diagnostics intact rather than failing while printing them.
+    sys.stdout.reconfigure(encoding="utf-8", errors="backslashreplace")
     parser = argparse.ArgumentParser()
     parser.add_argument("--bin-dir", type=Path, required=True)
     parser.add_argument("--log-dir", type=Path, default=Path("runtime"))

@@ -34,6 +34,7 @@
 #include <QTest>
 #include <QSignalSpy>
 #include <QElapsedTimer>
+#include <QScopeGuard>
 #include <QDialog>
 #include <QListWidget>
 #include <QPdfWriter>
@@ -101,11 +102,13 @@ private slots:
         { QPdfWriter pdf(pdfPath); QPainter painter(&pdf); painter.fillRect(0, 0, pdf.width(), pdf.height(), Qt::red);
           QVERIFY(pdf.newPage()); painter.fillRect(0, 0, pdf.width(), pdf.height(), Qt::blue); }
         const auto officePath = QDir(root.path()).filePath(QStringLiteral("中文 文档.docx"));
-        const auto writeFixture = [&](int delay) {
+        const auto releaseFile = QDir(root.path()).filePath("release-converter");
+        const auto writeFixture = [&](int delay, bool gated = false) {
             QFile file(officePath); if (!file.open(QIODevice::WriteOnly)) return false;
-            return file.write(QByteArray::fromHex("504b0304") + QJsonDocument(QJsonObject{{"pdf", pdfPath}, {"delay_ms", delay}}).toJson()) > 0;
+            return file.write(QByteArray::fromHex("504b0304") + QJsonDocument(QJsonObject{
+                {"pdf", pdfPath}, {"delay_ms", delay}, {"release_file", gated ? releaseFile : QString()}}).toJson()) > 0;
         };
-        QVERIFY(writeFixture(60));
+        QVERIFY(writeFixture(0, true));
         const auto stub = QDir(QCoreApplication::applicationDirPath()).filePath("office_converter_stub"
 #ifdef Q_OS_WIN
             ".exe"
@@ -114,14 +117,19 @@ private slots:
         qputenv("CPS_OFFICE_EXECUTABLE", stub.toUtf8());
         OfficePreview conversion;
         QSignalSpy ready(&conversion, &OfficePreview::ready), failed(&conversion, &OfficePreview::failed);
-        int ticks = 0;
+        bool responsiveDuringConversion = false;
         QTimer responsive; responsive.setInterval(5);
-        connect(&responsive, &QTimer::timeout, [&] { ++ticks; }); responsive.start();
+        connect(&responsive, &QTimer::timeout, [&] {
+            if (responsiveDuringConversion || !conversion.busy()) return;
+            QFile release(releaseFile);
+            if (release.open(QIODevice::WriteOnly) && release.write("ready") > 0)
+                responsiveDuringConversion = true;
+        }); responsive.start();
         conversion.start(officePath);
         const auto temporary = conversion.temporaryPath();
         QVERIFY(conversion.busy()); QVERIFY(!temporary.isEmpty());
         QTRY_COMPARE_WITH_TIMEOUT(ready.size(), 1, 5000);
-        QVERIFY(ticks > 2); QCOMPARE(failed.size(), 0);
+        QVERIFY(responsiveDuringConversion); QCOMPARE(failed.size(), 0);
         DocumentPreview document; QVERIFY(document.load(ready.at(0).at(0).toString()));
         QCOMPARE(document.pageCount(), 2); QVERIFY(document.page(0) != document.page(1));
         conversion.cancel(); QVERIFY(!QFileInfo::exists(temporary));
@@ -1117,9 +1125,27 @@ private slots:
         QTRY_COMPARE(table->model()->rowCount(), 2);
         QTRY_COMPARE(table->model()->index(0, 3).data().toString(), QStringLiteral("打印中"));
         const auto cancelledId = table->model()->index(0, 0).data(Qt::UserRole).toString();
+        bool verified = false;
+        const auto diagnostics = qScopeGuard([&] {
+            if (verified) return;
+            // Only this test's generated state; retain evidence if recovery fails.
+            for (const auto *name : {"state.json", "coordinator.log", ".coordinator.lock"}) {
+                QFile file(QDir(root.path()).filePath(name));
+                if (file.open(QIODevice::ReadOnly))
+                    qInfo().noquote() << "Crash recovery" << name << QString::fromUtf8(file.read(16384));
+            }
+            if (auto *log = window.findChild<QPlainTextEdit*>())
+                qInfo().noquote() << "Crash recovery GUI log:" << log->toPlainText().right(8192);
+        });
         // Crash immediately after the durable cancellation ACK, before its terminal event.
         QCOMPARE(client.request("cancel", {{"job_id", cancelledId}}).value("type").toString(), QString("accepted"));
         backend.kill(); QVERIFY(backend.waitForFinished(5000)); client.disconnect();
+        // Reconnection and terminal reconciliation are separate asynchronous
+        // phases. First prove that the GUI has launched a new coordinator;
+        // neither a stale table row nor the old process's exit proves recovery.
+        QJsonObject restarted;
+        QTRY_VERIFY_WITH_TIMEOUT(!(restarted = client.request("snapshot")).isEmpty() &&
+            restarted.value("coordinator_pid").toDouble() != originalPid, 20000);
         QTRY_COMPARE_WITH_TIMEOUT(table->model()->index(0, 3).data().toString(), QStringLiteral("已取消"), 20000);
         QTRY_COMPARE_WITH_TIMEOUT(table->model()->index(1, 3).data().toString(), QStringLiteral("已完成"), 20000);
         const auto recovered = client.request("snapshot");
@@ -1137,6 +1163,7 @@ private slots:
             }
         }
         window.close(); QTRY_VERIFY(!window.isVisible());
+        verified = true;
     }
 
     void runningCancelFaultAndReconnect() {
@@ -1149,12 +1176,16 @@ private slots:
         auto* pages = window.findChild<QSpinBox*>("jobPages");
         pages->setValue(1000); // Keep both jobs alive until explicitly cancelled.
         auto* submit = window.findChild<QPushButton*>("submitJob");
+        auto* table = window.findChild<QTableView*>("jobsTable");
+        // Native exposure does not imply a completed backend handshake.
+        // Clicking the disabled submit button otherwise silently loses a job.
+        QTRY_VERIFY_WITH_TIMEOUT(submit->isEnabled(), 15000);
         openForm(window);
         QTest::mouseClick(submit, Qt::LeftButton);
+        QTRY_COMPARE(table->model()->rowCount(), 1);
         openForm(window);
         QTest::mouseClick(submit, Qt::LeftButton);
         window.findChild<QPushButton*>("navHistory")->click();
-        auto* table = window.findChild<QTableView*>("jobsTable");
         QTRY_COMPARE(table->model()->rowCount(), 2);
         table->selectRow(0);
         auto* fault = window.findChild<QPushButton*>("injectFault");
@@ -1467,6 +1498,10 @@ private slots:
     void demoControlsAbsentInNormalMode() {
         BackendDirectory root;
         PrintWindow window({root.path(), 10, false});
+        QSignalSpy ready(&window, &PrintWindow::backendReady);
+        // Even this structural check starts a persistent coordinator. Await
+        // its handshake so directory cleanup cannot race a detached launch.
+        QTRY_VERIFY_WITH_TIMEOUT(!ready.isEmpty(), 15000);
         QVERIFY(!window.findChild<QPushButton*>("injectFault"));
         QVERIFY(!window.findChild<QPushButton*>("disconnectControl"));
     }
