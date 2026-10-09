@@ -20,6 +20,7 @@
 #include <QLocalSocket>
 #include <QLockFile>
 #include <QProcess>
+#include "cps/platform/process.hpp"
 #include <QRegularExpression>
 #include <QSaveFile>
 #include <QSet>
@@ -693,6 +694,7 @@ private:
             const QString cancellation = cancelPath(id, job->attempts);
             QFile::remove(cancellation);
             auto* process = new QProcess(this);
+            cps::hideProcessConsole(*process);
             process->setProgram(cps::siblingExecutable("print-supervisor"));
             QStringList arguments{
                 "--job", jobPath,

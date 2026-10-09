@@ -4,23 +4,36 @@ on:
   push:
   pull_request:
   workflow_dispatch:
+    inputs:
+      reuse_windows_run:
+        description: 'Verify an existing successful Windows build without rebuilding'
+        type: string
+        required: false
+      reuse_windows_commit:
+        description: 'Exact source commit of that Windows archive'
+        type: string
+        required: false
 
 permissions:
   contents: read
+  actions: read
 
 concurrency:
-  group: ci-${{ github.ref }}
+  group: ci-${{ github.ref }}-${{ inputs.reuse_windows_run }}
   cancel-in-progress: true
 
 jobs:
   build-and-test:
+    if: ${{ !inputs.reuse_windows_run }}
     name: ${{ matrix.os }} / Qt 6.10.2
     strategy:
       fail-fast: false
       matrix:
-        os: [windows-latest, macos-latest, ubuntu-24.04]
+        # Validation-only follow-ups reuse unchanged, already-green platforms.
+        # Ordinary pushes/PRs still build and test all three operating systems.
+        os: ${{ fromJSON(contains(github.event.head_commit.message, '[macos ci]') && '["macos-latest"]' || contains(github.event.head_commit.message, '[desktop ci]') && '["windows-latest","macos-latest"]' || '["windows-latest","macos-latest","ubuntu-24.04"]') }}
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 20
+    timeout-minutes: 35
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -38,7 +51,26 @@ jobs:
           cache: true
           archives: ${{ runner.os == 'Linux' && 'qtbase icu' || 'qtbase' }}
           cache-key-prefix: qt-with-linux-icu-v1
-      - name: Configure
+      - name: Install local PDF renderer
+        run: python tools/setup_pdfium.py
+      - name: Prepare private Office converter (Windows)
+        if: runner.os == 'Windows'
+        run: python tools/setup_office_preview.py
+      - name: Prepare private Office converter (macOS)
+        if: runner.os == 'macOS'
+        run: python tools/setup_office_preview.py
+      - name: Install Office converter (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libreoffice
+      - name: Configure Office preview acceptance
+        run: |
+          python -m pip install python-docx==1.2.0 python-pptx==1.0.2 openpyxl==3.1.5
+          python -c "import os,sys; from pathlib import Path; root=Path.cwd(); engine=root/'.tools/libreoffice/program/soffice.com' if sys.platform=='win32' else root/'.tools/libreoffice/LibreOffice.app/Contents/MacOS/soffice' if sys.platform=='darwin' else Path('/usr/bin/libreoffice'); assert engine.is_file(); Path(os.environ['GITHUB_ENV']).open('a').write('CPS_OFFICE_EXECUTABLE='+str(engine)+'\nCPS_OFFICE_FIXTURES='+str(root/'runtime/office-fixtures')+'\n')"
+      - name: Generate six real Office formats
+        run: python tools/generate_office_fixtures.py --office "${{ env.CPS_OFFICE_EXECUTABLE }}" --output-dir runtime/office-fixtures
+      - name: Configure application
         run: cmake --preset ci
       - name: Build
         run: cmake --build --preset ci --parallel 2
@@ -48,15 +80,13 @@ jobs:
           QT_QPA_PLATFORM: offscreen
       - name: Capture native desktop control scenarios
         if: runner.os != 'Linux'
-        run: |
-          python -c "from pathlib import Path; Path('runtime').mkdir(exist_ok=True)"
-          ./build/ci/bin/gui_tests${{ runner.os == 'Windows' && '.exe' || '' }} persistentPoliciesAndReport backendCrashDuringCancellation runningCancelFaultAndReconnect compactWindowKeepsControlsReachable -o runtime/native-gui-tests.txt,txt
+        run: python tools/run_native_gui_tests.py --bin-dir build/ci/bin
         env:
           QT_QPA_PLATFORM: ${{ runner.os == 'Windows' && 'windows' || 'cocoa' }}
           CPS_GUI_EVIDENCE_DIR: ${{ github.workspace }}/runtime/native-gui-evidence
       - name: Deploy Qt runtime
         if: runner.os != 'Linux'
-        run: python tools/package_app.py --bin-dir build/ci/bin --qt-bin "${{ env.QT_ROOT_DIR }}/bin" --output-dir dist/campus-print
+        run: python tools/package_app.py --bin-dir build/ci/bin --qt-bin "${{ env.QT_ROOT_DIR }}/bin" --output-dir dist/campus-print --office-dir "${{ runner.os == 'Windows' && '.tools/libreoffice' || '.tools/libreoffice/LibreOffice.app' }}" --preview-fixtures runtime/office-fixtures
       - name: Test deployed application without SDK paths
         if: runner.os != 'Linux'
         run: python tests/package_smoke.py --package-dir dist/campus-print
@@ -65,6 +95,8 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: campus-print-${{ runner.os }}
+          # Archives are already compressed; avoid compressing hundreds of MB again.
+          compression-level: 0
           path: |
             dist/*.zip
             dist/*.tar.gz
@@ -76,21 +108,20 @@ jobs:
           path: |
             build/ci/Testing/Temporary/
             build/ci/gui-results.xml
+            build/ci/merchant-results.xml
             runtime/native-gui-tests.txt
+            runtime/native-merchant-tests.txt
             runtime/native-gui-evidence/
   verify-desktop-package:
+    if: ${{ !inputs.reuse_windows_run }}
     name: Independent runtime / ${{ matrix.os }}
     needs: build-and-test
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - os: windows-latest
-            artifact: Windows
-          - os: macos-latest
-            artifact: macOS
+        os: ${{ fromJSON(contains(github.event.head_commit.message, '[macos ci]') && '["macos-latest"]' || '["windows-latest","macos-latest"]') }}
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 10
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -99,7 +130,48 @@ jobs:
       # This job never installs Qt, CMake or a compiler, and never builds the app.
       - uses: actions/download-artifact@v4
         with:
-          name: campus-print-${{ matrix.artifact }}
+          name: campus-print-${{ runner.os }}
           path: downloaded-package
       - name: Verify downloaded archive in independent runtime
         run: python tools/verify_package.py --archive-dir downloaded-package --output-dir runtime/independent
+
+  verify-reused-windows-package:
+    name: Independent runtime / existing Windows archive
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.reuse_windows_run }}
+    runs-on: windows-latest
+    timeout-minutes: 20
+    env:
+      PACKAGE_RUN: ${{ inputs.reuse_windows_run }}
+      PACKAGE_COMMIT: ${{ inputs.reuse_windows_commit }}
+    steps:
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Validate successful producer and immutable source commit
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          @'
+          import json, os, re, urllib.request
+          run, commit = os.environ['PACKAGE_RUN'], os.environ['PACKAGE_COMMIT']
+          assert run.isdecimal() and re.fullmatch('[0-9a-f]{40}', commit), 'Invalid producer identity'
+          base = 'https://api.github.com/repos/' + os.environ['GITHUB_REPOSITORY'] + '/actions/'
+          def get(path):
+              request = urllib.request.Request(base + path, headers={'Authorization': 'Bearer ' + os.environ['GH_TOKEN'], 'Accept': 'application/vnd.github+json'})
+              with urllib.request.urlopen(request, timeout=30) as response: return json.load(response)
+          producer = get('runs/' + run)
+          assert producer['head_sha'] == commit and producer['head_branch'] == os.environ['GITHUB_REF_NAME'], 'Producer is not from this branch and commit'
+          jobs = get('runs/' + run + '/jobs?per_page=100')['jobs']
+          assert any(job['name'].startswith('windows-latest /') and job['conclusion'] == 'success' for job in jobs), 'Windows producer did not pass'
+          print('Verified Windows producer', run, 'at', commit)
+          '@ | python -
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: campus-print-Windows
+          path: downloaded-package
+          run-id: ${{ inputs.reuse_windows_run }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+      # Fresh runner: no Qt SDK/compiler installation and no application build.
+      - name: Verify existing archive in independent runtime
+        run: python tools/verify_package.py --archive-dir downloaded-package --output-dir runtime/independent --expected-commit "$env:PACKAGE_COMMIT"

@@ -16,8 +16,11 @@ class QSpinBox;
 class QStackedWidget;
 class QTableWidget;
 class QTimer;
+class QBoxLayout;
 
 namespace cps::gui {
+class PrintProof;
+class OfficePreview;
 struct DocumentInfo {
     QString name;
     qint64 bytes = 0;
@@ -48,6 +51,7 @@ protected:
     void dragEnterEvent(QDragEnterEvent* event) override;
     void dragLeaveEvent(QDragLeaveEvent* event) override;
     void dropEvent(QDropEvent* event) override;
+    void resizeEvent(QResizeEvent* event) override;
 private:
     QJsonObject order() const;
     QString student() const;
@@ -57,11 +61,17 @@ private:
     void applyOrderResult(bool accepted, const QString& id, const QString& message);
     void updateActions();
     void clearDocument();
+    void updateProof();
     void showPayment();
     QThread backendThread_;
     PrintController* controller_ = nullptr;
     ViewState view_;
     QStackedWidget* pages_ = nullptr;
+    PrintProof* proof_ = nullptr;
+    OfficePreview* officePreview_ = nullptr;
+    QPushButton* flipProof_ = nullptr;
+    QBoxLayout* orderColumns_ = nullptr;
+    QBoxLayout* settingsDock_ = nullptr;
     QLineEdit* student_ = nullptr;
     QFrame* drop_ = nullptr;
     QLabel* fileName_ = nullptr;
@@ -76,6 +86,7 @@ private:
     QCheckBox* duplex_ = nullptr;
     QButtonGroup* service_ = nullptr;
     QButtonGroup* payment_ = nullptr;
+    QLabel* summary_ = nullptr;
     QLabel* price_ = nullptr;
     QLabel* priceDetail_ = nullptr;
     QLabel* eta_ = nullptr;
@@ -95,12 +106,15 @@ private:
     std::array<QLabel*, 4> metricHints_{};
     QTimer* quoteDelay_ = nullptr;
     QPointer<QDialog> paymentDialog_;
+    QString paymentCodesDirectory_;
     QStringList orderIds_;
     QString successMessage_;
     QString pendingSelect_;  // order to select in "我的订单" once a snapshot lists it
     Money quotedCents_ = 0;
     int quoteToken_ = 0;
     bool documentChosen_ = false;
+    bool officeRequired_ = false;
+    bool documentLoading_ = false;
     bool quoteAccepted_ = false;
     bool quotePending_ = true;
     bool closeApproved_ = false;

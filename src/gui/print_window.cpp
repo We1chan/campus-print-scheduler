@@ -1,5 +1,6 @@
 #include "print_window.hpp"
 #include "ui_theme.hpp"
+#include "studio_shell.hpp"
 #include "paper_workspace.hpp"
 #include "view_text.hpp"
 #include "cps/runtime/job_io.hpp"
@@ -67,7 +68,7 @@ public:
         painter->setClipRect(option.rect);
         const bool selected = option.state.testFlag(QStyle::State_Selected);
         const bool hovered = option.state.testFlag(QStyle::State_MouseOver);
-        painter->fillRect(option.rect, QColor(selected ? "#EAF0FC" : hovered ? "#F6F8FC" : "#FFFFFF"));
+        painter->fillRect(option.rect, QColor(selected ? "#EEEEFC" : hovered ? "#F6F8FC" : "#FFFFFF"));
         painter->setPen(QColor("#E7ECF3"));
         painter->drawLine(option.rect.bottomLeft(), option.rect.bottomRight());
         painter->setRenderHint(QPainter::Antialiasing);
@@ -98,17 +99,17 @@ public:
         } else if (index.column() == 4) {
             const int printed = index.data(Qt::UserRole + 3).toInt();
             const int sheets = index.data(Qt::UserRole + 4).toInt();
-            painter->setPen(QColor("#718095"));
+            painter->setPen(QColor("#62687D"));
             painter->drawText(QRect(area.left(), area.top() + 10, area.width(), 18), Qt::AlignLeft | Qt::AlignVCenter,
                               QStringLiteral("%1 / %2 页").arg(printed).arg(sheets));
             const QRectF track(area.left(), area.bottom() - 15, area.width(), 4);
             painter->setPen(Qt::NoPen); painter->setBrush(QColor("#E4E9F2")); painter->drawRoundedRect(track, 2, 2);
             if (sheets > 0 && printed > 0) {
-                painter->setBrush(QColor(printed >= sheets ? "#66A89B" : "#3569ED"));
+                painter->setBrush(QColor(printed >= sheets ? "#4548E8" : "#4548E8"));
                 painter->drawRoundedRect(QRectF(track.left(), track.top(), track.width() * printed / sheets, 4), 2, 2);
             }
         } else {
-            painter->setPen(QColor(index.column() == 5 ? "#718095" : "#59667C"));
+            painter->setPen(QColor(index.column() == 5 ? "#62687D" : "#59667C"));
             const auto value = painter->fontMetrics().elidedText(index.data().toString(), Qt::ElideRight, area.width());
             painter->drawText(area, Qt::AlignLeft | Qt::AlignVCenter, value);
         }
@@ -191,7 +192,7 @@ void StatisticsChart::paintEvent(QPaintEvent*) {
     const std::array<std::size_t, 5> values{metrics_.queued, metrics_.running + metrics_.cancelling,
         metrics_.completed, metrics_.failed, metrics_.cancelled};
     const QStringList labels{QStringLiteral("等待"), QStringLiteral("运行"), QStringLiteral("完成"), QStringLiteral("失败"), QStringLiteral("取消")};
-    const std::array<QColor, 5> colors{QColor("#A4B8DB"), QColor("#3569ED"), QColor("#66A89B"), QColor("#D89079"), QColor("#B0B8C8")};
+    const std::array<QColor, 5> colors{QColor("#94B7AE"), QColor("#4548E8"), QColor("#4548E8"), QColor("#D89079"), QColor("#B0B8C8")};
     std::size_t total = 0;
     for (auto value : values) total += value;
     const QRectF bar(0, 6, width(), 12);
@@ -212,7 +213,7 @@ void StatisticsChart::paintEvent(QPaintEvent*) {
         const int left = (i % 3) * column;
         const int top = 35 + (i / 3) * 26;
         p.setPen(Qt::NoPen); p.setBrush(colors[i]); p.drawEllipse(QRectF(left, top + 6, 6, 6));
-        p.setPen(QColor("#718095"));
+        p.setPen(QColor("#62687D"));
         p.drawText(QRect(left + 12, top, column - 12, 18), Qt::AlignVCenter,
                    labels[i] + "  " + QString::number(static_cast<qulonglong>(values[i])));
     }
@@ -220,16 +221,16 @@ void StatisticsChart::paintEvent(QPaintEvent*) {
 
 PrintWindow::PrintWindow(WindowOptions options, QWidget* parent) : QMainWindow(parent) {
     const bool shopMode = options.shopMode;
-    setWindowTitle(QStringLiteral("打印店老板后台 · 经营与协同调度"));
+    setWindowTitle(QStringLiteral("纸间 · 打印生产工作台"));
     setMinimumSize(1000, 680);
     const auto available = screen()->availableGeometry();
     resize(std::min(1420, available.width() - 40), std::min(900, available.height() - 60));
     ui::applyTheme(*this);
     auto* central = new QWidget(this); central->setObjectName("workspace");
-    auto* layout = new QVBoxLayout(central); layout->setContentsMargins(24, 10, 24, 12); layout->setSpacing(12);
+    const auto shell = ui::studioShell(central, shopMode ? QStringLiteral("店主工作台") : QStringLiteral("队列调度"));
+    auto* layout = shell.content;
     auto* header = new QHBoxLayout; header->setSpacing(10);
-    header->addWidget(ui::brand(ui::Icon::Activity, QStringLiteral("老板后台"),
-        shopMode ? QStringLiteral("经营与协同调度") : QStringLiteral("打印队列调度"))); header->addSpacing(20);
+    auto* pageTitle = label(QStringLiteral("每一份，都有序抵达。"), "studioTitle"); header->addWidget(pageTitle);
     auto* navigation = new QButtonGroup(this); navigation->setExclusive(true);
     auto* stack = new QStackedWidget; stack->setObjectName("workspacePages");
     const QStringList names{QStringLiteral("工作台"), QStringLiteral("记录"), QStringLiteral("设备"), QStringLiteral("经营")};
@@ -237,11 +238,15 @@ PrintWindow::PrintWindow(WindowOptions options, QWidget* parent) : QMainWindow(p
     for (int i = 0; i < 4; ++i) {
         auto* button = new QPushButton(names[i]); button->setObjectName(navIds[i]); button->setProperty("role", "nav");
         button->setCheckable(true); button->setChecked(i == 0); button->setToolTip(QStringLiteral("Ctrl+%1").arg(i + 1));
-        navigation->addButton(button, i); header->addWidget(button);
+        navigation->addButton(button, i); shell.navigation->addWidget(button);
         connect(button, &QPushButton::clicked, this, [stack, i] { stack->setCurrentIndex(i); });
         connect(new QShortcut(QKeySequence(QStringLiteral("Ctrl+%1").arg(i + 1)), this), &QShortcut::activated, this, [stack, i] { stack->setCurrentIndex(i); });
     }
-    connect(stack, &QStackedWidget::currentChanged, this, [navigation](int index) { navigation->button(index)->setChecked(true); });
+    ui::finishRail(shell.navigation);
+    connect(stack, &QStackedWidget::currentChanged, this, [navigation, pageTitle](int index) {
+        navigation->button(index)->setChecked(true);
+        pageTitle->setText(QStringList{QStringLiteral("每一份，都有序抵达。"), QStringLiteral("订单记录"), QStringLiteral("设备与执行"), QStringLiteral("店铺经营")}.value(index));
+    });
     header->addStretch();
     auto* command = new QPushButton(QStringLiteral("命令  Ctrl+K")); command->setObjectName("commandPalette"); command->setProperty("role", "quiet");
     command->setToolTip(QStringLiteral("搜索并执行常用操作")); header->addWidget(command);

@@ -11,6 +11,7 @@
 #include <QJsonDocument>
 #include <QLockFile>
 #include <QProcess>
+#include "cps/platform/process.hpp"
 #include <QStandardPaths>
 #include <QTimer>
 #include <QUuid>
@@ -122,6 +123,7 @@ int main(int argc, char* argv[]) {
         cps::emitEvent(object);
     };
     QProcess worker;
+    cps::hideProcessConsole(worker);
     worker.setProgram(cps::siblingExecutable("print-worker"));
     QTimer watchdog;
     watchdog.setSingleShot(true);
