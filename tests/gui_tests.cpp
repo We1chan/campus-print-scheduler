@@ -34,6 +34,7 @@
 #include <QTest>
 #include <QSignalSpy>
 #include <QElapsedTimer>
+#include <QScopeGuard>
 #include <QDialog>
 #include <QListWidget>
 #include <QPdfWriter>
@@ -1124,9 +1125,27 @@ private slots:
         QTRY_COMPARE(table->model()->rowCount(), 2);
         QTRY_COMPARE(table->model()->index(0, 3).data().toString(), QStringLiteral("打印中"));
         const auto cancelledId = table->model()->index(0, 0).data(Qt::UserRole).toString();
+        bool verified = false;
+        const auto diagnostics = qScopeGuard([&] {
+            if (verified) return;
+            // Only this test's generated state; retain evidence if recovery fails.
+            for (const auto *name : {"state.json", "coordinator.log", ".coordinator.lock"}) {
+                QFile file(QDir(root.path()).filePath(name));
+                if (file.open(QIODevice::ReadOnly))
+                    qInfo().noquote() << "Crash recovery" << name << QString::fromUtf8(file.read(16384));
+            }
+            if (auto *log = window.findChild<QPlainTextEdit*>())
+                qInfo().noquote() << "Crash recovery GUI log:" << log->toPlainText().right(8192);
+        });
         // Crash immediately after the durable cancellation ACK, before its terminal event.
         QCOMPARE(client.request("cancel", {{"job_id", cancelledId}}).value("type").toString(), QString("accepted"));
         backend.kill(); QVERIFY(backend.waitForFinished(5000)); client.disconnect();
+        // Reconnection and terminal reconciliation are separate asynchronous
+        // phases. First prove that the GUI has launched a new coordinator;
+        // neither a stale table row nor the old process's exit proves recovery.
+        QJsonObject restarted;
+        QTRY_VERIFY_WITH_TIMEOUT(!(restarted = client.request("snapshot")).isEmpty() &&
+            restarted.value("coordinator_pid").toDouble() != originalPid, 20000);
         QTRY_COMPARE_WITH_TIMEOUT(table->model()->index(0, 3).data().toString(), QStringLiteral("已取消"), 20000);
         QTRY_COMPARE_WITH_TIMEOUT(table->model()->index(1, 3).data().toString(), QStringLiteral("已完成"), 20000);
         const auto recovered = client.request("snapshot");
@@ -1144,6 +1163,7 @@ private slots:
             }
         }
         window.close(); QTRY_VERIFY(!window.isVisible());
+        verified = true;
     }
 
     void runningCancelFaultAndReconnect() {
