@@ -136,7 +136,9 @@ def _check_backend_consoles(coordinator_pid):
     kernel = ctypes.WinDLL("kernel32", use_last_error=True)
     user = ctypes.WinDLL("user32", use_last_error=True)
     # Detach only this test process, so AttachConsole's result describes the target.
-    kernel.FreeConsole()
+    kernel.FreeConsole.restype = wintypes.BOOL
+    if not kernel.FreeConsole():
+        raise ctypes.WinError(ctypes.get_last_error())
     kernel.AttachConsole.argtypes = [wintypes.DWORD]
     kernel.AttachConsole.restype = wintypes.BOOL
     kernel.GetConsoleWindow.restype = wintypes.HWND
@@ -179,20 +181,58 @@ def _check_backend_consoles(coordinator_pid):
         name = processes.get(pid, (0, ""))[1]
         if name not in {"print-coordinator.exe", "print-supervisor.exe", "print-worker.exe"}:
             continue
+        if _check_process_console(kernel, user, pid, name):
+            observed.add(name)
+    return observed
+
+
+def _check_process_console(kernel, user, pid, name):
+    # Keep the process object alive and check its signalled state. AttachConsole
+    # returns ERROR_ACCESS_DENIED for an exited target whose object still exists,
+    # not only when the caller is already attached. A stale snapshot must not be
+    # treated as either a live console-free process or a permission failure.
+    kernel.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+    kernel.OpenProcess.restype = wintypes.HANDLE
+    kernel.WaitForSingleObject.argtypes = [wintypes.HANDLE, wintypes.DWORD]
+    kernel.WaitForSingleObject.restype = wintypes.DWORD
+    kernel.CloseHandle.argtypes = [wintypes.HANDLE]
+    process = kernel.OpenProcess(0x00100000, False, pid)  # SYNCHRONIZE only
+    if not process:
+        error = ctypes.get_last_error()
+        if error == 87:  # no process object remains for the snapshot PID
+            return False
+        raise ctypes.WinError(error)
+
+    def alive():
+        status = kernel.WaitForSingleObject(process, 0)
+        if status == 0:  # WAIT_OBJECT_0: exited, even if PID/object still exists
+            return False
+        if status != 258:  # WAIT_TIMEOUT: still running
+            raise ctypes.WinError(ctypes.get_last_error())
+        return True
+
+    try:
+        if not alive():
+            return False
         if kernel.AttachConsole(pid):
-            window = kernel.GetConsoleWindow()
-            visible = window and user.IsWindowVisible(window)
-            kernel.FreeConsole()
+            try:
+                window = kernel.GetConsoleWindow()
+                visible = window and user.IsWindowVisible(window)
+            finally:
+                if not kernel.FreeConsole():
+                    raise ctypes.WinError(ctypes.get_last_error())
             if visible:
                 raise RuntimeError(f"{name} ({pid}) has an unwanted visible console")
-            observed.add(name)
-            continue
+            return True
         error = ctypes.get_last_error()
-        if error == 6:  # ERROR_INVALID_HANDLE: the running target has no console
-            observed.add(name)
-        elif error != 87:  # target may have exited since the process snapshot
-            raise ctypes.WinError(error)
-    return observed
+        if not alive():  # target exited between liveness and console checks
+            return False
+        if error == 6:  # ERROR_INVALID_HANDLE: a live target has no console
+            return True
+        # Never waive access denied or other errors for a live target.
+        raise ctypes.WinError(error)
+    finally:
+        kernel.CloseHandle(process)
 
 
 if __name__ == "__main__":

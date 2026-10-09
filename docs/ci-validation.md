@@ -46,3 +46,19 @@ Windows 托管桌面的采样范围现在取自不透明背景与工作区的交
 最后一轮本机完整 Release CTest：店主 17/17、学生 15/15；新增 `native_test_runner` 均通过。小桌面原生检查保留严格阴影像素断言；最后的远端发布验收尚待对应 Actions 完成，不能以本机结果代替。
 
 最后原生验收使用 1024×768 自有背景和 `CPS_GUI_REQUIRE_NATIVE_SHADOW=1`，同时将启动脚本 stdout 设为 cp1252：两分支公共原生用例均 21 passed，店主专项另 6 passed，均零失败、零跳过；应用与系统对照阴影均实测存在。
+
+## 复用已通过的 Windows 发布包
+
+macOS 最后的失败来自回归测试全局替换 `sys.platform`，使标准库尝试导入 `_winapi`，并非运行程序失败。测试现在只替换日志脚本函数所属模块的 `sys` 引用，不更改解释器平台；cp1252 子进程回归在两工作树均通过。
+
+仅验证文件修正、应用运行代码未变且 Windows 生产 job 已成功时，提交标记 `[macos ci]` 仅补 macOS 的完整构建、CTest、原生、签名、打包和独立运行。Windows 包使用同一工作流的手动入口：填写 `reuse_windows_run`（已成功生产包的 Actions run ID）与 `reuse_windows_commit`（40 位源提交号）。独立 job 先通过 GitHub API 校验分支、提交号和 Windows job 成功状态，再下载那个 run 的原始产物，在新的无 SDK runner 检查全部哈希、真实 Office 导入及控制场景。
+
+该入口明确验收指定的历史产物，日志记录被验证的源提交号；不能据此声称新运行代码通过了旧包测试。本次复用的 Windows 程序源码与补验证提交一致，只修改测试、CI 和验收说明。普通推送/PR 仍运行三平台，普通发布包仍以当前 `GITHUB_SHA` 校验。手动复用通过显式 `--expected-commit` 校验产物，不覆盖 GitHub 默认环境变量。
+
+## Windows 控制台检查与进程退出
+
+店主端发布包测试在打印结束时遇到 `AttachConsole` 错误 5。已用真实 Windows 进程复现：目标退出后，仍有进程句柄时，该接口返回“拒绝访问”。检查现在持有 `SYNCHRONIZE` 句柄，通过 `WaitForSingleObject` 在控制台检查前后确认进程存活。退出的进程不算作已验收；存活目标的访问拒绝仍失败，可见控制台仍失败，协调器/监督器/工作进程三类覆盖要求保留。
+
+Windows 专项回归测试使用真实无控制台进程、隐藏控制台进程及退出后仍保留句柄的进程；另验证可见控制台分支和存活目标拒绝访问分支确实失败。两工作树的 `package_layout`、`native_test_runner`、`windows_console_audit` 均通过，店主实际发布包的完整队列/重开/无黑窗检查通过。此前完整 CTest 为 17/17、15/15；新增 Windows 专项后的完整远端结果由本轮 CI 验证。
+
+本轮额度安排：学生仅补 macOS，Windows 复用 `37888688449` 中已成功的 `edcf14d5a35978c9a580f13ad35ad6a7e2da8651` 发布包并另开无 SDK runner 验收；店主 Windows 上一轮生产 job 失败，没有可复用的已通过产物，必须补 Windows/macOS 完整构建和独立验收。Linux 两分支已通过且运行源码没有新变化。
