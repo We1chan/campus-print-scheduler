@@ -17,7 +17,7 @@ class NativeRunnerTests(unittest.TestCase):
                 # The real child process boundary must emit readable UTF-8 and keep
                 # QtTest's failing exit code, even when both logs contain Chinese.
                 driver = """
-import pathlib, runpy, subprocess, sys
+import pathlib, runpy, subprocess, sys, types
 from unittest.mock import patch
 sys.stdout.reconfigure(encoding='cp1252', errors='strict')
 root = pathlib.Path(sys.argv[2])
@@ -28,8 +28,13 @@ def run(command, **kwargs):
     report = pathlib.Path(command[-1].removesuffix(',txt'))
     report.write_text('QtTest: 中文 文档、取消中\\n', encoding='utf-8')
     return subprocess.CompletedProcess(command, status)
-with patch.object(sys, 'platform', 'win32'), patch('subprocess.run', run):
-    runpy.run_path(runner, run_name='__main__')
+namespace = runpy.run_path(runner)
+# Only the runner's platform decision is simulated. Changing the interpreter's
+# sys.platform can make macOS standard-library imports demand Windows modules.
+namespace['main'].__globals__['sys'] = types.SimpleNamespace(
+    platform='win32', stdout=sys.stdout)
+with patch('subprocess.run', run):
+    namespace['main']()
 """
                 result = subprocess.run([sys.executable, "-c", driver, str(runner),
                                          str(root), str(status)], capture_output=True, timeout=10)

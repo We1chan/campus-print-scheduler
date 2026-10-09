@@ -15,6 +15,8 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--archive-dir", type=Path, required=True)
     parser.add_argument("--output-dir", type=Path, required=True)
+    parser.add_argument("--expected-commit", default=os.environ.get("GITHUB_SHA"),
+                        help="Exact producer commit, defaulting to the current CI commit")
     args = parser.parse_args()
     archives = list(args.archive_dir.glob("*.zip")) + list(args.archive_dir.glob("*.tar.gz"))
     if len(archives) != 1 or args.output_dir.exists():
@@ -33,7 +35,7 @@ def main():
             file.extractall(args.output_dir, filter="data")
     package = args.output_dir / archive.name.removesuffix(".zip").removesuffix(".tar.gz")
     manifest = json.loads((package / "release-manifest.json").read_text(encoding="utf-8"))
-    expected_commit = os.environ.get("GITHUB_SHA")
+    expected_commit = args.expected_commit
     if expected_commit and (manifest["source_commit"] != expected_commit or manifest["working_tree_dirty"]):
         raise RuntimeError("Package is not from the clean CI commit")
     for entry in manifest["files"]:

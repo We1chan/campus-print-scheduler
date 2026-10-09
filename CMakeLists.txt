@@ -143,6 +143,11 @@ if(CPS_BUILD_QT_APPS)
         add_test(NAME native_test_runner COMMAND "${Python3_EXECUTABLE}"
             "${CMAKE_SOURCE_DIR}/tests/native_test_runner_test.py")
         set_tests_properties(native_test_runner PROPERTIES TIMEOUT 15)
+        if(WIN32)
+            add_test(NAME windows_console_audit COMMAND "${Python3_EXECUTABLE}"
+                "${CMAKE_SOURCE_DIR}/tests/windows_console_audit_test.py")
+            set_tests_properties(windows_console_audit PROPERTIES TIMEOUT 30)
+        endif()
         add_test(NAME workload_tools COMMAND "${Python3_EXECUTABLE}"
             "${CMAKE_SOURCE_DIR}/tests/workload_tools_test.py"
             --replay "$<TARGET_FILE:scheduler-replay>"
