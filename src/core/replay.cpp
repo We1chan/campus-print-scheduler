@@ -7,7 +7,7 @@ namespace cps {
 ReplayResult replay(std::vector<Job> workload, Policy policy, ReplayOptions options) {
     if (options.printers < 1 || options.printers > 64 || options.pageMs < 1 ||
         options.pageMs > MaxTimeMs / 10000 ||
-        (policy != Policy::Fcfs && policy != Policy::ShortestJobFirst && policy != Policy::PriorityAging))
+        (policy != Policy::Fcfs && policy != Policy::ShortestJobFirst && policy != Policy::Balanced))
         throw std::invalid_argument("invalid replay options");
     TimeMs now = 0;
     Scheduler scheduler({options.agingIntervalMs}, [&now] { return now; });

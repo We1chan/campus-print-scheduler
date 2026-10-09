@@ -1,4 +1,5 @@
 #include "merchant_data.hpp"
+#include "cps/runtime/state_store.hpp"
 
 #include <QJsonArray>
 #include <QJsonDocument>
@@ -318,7 +319,8 @@ void MerchantData::execute(const QString& action, const QString& value) {
             if ((fields.value(0) != QLatin1String("a4") && fields.value(0) != QLatin1String("a3")) || !validQuantity || quantity < 1 || quantity > 1000000) { emit feedback(QStringLiteral("补纸参数无效。"), true); return; }
             QMetaObject::invokeMethod(controller_, [controller = controller_, paper = fields[0], quantity] { controller->shopCommand(QStringLiteral("restock"), {{QStringLiteral("paper"), paper}, {QStringLiteral("quantity"), quantity}}); }, Qt::QueuedConnection);
         } else if (action == QLatin1String("policy")) {
-            const int policy = QStringList{QStringLiteral("fcfs"), QStringLiteral("sjf"), QStringLiteral("priority"), QStringLiteral("deadline"), QStringLiteral("revenue")}.indexOf(value);
+            const auto parsed = cps::policyFromName(value);
+            const int policy = parsed ? static_cast<int>(*parsed) : -1;
             if (policy < 0) { emit feedback(QStringLiteral("未知调度策略。"), true); return; }
             QMetaObject::invokeMethod(controller_, [controller = controller_, policy] { controller->setPolicy(policy); }, Qt::QueuedConnection);
         } else if (action == QLatin1String("cancel")) {
@@ -328,7 +330,7 @@ void MerchantData::execute(const QString& action, const QString& value) {
         } else if (action == QLatin1String("preview")) {
             emit feedback(QStringLiteral("当前后台只保存订单元数据，没有上传的源文件内容，无法预览。"), true);
         } else {
-            emit feedback(QStringLiteral("当前后台未提供此手动操作（%1）。可改用先来先服务、短作业、优先级、期限或收入调度策略。").arg(action), true);
+            emit feedback(QStringLiteral("当前后台未提供此手动操作（%1）。可在店铺菜单选择 FCFS、SJF 或综合调度。").arg(action), true);
         }
         return;
     }

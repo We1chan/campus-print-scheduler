@@ -103,12 +103,16 @@ class WorkloadTools(unittest.TestCase):
         results = {r['policy']: r for r in data['results']}
         self.assertEqual(results['fcfs']['metrics']['average_first_wait_ms'], 14000)
         self.assertEqual(results['sjf']['metrics']['average_first_wait_ms'], 3000)
-        self.assertEqual(results['priority']['dispatches'], results['fcfs']['dispatches'])
+        self.assertEqual(set(results), {'fcfs', 'sjf', 'balanced'})
+        self.assertEqual([d['job_id'] for d in results['balanced']['dispatches']], ['short', 'medium', 'long'])
         self.assertEqual(data['workload_sha256'], hashlib.sha256(self.workload.read_bytes()).hexdigest())
         self.replay('--printers', '1', '--page-ms', '1000')
         self.assertEqual(self.report.read_bytes(), original)
         self.replay('--policy', 'sjf')
         self.assertEqual(len(json.loads(self.report.read_text())['results']), 1)
+        for old in ('priority', 'deadline', 'revenue'):
+            self.replay('--policy', old)
+            self.assertEqual(json.loads(self.report.read_text())['results'][0]['policy'], 'balanced')
 
     def test_replay_future_arrivals_and_empty_workload(self):
         self.save([job('future', 1, 1000), job('present', 20)])

@@ -176,7 +176,7 @@ protected:
         for (int i = 0; i < static_cast<int>(view_.printers.size()); ++i) if (!job.id.isEmpty() && view_.printers[i].jobId == job.id)
             device = QStringLiteral(" · ") + text::deviceName(fleet[i].toObject(), i);
         paper::text(p, {30, 139, copyWidth, 27}, job.id.isEmpty() ? QStringLiteral("柜台下单，或从学生端提交文档")
-            : QStringLiteral("%1 页 · 优先级 %2").arg(job.sheets).arg(job.priority) + device +
+            : QStringLiteral("%1 页").arg(job.sheets) + device +
               (job.estimatedFinishMs >= 0 ? QStringLiteral(" · ") + job.detail : QString()), 12, paper::muted);
         const int percent = job.sheets > 0 ? job.printed * 100 / job.sheets : 0;
         if (!job.id.isEmpty()) {
@@ -209,7 +209,7 @@ protected:
             paper::document(p, {row.left() + 2, row.top() + 11, 36, 47}, {}, 0, j.sheets, true);
             paper::text(p, {row.left() + 51, row.top() + 10, row.width() - 82, 28}, j.title, 13, paper::ink, true);
             paper::text(p, {row.left() + 51, row.top() + 36, row.width() - 61, 22},
-                        QStringLiteral("%1 页  ·  ").arg(j.sheets) + (j.estimatedFinishMs < 0 ? QStringLiteral("优先级 %1").arg(j.priority)
+                        QStringLiteral("%1 页  ·  ").arg(j.sheets) + (j.estimatedFinishMs < 0 ? QStringLiteral("等待派发")
                             : view_.paused ? QStringLiteral("派发已暂停") : text::startsIn(j.estimatedStartMs - view_.nowMs)), 11, paper::muted);
             paper::text(p, {row.right() - 25, row.top() + 10, 25, 25}, QString("#%1").arg(i + 1), 11, paper::muted);
             p.setPen(QColor("#E7E9EE")); p.drawLine(row.bottomLeft(), row.bottomRight());

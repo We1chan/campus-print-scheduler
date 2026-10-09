@@ -92,7 +92,7 @@ void determinismAndConservation() {
     std::vector<Job> input;
     TimeMs sheets=0;
     for(int i=0;i<80;++i){input.push_back(job(std::to_string(i),i%11+1,(i%20)*37,i%5));sheets+=i%11+1;}
-    for(const auto policy:{Policy::Fcfs,Policy::ShortestJobFirst,Policy::PriorityAging}) {
+    for(const auto policy:{Policy::Fcfs,Policy::ShortestJobFirst,Policy::Balanced}) {
         const auto first=replay(input,policy,{2,13,100});const auto second=replay(input,policy,{2,13,100});
         std::set<std::string> seen;std::map<int,TimeMs> available;
         require(first.dispatches.size()==input.size(),"one dispatch per input");

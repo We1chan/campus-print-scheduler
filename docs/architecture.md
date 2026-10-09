@@ -41,7 +41,7 @@ Qt LocalSocket / LocalServer 适配 Unix 域套接字与 Windows named pipe，�
 
 | 原理 | 当前基础 | 待完成与可答辩实验 |
 | --- | --- | --- |
-| 调度 | 非抢占 FCFS/SJF/优先级老化 | 同负载比较公平性与等待 |
+| 调度 | 非抢占 FCFS/SJF/综合调度；先排文档，再分配设备 | 同负载比较等待、快速履约和贡献收益 |
 | 线程同步 | std::mutex 保护入队、领取和结束 | 生产者消费者压力测试；避免持锁做 I/O |
 | 多进程 | coordinator / supervisor / worker 为真实进程 | GUI 重开、后台崩溃与取消恢复 |
 | IPC | worker 管道 JSONL + coordinator 本地双向 JSONL | 已接入客户端重连与完整快照 |

@@ -732,10 +732,14 @@ private slots:
         QCOMPARE(table->model()->rowCount(), 1);
         search->clear();
         auto* policies = window.findChild<QComboBox*>("schedulingPolicy");
-        policies->setCurrentIndex(4); QTRY_COMPARE(policies->currentIndex(), 4);
+        QCOMPARE(policies->count(), 3);
+        policies->setCurrentIndex(2); QTRY_COMPARE(policies->currentIndex(), 2);
         window.experimentRequested(root.path() + "/experiments.json", 30);
         auto* experiment = window.findChild<QTableWidget*>("experimentTable");
         QTRY_COMPARE_WITH_TIMEOUT(experiment->rowCount(), 21, 15000);
+        QCOMPARE(experiment->columnCount(), 11);
+        QCOMPARE(experiment->horizontalHeaderItem(8)->text(), QStringLiteral("综合得分"));
+        QVERIFY(experiment->item(0, 8)->text().toDouble() > 0);
         const auto evidence = qEnvironmentVariable("CPS_GUI_EVIDENCE_DIR");
         if (!evidence.isEmpty()) {
             QVERIFY(QDir().mkpath(evidence));
@@ -930,9 +934,9 @@ private slots:
         policy->setCurrentIndex(1);
         QTRY_COMPARE(canvas->waitingIds().value(0), id(1));
         policy->setCurrentIndex(2);
-        QTRY_COMPARE(canvas->waitingIds().value(0), id(2));
+        QTRY_COMPARE(canvas->waitingIds().value(0), id(1));
         window.findChild<QPushButton*>("waitingJob0")->click();
-        QCOMPARE(canvas->selectedId(), id(2));
+        QCOMPARE(canvas->selectedId(), id(1));
         policy->setCurrentIndex(0);
         QTRY_COMPARE(canvas->waitingIds().value(0), id(0));
         const auto evidence = qEnvironmentVariable("CPS_GUI_EVIDENCE_DIR");
@@ -1038,9 +1042,9 @@ private slots:
                 auto* picker = window.findChild<QComboBox*>("schedulingPolicy");
                 QTRY_COMPARE(picker->currentIndex(), policy);
                 QJsonObject snap;
-                const QStringList names{"fcfs", "sjf", "priority"};
+                const QStringList names{"fcfs", "sjf", "balanced"};
                 QTRY_VERIFY((snap = client.request("snapshot")).value("policy").toString() == names[policy]);
-                QCOMPARE(snap.value("waiting_order").toArray()[0].toString(), id(policy));
+                QCOMPARE(snap.value("waiting_order").toArray()[0].toString(), id(policy == 0 ? 0 : 1));
                 for (const auto& j : snap.value("jobs").toArray()) QCOMPARE(j.toObject().value("attempts").toInt(), 0);
             }
             // Backend validation is atomic too, independent of the GUI's input checks.

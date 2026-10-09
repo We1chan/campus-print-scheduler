@@ -10,8 +10,8 @@
 namespace cps {
 using TimeMs = std::int64_t;
 constexpr TimeMs MaxTimeMs = 9007199254740991LL; // exactly representable in JSON doubles
-// Larger base priority is more urgent; every aging interval adds one point.
-enum class Policy { Fcfs, ShortestJobFirst, PriorityAging, Deadline, Revenue };
+// Each policy defines queue ordering first, then compatible-printer assignment.
+enum class Policy { Fcfs, ShortestJobFirst, Balanced };
 enum class PaperSize { A4, A3 };
 enum class ServiceTier { Express, Standard, Flexible };
 // Counter: settled at the shop. The others are simulated online prepayments.
@@ -39,7 +39,7 @@ struct Job {
     int copies = 1;
     TimeMs submittedMs = 0;
     JobState state = JobState::Queued;
-    int priority = 0;                 // 0..100
+    int priority = 0;                 // 0..100; legacy metadata, no longer a scheduling input
     int maxAttempts = 3;              // 1..100, including the first attempt
     int attempts = 0;                 // token for the most recent claim
     TimeMs queuedSinceMs = 0;
@@ -77,7 +77,8 @@ public:
     std::vector<std::string> waitingOrder(Policy policy, TimeMs now) const;
     std::optional<Job> claim(Policy policy);
     std::optional<Job> claim(Policy policy, TimeMs now);
-    // Matching, device ownership and paper reservation share the queue mutex.
+    // Order the queue, then assign the first dispatchable document to a printer.
+    // Both layers, device ownership and paper reservation share the queue mutex.
     std::optional<Job> claimFor(Policy policy, TimeMs now, const std::vector<Printer>& fleet,
                                const std::vector<int>& idle, Inventory supplied);
     bool refund(const std::string& id, Money cumulativeCents);
@@ -94,6 +95,7 @@ public:
     std::vector<Job> snapshot() const;
 private:
     bool precedes(const Job& a, const Job& b, Policy policy, TimeMs now) const;
+    TimeMs balancedScore(const Job& job, TimeMs now) const;
     Job* find(const std::string& id);
     bool finishLocked(Job& job, int attempt, bool success, TimeMs now);
     Job startLocked(Job& job, TimeMs now);

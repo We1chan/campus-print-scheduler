@@ -103,7 +103,7 @@ void shopMatchingAndBlocking() {
     auto e = estimateWaits(jobs, 0, o);
     require(planned(find(e, "mono"), 0, 1000, 0) && find(e, "mono").printer == 0, "mono order takes the fastest device");
     require(find(e, "poster").printer == 5 && find(e, "poster").finishMs == processingMs(jobs[1], fleet[5]), "A3 routes to the capable device");
-    require(find(e, "color").printer == 4, "colour order takes the fastest colour device");
+    require(find(e, "color").printer == 3, "FCFS assigns the first idle compatible colour device");
 
     fleet[5].online = false; o.fleet = fleet;
     e = estimateWaits(jobs, 0, o);
@@ -133,7 +133,7 @@ void forecastMatchesReplay() {
         orders.push_back(j);
     }
     const auto fleet = defaultFleet(100);
-    for (const auto policy : {Policy::Fcfs, Policy::ShortestJobFirst, Policy::PriorityAging, Policy::Deadline, Policy::Revenue}) {
+    for (const auto policy : {Policy::Fcfs, Policy::ShortestJobFirst, Policy::Balanced}) {
         const auto replay = replayShop(orders, policy, fleet, 10000000);
         EstimateOptions o; o.policy = policy; o.fleet = fleet; o.supplied = {1000000, 1000000};
         const auto e = estimateWaits(orders, 0, o);

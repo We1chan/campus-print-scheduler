@@ -7,9 +7,9 @@ import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 
-POLICIES = ['fcfs', 'sjf', 'priority']
-LABELS = {'fcfs': 'FCFS', 'sjf': 'SJF', 'priority': 'Priority + aging'}
-COLORS = {'fcfs': '#4477AA', 'sjf': '#EE6677', 'priority': '#228833'}
+POLICIES = ['fcfs', 'sjf', 'balanced']
+LABELS = {'fcfs': 'FCFS', 'sjf': 'SJF', 'balanced': 'Balanced'}
+COLORS = {'fcfs': '#4477AA', 'sjf': '#EE6677', 'balanced': '#228833'}
 
 
 def main():
@@ -37,7 +37,7 @@ def main():
         ax.set_xticks(range(len(offsets)), [f'Window {i+1}\noffset {o}' for i, o in enumerate(offsets)])
         ax.set_title(title); ax.set_ylabel('Simulated seconds'); ax.grid(axis='y', alpha=.2); ax.set_axisbelow(True)
     axes[0].legend(fontsize=9)
-    fig.suptitle('SDSC-mapped workloads: 1,000 jobs/window, 2 printers, 150 ms/sheet\nSynthetic priority = source job ID modulo 5; aging interval = 30 s')
+    fig.suptitle('SDSC-mapped workloads: 1,000 jobs/window, 2 printers, 150 ms/sheet\nLegacy priority metadata is ignored; balanced aging interval = 30 s')
     save(fig, 'window-comparison')
 
     manifest = json.loads((args.run / 'manifest.json').read_text(encoding='utf-8'))
@@ -74,9 +74,9 @@ def main():
         axes[0].plot(x, [r['low_priority_wait_ms']/1000 for r in group], 'o-', label=LABELS[policy], color=COLORS[policy])
         axes[1].plot(x, [r['average_first_wait_ms']/1000 for r in group], 'o-', label=LABELS[policy], color=COLORS[policy])
     for ax in axes:
-        ax.set_xscale('log'); ax.set_xticks([1,30,120], ['1','30','120']); ax.set_xlabel('Aging interval (seconds per priority point)'); ax.grid(alpha=.2)
-    axes[0].set_ylabel('Low-priority large job wait (seconds)'); axes[1].set_ylabel('All-task mean wait (seconds)'); axes[0].legend(fontsize=9)
-    fig.suptitle('Finite pressure scenario: 1 large task + 40 urgent small tasks\n2 printers; 20 arrival waves, 1.5 seconds apart')
+        ax.set_xscale('log'); ax.set_xticks([1,30,120], ['1','30','120']); ax.set_xlabel('Waiting-score reference interval (seconds)'); ax.grid(alpha=.2)
+    axes[0].set_ylabel('Large job wait (seconds)'); axes[1].set_ylabel('All-task mean wait (seconds)'); axes[0].legend(fontsize=9)
+    fig.suptitle('Finite pressure scenario: 1 large task + 40 small tasks\n2 printers; 20 arrival waves, 1.5 seconds apart')
     save(fig, 'aging-pressure')
 
 

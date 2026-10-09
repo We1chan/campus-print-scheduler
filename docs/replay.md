@@ -18,7 +18,7 @@ cmake --build --preset dev
 .\build\dev\bin\scheduler-replay.exe --input examples/workload.json --output comparison.json
 ```
 
-默认同时运行 FCFS、SJF、PriorityAging，2 台同速打印机，150 ms/页，30,000 ms 老化一级。可用 `--policy fcfs|sjf|priority|all`、`--printers 1..64`、`--page-ms`、`--aging-ms` 改变参数。输出目录须先存在；报告原子写入，不能覆盖输入文件。建议把运行结果放入已忽略的 `runtime/`。
+默认同时运行 FCFS、SJF、综合调度，2 台同速打印机，150 ms/页，30,000 ms 等待加 1 分。可用 `--policy fcfs|sjf|balanced|all`、`--printers 1..64`、`--page-ms`、`--aging-ms` 改变参数。旧 priority/deadline/revenue 名称映射到 balanced。输出目录须先存在；报告原子写入，不能覆盖输入文件。建议把运行结果放入已忽略的 `runtime/`。
 
 回放假设没有失败、取消、进程启动开销、机器速度差异或换纸时间，适合比较算法本身；不能把回放时间当真实设备实测。状态接口支持的恢复功能不在此基线模型中注入故障。
 
@@ -42,7 +42,7 @@ python3 tools/convert_swf.py --input runtime/data/sdsc_sp2.swf --source-url http
 - 到达时间 =（原提交秒数 − 窗口首条提交秒数）× 1000 × time-scale，毫秒四舍五入。
 - 页数 = ceil（原运行秒数 / seconds-per-page），截到 1..max-pages；默认上限 1,000，并记录截断数量。
 - 份数固定为 1。历史等待时间和处理器数不参与新调度；后者不等于打印机数量。
-- 默认 priority 全为 0。在无重试基线中，老化优先级会和 FCFS 产生相同顺序，这是正常结果。要观察不同优先级，可显式加 `--priority-mode job-id-modulo --priority-levels 5`：用原 job_id 对 5 取模，只是合成示例，与真实身份或紧急程度无关。
+- 默认 priority 全为 0；`--priority-mode job-id-modulo --priority-levels 5` 保留旧的合成元数据映射。2026-10-10 起该字段不参与任何策略排序。同构工具没有经营报价，综合调度主要比较累计等待和短单效率；服务档位、收益及异构设备的完整比较使用 `shop-experiments`，见 [两层调度](scheduling.md)。
 - 所有转换参数、源文件 SHA-256、原始文件头、原 job_id/行号、用户编号、筛选计数都保留。下载时记录 retrieved_at_utc，本地转换时该字段为空；converted_at_utc 是转换时间，不能冒充下载时间。没有随机抽样。
 
 这是计算作业到打印任务的人工映射，不代表校园真实需求。来源和版权见 `docs/datasets.md`。源日志和运行结果默认不提交。

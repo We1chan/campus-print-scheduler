@@ -12,7 +12,7 @@ namespace {
 constexpr qreal timelineLeft = 509;
 constexpr qreal timelineWidth = 768;
 constexpr qreal timelineBottom = 756;
-constexpr std::array<qreal, 5> rowY{{392, 466, 540, 613, 687}};
+constexpr std::array<qreal, 3> rowY{{407, 540, 673}};
 
 QString minutes(cps::TimeMs value, int decimals = 1) {
     return QString::number(static_cast<double>(value) / 60000., 'f', decimals);
@@ -82,8 +82,11 @@ void orders(Painter& d, const DispatchDemo& demo, const DispatchDemoSelection& s
         d.panel(QRectF(49, card.y() + 12, 27, 34), item.color, item.color, 4);
         d.text(92, card.y()+3, 115, 29, item.id + QStringLiteral("  ") + item.title, 18, navy, true);
         QString detail=QStringLiteral("到达 %1 · 期限 %2").arg(minutes(item.job.submittedMs),item.job.deadlineMs?minutes(item.job.deadlineMs):QStringLiteral("无"));
-        if(selection.policy==2)detail=QStringLiteral("优先级 %1 · 到达 %2").arg(item.job.priority).arg(minutes(item.job.submittedMs));
-        else if(selection.policy==4)detail=QStringLiteral("%1 /单 · %2 /分").arg(money(item.job.quotedCents),money(qRound64(item.job.quotedCents*3./item.job.sheets())));
+        if(selection.policy==2) {
+            const auto tier = item.job.service == cps::ServiceTier::Express ? QStringLiteral("快速") :
+                item.job.service == cps::ServiceTier::Standard ? QStringLiteral("普通") : QStringLiteral("灵活");
+            detail = QStringLiteral("%1 · %2 · 到达 %3").arg(tier, money(item.job.quotedCents), minutes(item.job.submittedMs));
+        }
         d.text(92,card.y()+32,181,22,detail,11,slate);
         d.text(211, card.y(), 63, 58,
                QStringLiteral("%1 页").arg(item.job.pages * item.job.copies), 16, navy,
@@ -95,7 +98,7 @@ void orders(Painter& d, const DispatchDemo& demo, const DispatchDemoSelection& s
 
 void comparison(Painter& d, const DispatchDemo& demo, const DispatchDemoSelection& selection) {
     d.panel(QRectF(314, 293, 1254, 480), Qt::white, ruleColor, 4);
-    d.text(333, 310, 416, 35, QStringLiteral("五种策略，同屏对比"), 22, navy, true);
+    d.text(333, 310, 416, 35, QStringLiteral("三种策略，两层调度"), 22, navy, true);
     d.text(1350, 315, 102, 29, QStringLiteral("平均等待"), 16, slate,
            false, false, Qt::AlignCenter);
     d.text(1467, 315, 87, 29, QStringLiteral("准时完成"), 16, slate,
@@ -109,7 +112,7 @@ void comparison(Painter& d, const DispatchDemo& demo, const DispatchDemoSelectio
     const auto xAt = [horizon](cps::TimeMs time) {
         return timelineLeft + timelineWidth * std::clamp(static_cast<double>(time) / horizon, 0., 1.);
     };
-    for (int row = 0; row < 5; ++row) {
+    for (int row = 0; row < static_cast<int>(demo.runs.size()); ++row) {
         if (row == selection.policy) {
             d.panel(QRectF(326, rowY[row] - 11, 1228, 67), QColor("#FFF0E9"), Qt::transparent, 4);
             d.p.setPen(Qt::NoPen); d.p.setBrush(red);
@@ -129,10 +132,10 @@ void comparison(Painter& d, const DispatchDemo& demo, const DispatchDemoSelectio
     }
     d.text(1285,349,47,29,QStringLiteral("分钟"),13,slate);
 
-    for (int row = 0; row < 5; ++row) {
+    for (int row = 0; row < static_cast<int>(demo.runs.size()); ++row) {
         const auto& run = demo.runs[static_cast<std::size_t>(row)];
         const qreal y = rowY[row];
-        d.text(349, y, 153, 46, run.label, 18, navy, true);
+        d.text(349, y, 153, 46, run.label, 15, navy, true);
         d.hit(QRectF(337, y - 11, 168, 67), QStringLiteral("dispatch-policy"), QString::number(row), run.label);
         // Keep name / metric controls outside the bar hit regions.
         d.hit(QRectF(1291, y - 11, 263, 67), QStringLiteral("dispatch-policy"), QString::number(row), run.label);
@@ -182,7 +185,7 @@ void explanation(Painter& d, const DispatchDemo& demo, const DispatchDemoSelecti
     d.panel(QRectF(18, 786, 1550, 141), Qt::white, ruleColor, 4);
     d.icon(QStringLiteral("document"), 40, 812, 44);
     d.text(106, 802, 749, 37, QStringLiteral("为什么下一单是它？"), 22, navy, true);
-    const auto& run = demo.runs[static_cast<std::size_t>(std::clamp(selection.policy, 0, 4))];
+    const auto& run = demo.runs[static_cast<std::size_t>(std::clamp(selection.policy, 0, 2))];
     std::vector<const cps::Dispatch*> sequence;
     for (const auto& dispatch : run.result.dispatches) sequence.push_back(&dispatch);
     std::stable_sort(sequence.begin(), sequence.end(), [](const auto* a, const auto* b) {
@@ -202,7 +205,7 @@ void explanation(Painter& d, const DispatchDemo& demo, const DispatchDemoSelecti
     d.text(115, 847, badgeWidth - 18, 30, badgeText, 16, navy, true);
     // The shared clock / metric definitions are visible in the toolbar. Keep
     // this paragraph focused on the selected algorithm, with wrapping rather
-    // than dropping the end of the aging / revenue rule.
+    // than dropping the end of the balanced scheduling rule.
     const QString policyExplanation = run.explanation.section(QStringLiteral(" 无取件期限"), 0, 0);
     d.p.setFont(merchantFont(14)); d.p.setPen(slate);
     d.p.drawText(QRectF(116 + badgeWidth, 842, 770 - badgeWidth, 44),
@@ -253,7 +256,7 @@ void paintDispatch(Painter& d, const DispatchDemo& demo, const DispatchDemoSelec
     d.p.fillRect(QRectF(0, 56, 1586, 884), QColor("#FDFEFE"));
     if (!d.assets.dispatchBackground.isNull()) d.p.drawImage(QRectF(0, 56, 1586, 162), d.assets.dispatchBackground);
     else d.p.fillRect(QRectF(0, 56, 1586, 162), QColor("#F7F6F2"));
-    d.headline(142, 84, 84, QStringLiteral("同一批订单，五种"), QStringLiteral("安排。"));
+    d.headline(142, 84, 84, QStringLiteral("同一批订单，三种"), QStringLiteral("安排。"));
     d.text(142, 165, 1050, 32,
            QStringLiteral("看见顺序，也看见取舍。  %1").arg(demo.scenarioName), 22, slate);
     toolbar(d, selection.playing);

@@ -191,7 +191,7 @@ void PrintController::importFile(const QString& path) {
 }
 void PrintController::cancel(const QString& id) { mutate("cancel", {{"job_id", id}}); }
 void PrintController::setPolicy(int index) {
-    if (index >= 0 && index <= 4) mutate("set_policy", {{"policy", QStringList{"fcfs", "sjf", "priority", "deadline", "revenue"}[index]}});
+    if (index >= 0 && index <= 2) mutate("set_policy", {{"policy", QStringList{"fcfs", "sjf", "balanced"}[index]}});
 }
 void PrintController::setPaused(bool paused) { mutate("set_paused", {{"paused", paused}}); }
 void PrintController::checkConnection() { refresh(); }

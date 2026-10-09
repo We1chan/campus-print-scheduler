@@ -115,7 +115,7 @@ private slots:
             QVERIFY(!scenario->geometry().intersects(speed->geometry()));
         }
         QVERIFY(press("dispatch-step_"));QVERIFY(canvas->property("dispatchTimeMs").toLongLong()>0);
-        QVERIFY(press("dispatch-policy_3"));QCOMPARE(canvas->property("dispatchPolicy").toInt(),3);
+        QVERIFY(press("dispatch-policy_2"));QCOMPARE(canvas->property("dispatchPolicy").toInt(),2);
         QVERIFY(press("dispatch-order_A"));
         QVERIFY(press("dispatch-reset_"));
         for(int index=0;index<scenario->count();++index){scenario->setCurrentIndex(index);QCOMPARE(canvas->property("dispatchTimeMs").toLongLong(),qlonglong(0));}
@@ -722,7 +722,7 @@ private slots:
             if(!menu||!policy||!menu->isVisible()){if(menu)menu->close();return;}
             policy->popup(menu->mapToGlobal(QPoint(menu->width()-1,menu->actionGeometry(policy->menuAction()).top())));
             QTest::qWait(50);
-            menusRounded=policy->isVisible()&&!menu->mask().isEmpty()&&!policy->mask().isEmpty()
+            menusRounded=policy->actions().size()==3&&policy->isVisible()&&!menu->mask().isEmpty()&&!policy->mask().isEmpty()
                 &&!menu->mask().contains(menu->rect().bottomRight())&&!policy->mask().contains(policy->rect().bottomRight())
                 &&menu->windowFlags().testFlag(Qt::NoDropShadowWindowHint)&&policy->windowFlags().testFlag(Qt::NoDropShadowWindowHint);
             const auto softShadow=[](QMenu* popup){

@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="theme-color" content="#FAFAF9">
+  <title>纸间 · 现场扫码打印</title>
+  <link rel="icon" href="/favicon.png"><link rel="stylesheet" href="/style.css"><script src="/present.js" defer></script>
+</head>
+<body class="present">
+<main class="presentation">
+  <section class="invitation">
+    <p class="brand"><img src="/brand.png" alt="" width="32" height="32"><span>纸间</span></p>
+    <h1 class="slogan">扫一扫，<em>现场打印。</em></h1>
+    <img class="qr" src="/qr.svg" alt="扫码进入课堂打印网页">
+    <p class="join-code">课堂码 <strong id="join-code">—</strong></p>
+    <a id="join-link" class="join-link"></a>
+    <p id="network-hint" class="note"></p>
+    <p class="note">打印、支付均为模拟，请勿上传敏感文件。</p>
+  </section>
+  <section class="live">
+    <header class="live-head">
+      <div><p class="eyebrow">真实队列 · 实时进度</p><h2>看看打印机正在忙什么</h2></div>
+      <p id="connection" class="connection" role="status"><i></i><span>正在连接店铺…</span></p>
+    </header>
+    <p id="policy" class="policy"></p>
+    <div id="counts" class="metrics"></div>
+    <div class="live-grid">
+      <div class="card"><div class="card-head"><h2>设备状态</h2></div><div id="devices" class="devices"></div></div>
+      <div class="card"><div class="card-head"><h2>等待队列</h2><span id="queue-summary" class="muted"></span></div><ol id="queue" class="queue"></ol></div>
+    </div>
+    <p class="note">展示者在老板后台切换调度策略、暂停派发或设备接单；此页只显示全店数量、设备进度与匿名队列。</p>
+  </section>
+</main>
+</body>
+</html>

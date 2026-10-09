@@ -162,6 +162,10 @@ if(CPS_BUILD_QT_APPS)
 
         set(Python3_FIND_STRATEGY LOCATION)
         find_package(Python3 3.10 REQUIRED COMPONENTS Interpreter)
+        add_test(NAME classroom_web COMMAND "${Python3_EXECUTABLE}"
+            "${CMAKE_SOURCE_DIR}/tests/classroom_web_test.py" --coordinator "$<TARGET_FILE:print-coordinator>"
+            --office-stub "$<TARGET_FILE:office_converter_stub>")
+        set_tests_properties(classroom_web PROPERTIES TIMEOUT 90)
         add_test(NAME shop_experiments COMMAND "${Python3_EXECUTABLE}"
             "${CMAKE_SOURCE_DIR}/tests/shop_experiments_test.py" --experiment "$<TARGET_FILE:shop-experiments>")
         set_tests_properties(shop_experiments PROPERTIES TIMEOUT 45)
@@ -176,6 +180,9 @@ if(CPS_BUILD_QT_APPS)
                 "${CMAKE_SOURCE_DIR}/tests/windows_console_audit_test.py")
             set_tests_properties(windows_console_audit PROPERTIES TIMEOUT 30)
         endif()
+        add_test(NAME document_workload COMMAND "${Python3_EXECUTABLE}"
+            "${CMAKE_SOURCE_DIR}/tests/document_workload_tests.py" --experiment "$<TARGET_FILE:shop-experiments>")
+        set_tests_properties(document_workload PROPERTIES TIMEOUT 45)
         add_test(NAME workload_tools COMMAND "${Python3_EXECUTABLE}"
             "${CMAKE_SOURCE_DIR}/tests/workload_tools_test.py"
             --replay "$<TARGET_FILE:scheduler-replay>"

@@ -134,9 +134,8 @@ def main():
                    'low_priority_wait_ms': low['waiting_ms'] if low else None,
                    'clipped_jobs': document.get('source', {}).get('mapping', {}).get('clipped_jobs', 0)}
             rows.append(row)
-        if case.get('priority_mode') == 'uniform':
-            require(report['results'][0]['dispatches'] == report['results'][2]['dispatches'],
-                    'uniform priorities must match FCFS in this no-retry model')
+        require({r['policy'] for r in report['results']} == {'fcfs', 'sjf', 'balanced'},
+                'exactly three current strategies must be compared')
         summary.extend(rows)
         manifest['cases'].append({'name': name, **case, 'input': workload_path.relative_to(args.output).as_posix(),
                                   'report': report_path.relative_to(args.output).as_posix(), 'repeat_identical': True,
@@ -166,7 +165,7 @@ def main():
                  '--time-scale', scale, '--seconds-per-page', config['seconds_per_page'], '--max-pages', config['max_pages']])
         run_case(name, path, {'family': 'density', 'offset': 0, 'priority_mode': 'job-id-modulo',
                              'time_scale': scale, 'aging_ms': config['aging_ms']})
-    # Finite stream: 2 high-priority tasks occupy the printers every 1500 ms.
+    # Finite stream: 2 short tasks occupy the printers every 1500 ms.
     # This diagnoses delayed large tasks; it is not a proof about infinite-arrival starvation.
     pressure = [{'job_id': 'low-priority-large', 'title': 'Low-priority large job', 'pages': 40,
                  'copies': 1, 'submitted_ms': 0, 'priority': 0}]

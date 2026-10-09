@@ -21,4 +21,14 @@ struct ShopMetrics {
     int completed = 0, onTime = 0, late = 0, overdue = 0;
 };
 ShopMetrics shopMetrics(const std::vector<Job>& jobs, TimeMs start, TimeMs end);
+// Controlled comparisons: same accepted cohort, horizon, fleet and pricing.
+// Includes unstarted documents in wait observations through the window end.
+struct ShopQuality {
+    double averageObservedWaitMs = 0, p95ObservedWaitMs = 0;
+    int expressAccepted = 0, expressOnTime = 0;
+    Money potentialContributionCents = 0;
+    double waitingScore = 0, expressOnTimeRate = 0, contributionScore = 0;
+    double overallScore = 0; // 0..100; three equally weighted components
+};
+ShopQuality shopQuality(const std::vector<Job>& jobs, TimeMs start, TimeMs end);
 } // namespace cps

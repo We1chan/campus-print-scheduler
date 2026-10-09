@@ -1,0 +1,41 @@
+# Target: oscd.we1chan.com on ECS 39.105.20.207 (cn-beijing).
+# Install only after ICP filing, DNS and certificate setup are complete.
+# Include inside nginx's http {} context, e.g. /etc/nginx/conf.d/.
+# Use this file OR nginx.conf.example; both declare the same shared zones.
+limit_req_zone $binary_remote_addr zone=classroom_rate:10m rate=100r/s;
+limit_conn_zone $binary_remote_addr zone=classroom_connections:10m;
+
+server {
+    listen 80;
+    server_name oscd.we1chan.com;
+    # Keep HTTP-01 validation available for Certbot webroot renewals.
+    location ^~ /.well-known/acme-challenge/ {
+        root /var/www/html;
+        try_files $uri =404;
+    }
+    location / {
+        return 301 https://oscd.we1chan.com$request_uri;
+    }
+}
+
+server {
+    listen 443 ssl;
+    server_name oscd.we1chan.com;
+    ssl_certificate /etc/letsencrypt/live/oscd.we1chan.com/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/oscd.we1chan.com/privkey.pem;
+    client_max_body_size 10m;
+    client_body_timeout 15s;
+    limit_req zone=classroom_rate burst=200 nodelay;
+    limit_req_status 429;
+    limit_conn classroom_connections 128;
+    access_log off;
+
+    location / {
+        proxy_pass http://127.0.0.1:18787;
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_connect_timeout 5s;
+        proxy_read_timeout 30s;
+        proxy_request_buffering on;
+    }
+}

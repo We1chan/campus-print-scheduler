@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="theme-color" content="#FAFAF9">
+  <title>纸间 · 进入课堂打印</title>
+  <link rel="icon" href="/favicon.png"><link rel="stylesheet" href="/style.css">
+</head>
+<body class="join-body">
+<main class="join">
+  <p class="brand"><img src="/brand.png" alt="" width="32" height="32"><span>纸间</span></p>
+  <h1 class="slogan">好作品，值得<em>印出来。</em></h1>
+  <p class="lede">扫描展示者投屏的二维码即可进入。也可以输入屏幕上的课堂码。</p>
+  <form class="join-form" action="/join" method="get">
+    <label for="code">课堂码</label>
+    <input id="code" name="code" autocomplete="off" autocapitalize="characters" spellcheck="false" maxlength="64" required placeholder="例如 3F2A9C1E">
+    <button class="primary" type="submit">进入课堂打印</button>
+  </form>
+  <p class="join-error" role="alert"><!--ERROR--></p>
+  <p class="fine">打印与支付均为模拟，不扣款、不连接实体打印机。请勿上传敏感文件。</p>
+</main>
+</body>
+</html>

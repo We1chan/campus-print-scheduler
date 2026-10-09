@@ -63,7 +63,7 @@ void checkScenario(int scenario) {
             check(original && job.pages == original->job.pages && job.copies == original->job.copies &&
                 job.priority == original->job.priority && job.submittedMs == original->job.submittedMs &&
                 job.deadlineMs == original->job.deadlineMs && job.quotedCents == original->job.quotedCents,
-                "five policies receive identical arrival, pages, priorities, deadline and price");
+                "three policies receive identical arrival, pages, service, deadline and price");
             check(job.state == cps::JobState::Completed && job.firstStartedMs && job.finishedMs &&
                 job.runs.size() == 1 && job.runs.front().stoppedMs, "completion carries real run history");
             check(job.runs.front().startedMs == *job.firstStartedMs &&
@@ -92,22 +92,24 @@ int main() {
         check(dispatchScenarioNames().size() == 4, "four available teaching scenarios");
         for (int scenario = 0; scenario < 4; ++scenario) checkScenario(scenario);
         const auto standard = makeDispatchDemo(0);
+        check(standard.runs.size() == 3 && standard.runs[2].policy == cps::Policy::Balanced,
+            "only FCFS, SJF and balanced are offered");
         check(standard.runs[0].result.dispatches.front().jobId == "A" &&
             standard.runs[1].result.dispatches.front().jobId == "F", "FCFS and SJF materially diverge");
         check(standard.runs[1].averageWaitMinutes < standard.runs[0].averageWaitMinutes,
             "SJF reduces average waiting on this mixed-length batch");
         const auto deadline = makeDispatchDemo(1);
-        check(deadline.runs[3].result.dispatches.front().jobId == "F" &&
-            deadline.runs[3].onTime > deadline.runs[0].onTime, "real deadline strategy improves deadline scenario");
+        check(deadline.runs[2].result.dispatches.front().jobId == "F" &&
+            deadline.runs[2].onTime > deadline.runs[0].onTime, "balanced improves the controlled pickup scenario");
         const auto aging = makeDispatchDemo(2);
         const auto& dispatches = aging.runs[2].result.dispatches;
-        const auto lower = std::find_if(dispatches.begin(), dispatches.end(), [](const cps::Dispatch& d) { return d.jobId == "C"; });
-        const auto higher = std::find_if(dispatches.begin(), dispatches.end(), [](const cps::Dispatch& d) { return d.jobId == "F"; });
-        check(lower < higher, "older low-priority C advances ahead of newer higher-priority F through aging");
+        check(dispatches.front().jobId == "B" && std::any_of(dispatches.begin(), dispatches.end(),
+            [](const cps::Dispatch& d) { return d.jobId == "A"; }),
+            "express service advances while the old flexible document also finishes");
         check(makeDispatchDemo(-1).scenarioName == standard.scenarioName &&
             makeDispatchDemo(4).scenarioName == standard.scenarioName, "invalid scenario falls back to initial scenario");
         check(findDispatchOrder(standard, "missing") == nullptr, "unknown order lookup is safe");
-        std::cout << "merchant dispatch: all four scenarios and five strategies passed\n";
+        std::cout << "merchant dispatch: all four scenarios and three strategies passed\n";
         return 0;
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';

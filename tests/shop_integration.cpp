@@ -27,6 +27,7 @@ int main(int argc, char** argv) {
             snap = client.request("snapshot"); if (!snap.isEmpty()) break; QThread::msleep(50);
         }
         require(snap.value("printers").toInt() == 6 && snap.value("fleet").toArray().size() == 6, "six heterogeneous devices");
+        require(snap.value("policy") == "balanced", "retired startup name migrates to balanced");
         accepted(client.request("set_paused", {{"paused", true}}), "pause new shop");
         QJsonObject order{{"job_id", "color-a3"}, {"title", QStringLiteral("彩色 双面海报")}, {"pages", 3}, {"copies", 2},
             {"paper", "a3"}, {"color", true}, {"duplex", true}, {"service", "flexible"}, {"quoted_cents", 1},

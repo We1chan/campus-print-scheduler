@@ -97,9 +97,7 @@ QString policyName(Policy policy) {
     switch (policy) {
     case Policy::Fcfs: return QStringLiteral("fcfs");
     case Policy::ShortestJobFirst: return QStringLiteral("sjf");
-    case Policy::PriorityAging: return QStringLiteral("priority");
-    case Policy::Deadline: return QStringLiteral("deadline");
-    case Policy::Revenue: return QStringLiteral("revenue");
+    case Policy::Balanced: return QStringLiteral("balanced");
     }
     return {};
 }
@@ -107,9 +105,11 @@ QString policyName(Policy policy) {
 std::optional<Policy> policyFromName(const QString& name) {
     if (name == QLatin1String("fcfs")) return Policy::Fcfs;
     if (name == QLatin1String("sjf")) return Policy::ShortestJobFirst;
-    if (name == QLatin1String("priority")) return Policy::PriorityAging;
-    if (name == "deadline") return Policy::Deadline;
-    if (name == "revenue") return Policy::Revenue;
+    if (name == QLatin1String("balanced")) return Policy::Balanced;
+    // Read existing states and accept requests from older clients. Always write
+    // the canonical name; retired strategies do not remain separate algorithms.
+    if (name == QLatin1String("priority") || name == QLatin1String("deadline") ||
+        name == QLatin1String("revenue")) return Policy::Balanced;
     return std::nullopt;
 }
 

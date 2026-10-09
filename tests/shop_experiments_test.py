@@ -1,9 +1,15 @@
 """Check economic comparisons against the saved input and dispatch evidence."""
 import argparse
+import importlib.util
 import json
 from pathlib import Path
 import subprocess
 import tempfile
+
+AUDIT_PATH = Path(__file__).resolve().parents[1] / 'tools/run_scheduling_benchmark.py'
+SPEC = importlib.util.spec_from_file_location('scheduling_benchmark', AUDIT_PATH)
+BENCHMARK = importlib.util.module_from_spec(SPEC)
+SPEC.loader.exec_module(BENCHMARK)
 
 
 def main():
@@ -18,6 +24,8 @@ def main():
         a, b = (json.loads(p.read_text(encoding="utf-8")) for p in outputs)
         assert a == b, "fixed seed must reproduce every input and dispatch"
         assert len(a["runs"]) == 21
+        assert {r["policy"] for r in a["runs"]} == {"fcfs", "sjf", "balanced"}
+        BENCHMARK.audit_report(a)
         cohorts = {}
         for run in a["runs"]:
             jobs = {j["job_id"]: j for j in run["jobs"]}
@@ -46,7 +54,9 @@ def main():
                 per_page = p["color_page_ms"] if j["color"] else p["mono_page_ms"]
                 assert d["finished_ms"] - d["started_ms"] == per_page * j["pages"] * j["copies"] * (2 if j["paper"] == "a3" else 1)
                 ends[d["printer"]] = d["finished_ms"]
-        print("21 comparisons: reproducible demand, matched devices, finite-horizon revenue and fixed cohorts verified.")
+        result = BENCHMARK.run_benchmark(args.experiment, Path(root)/'held-out')
+        assert result['passed'], f"balanced must beat both baselines on held-out mean quality: {result['policy_means']}"
+        print("Three strategies, independent quality audit and 84 held-out cohorts passed:", result['policy_means'])
 
 
 if __name__ == "__main__":

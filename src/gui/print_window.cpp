@@ -156,7 +156,7 @@ QVariant JobTableModel::data(const QModelIndex& index, int role) const {
 }
 QVariant JobTableModel::headerData(int section, Qt::Orientation orientation, int role) const {
     if (orientation != Qt::Horizontal || role != Qt::DisplayRole) return {};
-    const QStringList headings{QStringLiteral("文档"), QStringLiteral("总页数"), QStringLiteral("优先级"),
+    const QStringList headings{QStringLiteral("文档"), QStringLiteral("总页数"), QStringLiteral("历史优先级"),
         QStringLiteral("状态"), QStringLiteral("已打印 / 总页数"), QStringLiteral("预计 / 结果"), QStringLiteral("任务 ID"), QStringLiteral("规格"), QStringLiteral("锁定报价"), QStringLiteral("交付期限")};
     return headings.value(section);
 }
@@ -283,8 +283,8 @@ PrintWindow::PrintWindow(WindowOptions options, QWidget* parent) : QMainWindow(p
     auto* controlRow = new QHBoxLayout(controls); controlRow->setContentsMargins(28, 17, 28, 10);
     controlRow->addWidget(label(QStringLiteral("设备与调度"), "section")); controlRow->addStretch();
     auto* policy = new SelectInput; policy->setObjectName("schedulingPolicy");
-    policy->addItems({QStringLiteral("FCFS · 先来先服务"), QStringLiteral("SJF · 短作业优先"), QStringLiteral("优先级 + 等待老化"), QStringLiteral("交付期限优先"), QStringLiteral("营业收入导向")});
-    policy->setMinimumWidth(190); policy->setToolTip(QStringLiteral("只影响等待中的订单，不会打断正在打印的订单。"));
+    policy->addItems({QStringLiteral("FCFS · 先来先服务"), QStringLiteral("SJF · 短作业优先"), QStringLiteral("综合调度")});
+    policy->setMinimumWidth(190); policy->setToolTip(QStringLiteral("先排文档队列，再分配兼容设备。综合调度考虑档位、等待、期限和贡献收益；不打断正在打印的订单。"));
     controlRow->addWidget(policy); controlRow->addStretch();
     auto* motion = new QPushButton(QStringLiteral("减少动效")); motion->setObjectName("reduceMotion"); motion->setCheckable(true); motion->setProperty("role", "quiet");
     controlRow->addWidget(motion);
@@ -485,10 +485,11 @@ PrintWindow::PrintWindow(WindowOptions options, QWidget* parent) : QMainWindow(p
     experimentCount->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed); experimentCount->setFixedWidth(96); labHead->addWidget(experimentCount);
     auto* runExperiment = new QPushButton(QStringLiteral("运行策略对比")); runExperiment->setObjectName("runShopExperiments"); labHead->addWidget(runExperiment);
     labLayout->addLayout(labHead);
-    auto* experimentTable = ui::listTable("experimentTable", {QStringLiteral("实验场景"), QStringLiteral("策略"), QStringLiteral("优惠"), QStringLiteral("接单/流失"), QStringLiteral("营业额"), QStringLiteral("贡献利润"), QStringLiteral("完成/超时"), QStringLiteral("期末未完成")});
+    auto* experimentTable = ui::listTable("experimentTable", {QStringLiteral("实验场景"), QStringLiteral("策略"), QStringLiteral("优惠"), QStringLiteral("接单/流失"), QStringLiteral("营业额"), QStringLiteral("贡献利润"), QStringLiteral("完成/超时"), QStringLiteral("期末未完成"), QStringLiteral("综合得分"), QStringLiteral("快速准时率"), QStringLiteral("均值/P95·分")});
+    experimentTable->horizontalHeaderItem(10)->setToolTip(QStringLiteral("所有已接单文档的平均与 P95 观测等待（分钟），包括闭店时未开打的订单"));
     experimentTable->setSelectionMode(QAbstractItemView::NoSelection); experimentTable->setMinimumHeight(240); labLayout->addWidget(experimentTable, 1);
     auto* experimentEmpty = ui::emptyState(experimentTable, QStringLiteral("还没有实验结果"), QStringLiteral("运行后在这里比较 21 组策略与优惠方案，完整数据另存为 JSON"));
-    auto* experimentNote = label(QStringLiteral("固定随机种子与 8 小时营业窗口。预算敏感客户占比 0%、30%、60%；完整报表含假设、客户输入与派发记录。"), "muted");
+    auto* experimentNote = label(QStringLiteral("固定种子与 8 小时窗口，预算敏感占比 0%、30%、60%。综合分等权考虑等待、快速履约和贡献收益；等待包含闭店时未开打的订单，完整报表保留所有指标。"), "muted");
     experimentNote->setWordWrap(true); labLayout->addWidget(experimentNote); shopLayout->addWidget(lab, 1);
     auto* pricing = card(); auto* pricingLayout = new QVBoxLayout(pricing); pricingLayout->setContentsMargins(20, 16, 20, 16); pricingLayout->setSpacing(10);
     pricingLayout->addWidget(label(QStringLiteral("计价与口径"), "cardTitle"));
@@ -539,11 +540,10 @@ PrintWindow::PrintWindow(WindowOptions options, QWidget* parent) : QMainWindow(p
     auto* title = new QLineEdit(QStringLiteral("操作系统实验报告")); title->setObjectName("jobTitle"); title->setMaxLength(200); form->addWidget(title);
     auto* pages = new NumberInput; pages->setObjectName("jobPages"); pages->setRange(1, 1000); pages->setValue(8);
     auto* copies = new NumberInput; copies->setObjectName("jobCopies"); copies->setRange(1, 100); copies->setValue(1);
-    auto* priority = new NumberInput; priority->setObjectName("jobPriority"); priority->setRange(0, 100);
-    const std::array<QSpinBox*, 3> inputs{pages, copies, priority};
+    const std::array<QSpinBox*, 2> inputs{pages, copies};
     auto* numbers = new QHBoxLayout;
-    for (int i = 0; i < 3; ++i) {
-        auto* field = new QVBoxLayout; field->addWidget(label(QStringList{QStringLiteral("页数"),QStringLiteral("份数"),QStringLiteral("优先级")}[i], "muted"));
+    for (int i = 0; i < 2; ++i) {
+        auto* field = new QVBoxLayout; field->addWidget(label(QStringList{QStringLiteral("页数"),QStringLiteral("份数")}[i], "muted"));
         field->addWidget(inputs[i]); numbers->addLayout(field);
     }
     form->addLayout(numbers);
@@ -567,7 +567,7 @@ PrintWindow::PrintWindow(WindowOptions options, QWidget* parent) : QMainWindow(p
     auto* eta = label({}, "body"); eta->setObjectName("orderEta"); eta->setWordWrap(true); eta->setMinimumWidth(380); eta->setVisible(shopMode); summaryLayout->addWidget(eta);
     form->addSpacing(2); form->addWidget(summary);
     auto orderJson = [=] {
-        return QJsonObject{{"title", title->text()}, {"pages", pages->value()}, {"copies", copies->value()}, {"priority", priority->value()},
+        return QJsonObject{{"title", title->text()}, {"pages", pages->value()}, {"copies", copies->value()}, {"priority", 0},
             {"paper", paper->currentIndex() == 1 ? "a3" : "a4"}, {"color", color->isChecked()}, {"duplex", duplex->isChecked()},
             {"service", QStringList{"express", "standard", "flexible"}[service->currentIndex()]}};
     };
@@ -607,11 +607,15 @@ PrintWindow::PrintWindow(WindowOptions options, QWidget* parent) : QMainWindow(p
             const auto r = runs[i].toObject();
             const auto policyName = r.value("policy").toString();
             const QList<ui::Cell> cells{r.value("mode") == "fixed_orders" ? QStringLiteral("固定订单") : QStringLiteral("预算敏感 %1%").arg(r.value("budget_sensitive_percent").toInt()),
-                {policyName == "revenue" ? QStringLiteral("收入导向") : policyName == "deadline" ? QStringLiteral("期限优先") : QStringLiteral("先来先服务"), "", -1, "strong"},
+                {policyName == "balanced" ? QStringLiteral("综合调度") : policyName == "sjf" ? QStringLiteral("短作业优先") : QStringLiteral("先来先服务"), "", -1, "strong"},
                 {r.value("discounts").toBool() ? QStringLiteral("开启") : QStringLiteral("关闭"), r.value("discounts").toBool() ? "info" : "muted"},
                 QStringLiteral("%1 / %2").arg(r.value("accepted").toInt()).arg(r.value("lost_before_order").toInt()),
                 QString::number(r.value("revenue_cents").toDouble()/100, 'f', 2), QString::number(r.value("contribution_cents").toDouble()/100, 'f', 2),
-                QStringLiteral("%1 / %2").arg(r.value("completed").toInt()).arg(r.value("late").toInt()), QString::number(r.value("unfinished_at_close").toInt())};
+                QStringLiteral("%1 / %2").arg(r.value("completed").toInt()).arg(r.value("late").toInt()), QString::number(r.value("unfinished_at_close").toInt()),
+                QString::number(r.value("quality_score").toDouble(), 'f', 2),
+                QString::number(100*r.value("express_on_time_rate").toDouble(), 'f', 1) + "%",
+                QStringLiteral("%1 / %2").arg(r.value("average_observed_wait_ms").toDouble()/60000, 0, 'f', 1)
+                    .arg(r.value("p95_observed_wait_ms").toDouble()/60000, 0, 'f', 1)};
             for (int c = 0; c < cells.size(); ++c) ui::setCell(experimentTable, i, c, cells[c]);
         }
     }, Qt::QueuedConnection);
@@ -656,7 +660,7 @@ PrintWindow::PrintWindow(WindowOptions options, QWidget* parent) : QMainWindow(p
             ui::say(sheets, error, "error"); ui::say(feedback_, error, "error"); return;
         }
         if (options.shopMode) emit orderRequested(orderJson());
-        else emit submitRequested(title->text(), pages->value(), copies->value(), priority->value());
+        else emit submitRequested(title->text(), pages->value(), copies->value(), 0);
         submission->accept();
     });
     connect(import, &QPushButton::clicked, this, [this, options] {

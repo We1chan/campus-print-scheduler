@@ -1,4 +1,5 @@
 #include "core_test_support.hpp"
+#include "cps/core/shop.hpp"
 #include <atomic>
 #include <set>
 #include <thread>
@@ -9,23 +10,32 @@ using test::claim;
 using test::job;
 namespace {
 void agingBoundaries() {
-    for (const auto time : {299LL, 300LL, 399LL, 400LL}) {
+    for (const auto time : {102399LL, 102400LL, 320000LL}) {
         Scheduler s({100});
-        require(s.submit(job("old", 30)), "old job submitted");
-        require(s.submit(job("urgent", 1, 250, 3)), "urgent job submitted");
-        require(claim(s, Policy::PriorityAging, time).id == (time == 299 || time == 399 ? "urgent" : "old"),
-                "aging threshold and FIFO priority tie");
+        auto old = job("old", 10), urgent = job("urgent", 10, time);
+        old.service = ServiceTier::Flexible; urgent.service = ServiceTier::Express;
+        require(s.submit(old) && s.submit(urgent), "flexible and express jobs submitted");
+        require(claim(s, Policy::Balanced, time).id == (time == 102399 ? "urgent" : "old"),
+                "uncapped aging overcomes service bonus and ties use FIFO");
     }
     Scheduler tied({100});
-    tied.submit(job("first", 10, 0, 4)); tied.submit(job("second", 1, 0, 4));
-    require(claim(tied, Policy::PriorityAging, 0).id == "first", "priority tie preserves insertion, not size");
+    tied.submit(job("first", 10, 0, 0)); tied.submit(job("second", 10, 0, 100));
+    require(claim(tied, Policy::Balanced, 0).id == "first", "legacy priority cannot override stable score ties");
+    Scheduler pressure({100});
+    auto old = job("old-large", 1000); old.service = ServiceTier::Flexible; quote(old);
+    const auto protection = serviceWindowMs(ServiceTier::Flexible);
+    auto fresh = job("fresh-express", 1, protection); fresh.service = ServiceTier::Express;
+    fresh.color = true; quote(fresh); fresh.deadlineMs = fresh.submittedMs;
+    require(pressure.submit(old) && pressure.submit(fresh), "worst-case bounded business bonuses");
+    require(claim(pressure, Policy::Balanced, protection).id == old.id,
+            "long-wait protection lets an old large flexible document beat a new premium short document");
 }
 void nonPreemptionAndArrival() {
     Scheduler s;
     s.submit(job("future", 1, 100, 100)); s.submit(job("running", 20, 0));
     require(claim(s, Policy::ShortestJobFirst, 0).id == "running", "future job must not start early");
-    require(!s.claim(Policy::PriorityAging, 99), "policy change cannot reclaim running job");
-    require(claim(s, Policy::PriorityAging, 100).id == "future", "arrival becomes eligible");
+    require(!s.claim(Policy::Balanced, 99), "policy change cannot reclaim running job");
+    require(claim(s, Policy::Balanced, 100).id == "future", "arrival becomes eligible");
     require(s.snapshot()[1].state == JobState::Running, "running job is not preempted");
 }
 void retryWaitingAndTokens() {
@@ -34,7 +44,7 @@ void retryWaitingAndTokens() {
     auto first = claim(s, Policy::Fcfs, 100);
     require(s.retry(first.id, first.attempts, 200), "retry closes first run");
     require(!s.retry(first.id, first.attempts, 200), "duplicate retry rejected");
-    auto next = claim(s, Policy::PriorityAging, 200);
+    auto next = claim(s, Policy::Balanced, 200);
     require(next.id == "retry" && next.attempts == 2, "past queue waiting survives retry");
     require(next.accumulatedWaitMs == 100, "execution time does not become queue waiting");
     require(!s.finish(next.id, 1, true, 250), "stale attempt must not finish a new attempt");
@@ -61,9 +71,11 @@ void limitAndClock() {
     require(s.snapshot()[0].state == JobState::Failed && !s.claim(Policy::Fcfs), "limit terminates job");
     Scheduler end;
     end.submit(job("edge", 1, MaxTimeMs));
-    require(claim(end, Policy::PriorityAging, MaxTimeMs).id == "edge", "maximum exact timestamp accepted");
+    require(claim(end, Policy::Balanced, MaxTimeMs).id == "edge", "maximum exact timestamp accepted");
     require(!end.finish("edge", 1, true, MaxTimeMs + 1), "out-of-range mutation rejected");
     require(end.finish("edge", 1, true, MaxTimeMs), "zero duration boundary permitted");
+    Scheduler oldest({1}); oldest.submit(job("oldest", 1000));
+    require(claim(oldest, Policy::Balanced, MaxTimeMs).id == "oldest", "maximum cumulative wait does not overflow score");
 }
 void cancelStates() {
     Scheduler s;
@@ -111,9 +123,9 @@ void concurrentIdentity() {
     for (int c = 0; c < 4; ++c) threads.emplace_back([&] {
         gate.arrive();
         for (;;) {
-            auto next = s.claim(Policy::PriorityAging, 1000);
+            auto next = s.claim(Policy::Balanced, 1000);
             if (!next && producersLeft.load() == 0) {
-                next = s.claim(Policy::PriorityAging, 1000); // observe submissions before producer completion
+                next = s.claim(Policy::Balanced, 1000); // observe submissions before producer completion
                 if (!next) break;
             }
             if (!next) { std::this_thread::yield(); continue; }
@@ -184,15 +196,16 @@ void batchAndPreview() {
     auto bad = job("bad"); bad.pages = 0;
     require(!atomic.submitBatch({job("new"), bad}), "reject whole invalid batch");
     require(atomic.snapshot().size() == 1, "no partial batch on invalid fields");
-    for (auto policy : {Policy::Fcfs, Policy::ShortestJobFirst, Policy::PriorityAging}) {
+    for (auto policy : {Policy::Fcfs, Policy::ShortestJobFirst, Policy::Balanced}) {
         Scheduler s({10});
+        auto urgent = job("urgent", 3, 10, 4); urgent.service = ServiceTier::Express;
         require(s.submitBatch({job("old", 20, 0), job("short", 1, 10),
-                              job("urgent", 3, 10, 4), job("future", 1, 100)}), "batch accepted");
+                              urgent, job("future", 1, 100)}), "batch accepted");
         const auto before = s.snapshot();
         const auto preview = s.waitingOrder(policy, 50);
         const std::vector<std::string> expected = policy == Policy::Fcfs ?
             std::vector<std::string>{"old", "short", "urgent"} : policy == Policy::ShortestJobFirst ?
-            std::vector<std::string>{"short", "urgent", "old"} : std::vector<std::string>{"urgent", "old", "short"};
+            std::vector<std::string>{"short", "urgent", "old"} : std::vector<std::string>{"short", "urgent", "old"};
         require(preview == expected, "preview respects configured aging, policy and future arrivals");
         require(s.snapshot()[0].attempts == before[0].attempts, "preview does not mutate state");
         for (const auto& id : preview) require(claim(s, policy, 50).id == id, "preview equals actual claims");

@@ -28,7 +28,7 @@ struct DispatchDemoRun {
 
 struct DispatchDemo {
     QVector<DispatchDemoOrder> orders;
-    std::array<DispatchDemoRun, 5> runs;
+    std::array<DispatchDemoRun, 3> runs;
     cps::TimeMs horizonMs = 0;
     QString scenarioName;
 };

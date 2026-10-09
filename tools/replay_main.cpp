@@ -72,17 +72,18 @@ int main(int argc, char* argv[]) {
     parser.addHelpOption();
     parser.addOptions({{{"i", "input"}, "Workload JSON file", "file"},
         {{"o", "output"}, "Atomic JSON report destination", "file"},
-        {"policy", "all, fcfs, sjf or priority", "name", "all"},
+        {"policy", "all, fcfs, sjf or balanced", "name", "all"},
         {"printers", "Number of identical printers (1..64)", "count", "2"},
         {"page-ms", "Milliseconds per sheet", "ms", "150"},
-        {"aging-ms", "Waiting milliseconds per priority point", "ms", "30000"}});
+        {"aging-ms", "Reference interval for sqrt waiting score (milliseconds)", "ms", "30000"}});
     parser.process(app);
     try {
         if (!parser.positionalArguments().isEmpty() || parser.value("input").isEmpty() || parser.value("output").isEmpty())
             throw std::invalid_argument("--input and --output are required; no positional arguments accepted");
-        const auto policy = parser.value("policy");
-        if (policy != "all" && policy != "fcfs" && policy != "sjf" && policy != "priority")
-            throw std::invalid_argument("policy must be all, fcfs, sjf or priority");
+        auto policy = parser.value("policy");
+        if (policy == "priority" || policy == "deadline" || policy == "revenue") policy = "balanced";
+        if (policy != "all" && policy != "fcfs" && policy != "sjf" && policy != "balanced")
+            throw std::invalid_argument("policy must be all, fcfs, sjf or balanced");
         cps::ReplayOptions options;
         options.printers = static_cast<int>(argument(parser, "printers", 1, 64));
         options.pageMs = argument(parser, "page-ms", 1, cps::MaxTimeMs / 10000);
@@ -124,7 +125,7 @@ int main(int argc, char* argv[]) {
         QJsonArray results;
         const std::pair<QString, cps::Policy> policies[] = {
             {"fcfs", cps::Policy::Fcfs}, {"sjf", cps::Policy::ShortestJobFirst},
-            {"priority", cps::Policy::PriorityAging}};
+            {"balanced", cps::Policy::Balanced}};
         for (const auto& entry : policies) {
             if (policy == "all" || policy == entry.first)
                 results.append(encode(cps::replay(workload, entry.second, options), entry.first));

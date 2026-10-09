@@ -2,13 +2,15 @@
 
 这是三人协作的接口契约。字段含义、状态转换与退出码的变更必须在同一提交中更新此文档。
 
+课堂网页网关复用本文件的 coordinator IPC，不改变持久 schema。网关的 HTTP 入口、独立浏览器身份、上传上限与稳定订单 ID 约定见 [classroom-demo.md](classroom-demo.md)。网络侧只开放学生操作，不提供任意 IPC 转发。网页订单的 `job_id` 与 Qt 客户端同为 UUID 形式，`customer` 是学生填写的显示名（未填写为“访客 XXXX”）；订单归属由网关按签名 Cookie 判断，不依赖 `customer`。
+
 ## 核心 C++ 模型 v2（worker JSON / IPC 仍为 v1）
 
 定义：`include/cps/core/scheduler.hpp`；纯 C++17，不依赖 Qt。每次领取仍为非抢占式。
 
 `Job` 原字段 `id/title/pages/copies/submittedMs/state` 保留。新增：
 
-- `priority`：0–100，越大越优先；`maxAttempts`：1–100，默认 3，包含首次执行。
+- `priority`：0–100，保留的历史元数据，不参与当前排序；`maxAttempts`：1–100，默认 3，包含首次执行。
 - `attempts`：每次 claim 加 1，作为本次执行令牌；所有重试相关回调必须携带原令牌。
 - `queuedSinceMs`：本轮进入队列的时间；`accumulatedWaitMs`：已结束的排队区间总时长。
 - `firstStartedMs/finishedMs`：可空；`lastChangedMs`：最后一次状态变更。
@@ -20,8 +22,10 @@
 
 - FCFS：本轮入队时间升序。
 - SJF：`pages * copies` 升序，再按本轮入队时间。
-- PriorityAging：`priority + floor((accumulatedWaitMs + now - queuedSinceMs) / agingIntervalMs)` 降序。默认间隔 30,000 ms，可通过 SchedulerOptions 配置；累计等待保留到重试，不包含执行时间。有效分数不封顶。同分按本轮入队时间，再保持初次插入顺序。
+- Balanced（综合调度）：自研加权响应比，`(1 + 服务分 + 等待分 + 期限紧迫分 + 名义每面贡献分) / (pages × copies)` 降序。服务分为快速 32 / 普通 16 / 灵活 0；收益分封顶 32，紧迫分封顶 4 且已到期时为 0；等待分取 `sqrt(累计等待 / agingIntervalMs)` 到 0.1 分，默认间隔 30,000 ms。累计排队达到 8 小时的文档优先，保护组内累计等待最长者先。完整公式及综合验收结果见 [两层调度](scheduling.md)。累计等待保留到重试，不包含执行时间；`priority` 仅保留为历史元数据，不再参与排序。
 - 所有策略只领取已到达且处于 Queued 的任务；完全并列保持插入顺序。重试进入本轮队尾，首次 submittedMs 不变。
+
+`Policy` 仅有 `Fcfs/ShortestJobFirst/Balanced`。第二层在 `claimFor()` 内为第一层排序后的首个可派发文档分配设备：FCFS 找编号最小的空闲兼容机；SJF 选最快兼容机，同速选低成本；Balanced 先减少占用其他等待文档的唯一兼容设备，再依次比较速度、直接成本、多余能力及设备编号。缺纸或暂无兼容空闲机的文档可以被跳过，保持相关设备工作。排序、匹配、占用和库存在一个锁内处理，预计与回放共用这些规则。
 
 ### 操作与状态
 
@@ -36,7 +40,7 @@
 
 旧 `finish(id, success)` 仅允许首次领取的任务，保留现有 GUI 的兼容性；存在重新领取时必须用显式令牌 API。这里的 attempt 是协调层领取次数，不能和 supervisor 内部 worker 重启次数混用。
 
-B 使用 `state_store` 完成快照序列化与原子持久化，并由 `print-coordinator` 负责进程停止、输出对账和恢复。跨进程恢复后若只能知道“现在确认进程已死”，run 的结束时间是保守估计，不能宣称精确物理打印时长。C 负责取消按钮、优先级控件及统计展示。
+B 使用 `state_store` 完成快照序列化与原子持久化，并由 `print-coordinator` 负责进程停止、输出对账和恢复。跨进程恢复后若只能知道“现在确认进程已死”，run 的结束时间是保守估计，不能宣称精确物理打印时长。C 负责取消按钮、服务档位选择及统计展示。
 
 ## 性能统计接口
 
@@ -82,7 +86,7 @@ B 使用 `state_store` 完成快照序列化与原子持久化，并由 `print-c
 | submit | `job`：job_id/title/pages/copies，可选 priority/max_attempts | 持久提交新任务 |
 | snapshot | 无 | 返回 policy、printers 与完整 jobs 快照 |
 | cancel | job_id | Queued 立即取消；Running 持久化取消意图并通知 supervisor |
-| set_policy | policy=`fcfs|sjf|priority` | 改变后续领取策略并持久化 |
+| set_policy | policy=`fcfs|sjf|balanced` | 改变后续领取策略并持久化；旧 priority/deadline/revenue 名称映射到 balanced |
 | stats | 可选 window_start_ms/window_end_ms（整数，须在 [0, 当前时间] 内） | 调用 A 的 statistics() 返回窗口内统计 DTO；缺省窗口为 [0, now] |
 | shutdown | 无 | 停止接收新连接，等待活动/恢复中的任务收尾后退出 |
 
@@ -157,7 +161,7 @@ GUI 使用状态目录派生的 `QLocalServer` 名称（规范路径的 SHA-256 
 | stats | 可选 window_start_ms/window_end_ms | 查询指定时间窗口的统计；缺省为 0/后台当前时刻，GUI 快照另外采用最早提交时刻作为起点 |
 | submit | job 对象 | job_id/title/pages/copies，priority/max_attempts 可选 |
 | submit_batch | jobs 数组 | 全部校验后原子入队，一次持久化；空批、重复 ID、非法字段或超限拒绝整个批次 |
-| set_policy | policy: fcfs/sjf/priority | 只影响后续领取，正在执行的任务不抢占 |
+| set_policy | policy: fcfs/sjf/balanced | 只影响后续领取，正在执行的任务不抢占；旧名称作为综合调度别名兼容 |
 | set_paused | paused: boolean | 持久暂停/继续派发，已运行任务继续 |
 | cancel | job_id | 等待任务立即取消，运行任务保存 attempt 专属取消意图并等待执行停止 |
 | crash_worker | job_id | 仅后台 --demo-mode 允许，对活动尝试注入 worker 崩溃 |
@@ -187,7 +191,7 @@ GUI 自动创建的是独立本地协调进程，不是 Windows Service；POSIX 
 
 `Scheduler::claimFor(policy, now, fleet, idle, supplied)` 在同一 mutex 内检查设备占用、兼容性、库存并领取订单。调用方先持久化再启动进程；assignedPrinter 和成本随领取持久保存。`refund(id, cumulativeCents)` 只允许完成订单，累计退款不递减且不超过报价，重复同额请求幂等。
 
-新增 `Policy::Deadline` / `Policy::Revenue`，IPC 名称为 `deadline` / `revenue`。原回放工具保留三种历史同构策略；经营回放使用 `replayShop` / `shop-experiments`。
+经营回放使用 `replayShop` / `shop-experiments`。2026-10-10 起统一为 FCFS、SJF、Balanced 三种策略；此前 PriorityAging/Deadline/Revenue 已合并到综合调度，旧 `priority/deadline/revenue` 策略名读取和请求时均映射到 `balanced`，保存与回复写规范名称。持久 schema 不变，订单、支付、金额和历史不会因策略迁移而重建；具体行为见 [两层调度](scheduling.md)。
 
 ### 持久格式
 
@@ -211,7 +215,7 @@ IPC 信封继续 schema_version 1，与持久文件版本分别管理。
 | set_printer | index，完整 printer 对象 | 仅设备空闲时修改名称、能力与速度 |
 | restock | paper，quantity（1–1000000） | 增加累计供应，单纸型累计上限 1000000000 |
 | refund | job_id，cumulative_cents | 设置完成订单的累计退款额；界面提供全额退款 |
-| set_policy | policy 增加 deadline/revenue | 改变后续匹配，不抢占当前订单 |
+| set_policy | policy=`fcfs/sjf/balanced` | 改变后续两层调度，不抢占当前订单；旧策略名映射到 balanced |
 
 每次经营变更先持久化再回复 accepted。客户端丢失确认后不自动重发。quote 的库存只是预览，提交与预览之间可变化；实际库存以领取时的原子检查为准。系统不保证所有接受订单能按时交付，逾期单独统计。
 

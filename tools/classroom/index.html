@@ -1,0 +1,191 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="theme-color" content="#FAFAF9">
+  <title>纸间 · 课堂打印</title>
+  <link rel="icon" href="/favicon.png"><link rel="stylesheet" href="/style.css"><script src="/app.js" defer></script>
+</head>
+<body class="student">
+<header class="topbar">
+  <a class="brand" href="#order"><img src="/brand.png" alt="" width="28" height="28"><span>纸间</span></a>
+  <nav class="tabs" aria-label="页面">
+    <a href="#order" data-page="order">下单打印</a>
+    <a href="#mine" data-page="mine">我的订单<span id="mine-badge" class="badge" hidden></span></a>
+    <a href="#queue" data-page="queue">排队情况</a>
+  </nav>
+  <p id="connection" class="connection" role="status"><i></i><span>正在连接店铺…</span></p>
+</header>
+
+<main>
+  <section id="page-order" class="page order-page" data-page="order">
+    <div class="desk-column">
+      <div class="desk-head">
+        <h1 class="slogan">好作品，值得<em>印出来。</em></h1>
+        <p class="lede">选择文件，在纸上确认你的打印方式。</p>
+      </div>
+      <figure class="desk" id="desk">
+        <div class="stage" id="stage" tabindex="0" aria-label="打印预览，左右滑动翻页">
+          <div class="under under-2" id="under-2"></div>
+          <div class="under under-1" id="under-1"></div>
+          <div class="sheet" id="sheet">
+            <div class="face front" id="face-front"></div>
+            <div class="face back" id="face-back"></div>
+          </div>
+        </div>
+        <div class="color-switch" role="radiogroup" aria-label="颜色">
+          <label><input type="radio" name="color" value="mono"><span>黑白</span></label>
+          <label><input type="radio" name="color" value="color" checked><span>彩色</span></label>
+        </div>
+        <figcaption>
+          <span id="proof-caption">示例文档 · 选择你的文件开始预览</span>
+          <span class="proof-tools">
+            <button type="button" id="proof-prev" aria-label="上一张纸">‹</button>
+            <span id="proof-index" class="proof-index">1 / 4</span>
+            <button type="button" id="proof-next" aria-label="下一张纸">›</button>
+            <button type="button" id="proof-flip">翻面</button>
+            <button type="button" id="proof-rotate" aria-label="旋转预览">旋转</button>
+            <button type="button" id="proof-zoom">放大</button>
+          </span>
+        </figcaption>
+      </figure>
+    </div>
+
+    <aside class="settings" aria-label="打印设置">
+      <h2>打印设置</h2>
+      <div class="file-card" id="file-card">
+        <svg class="file-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 2h8l5 5v15H6z" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M14 2v5h5M9 13h7M9 17h7" fill="none" stroke="currentColor" stroke-width="1.6"/></svg>
+        <div class="file-text">
+          <strong id="file-name">选择要打印的文件</strong>
+          <span id="file-info">PDF / Word / PPT / Excel / 图片 / 文本 · 最大 10 MiB</span>
+        </div>
+        <label class="choose" id="choose-label">选择文件<input id="file" type="file" accept=".pdf,.txt,.md,.png,.jpg,.jpeg,.doc,.docx,.ppt,.pptx,.xls,.xlsx,application/pdf,image/png,image/jpeg"></label>
+        <button type="button" id="remove-file" class="link" hidden>移除</button>
+        <progress id="upload-progress" max="100" value="0" hidden></progress>
+      </div>
+      <p id="page-note" class="note">页数按文档自动识别；无法识别时请手动填写。</p>
+
+      <div class="option-row">
+        <span class="option-label">纸张</span>
+        <div class="segmented" role="radiogroup" aria-label="纸张">
+          <label><input type="radio" name="paper" value="a4" checked><span>A4</span></label>
+          <label><input type="radio" name="paper" value="a3"><span>A3</span></label>
+        </div>
+      </div>
+      <div class="option-row">
+        <span class="option-label">页数</span>
+        <div class="stepper" data-for="pages"><button type="button" data-step="-1" aria-label="减少页数">−</button><input id="pages" type="number" inputmode="numeric" min="1" max="1000" value="8" aria-label="打印页数"><button type="button" data-step="1" aria-label="增加页数">+</button></div>
+      </div>
+      <div class="option-row">
+        <span class="option-label">份数</span>
+        <div class="stepper" data-for="copies"><button type="button" data-step="-1" aria-label="减少份数">−</button><input id="copies" type="number" inputmode="numeric" min="1" max="100" value="1" aria-label="打印份数"><button type="button" data-step="1" aria-label="增加份数">+</button></div>
+      </div>
+      <div class="option-row">
+        <span class="option-label">单双面</span>
+        <div class="segmented" role="radiogroup" aria-label="单双面">
+          <label><input type="radio" name="duplex" value="single"><span>单面打印</span></label>
+          <label><input type="radio" name="duplex" value="double" checked><span>双面打印</span></label>
+        </div>
+      </div>
+
+      <h3>打印服务</h3>
+      <div class="services" role="radiogroup" aria-label="打印服务">
+        <label class="service"><input type="radio" name="service" value="express"><i></i><strong>快速</strong><span>30 分钟内取件 · 原价</span><b data-tier="express">—</b></label>
+        <label class="service"><input type="radio" name="service" value="standard" checked><i></i><strong>普通</strong><span>2 小时内取件 · 95 折</span><b data-tier="standard">—</b></label>
+        <label class="service"><input type="radio" name="service" value="flexible"><i></i><strong>灵活</strong><span>8 小时内取件 · 85 折</span><b data-tier="flexible">—</b></label>
+      </div>
+
+      <label class="identity">学号 / 昵称<span>选填，老板端用它称呼你</span><input id="student" maxlength="32" autocomplete="off" placeholder=""></label>
+      <p class="note">文件上传到展示者电脑的本次演示目录。打印和支付均为模拟，不扣款，不连接实体打印机。</p>
+    </aside>
+
+    <div class="checkout" id="checkout">
+      <div class="checkout-summary">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 3h11v16H7zM4 6v15h11" fill="none" stroke="currentColor" stroke-width="1.6"/></svg>
+        <div><strong id="summary">8 页 / A4 / 彩色 / 双面</strong><span id="pay-hint">先选择要打印的文件。</span></div>
+      </div>
+      <div class="checkout-eta">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M12 7v5l3 2" fill="none" stroke="currentColor" stroke-width="1.6"/></svg>
+        <div><strong id="eta">正在连接店铺…</strong><span id="eta-detail"></span></div>
+      </div>
+      <strong class="price" id="price">¥—</strong>
+      <button type="button" class="primary pay" id="pay" disabled>确认并下单 <span aria-hidden="true">→</span></button>
+    </div>
+  </section>
+
+  <section id="page-mine" class="page" data-page="mine" hidden>
+    <h1 class="page-title">你的文档，走到哪一步了？</h1>
+    <div class="metrics" data-metrics></div>
+    <div class="card">
+      <div class="card-head"><h2>我的订单</h2><span id="orders-summary" class="muted"></span></div>
+      <div id="orders" class="orders"></div>
+      <p class="note">预计时间按当前队列、调度策略和设备推算，不含之后到达的订单，仅供参考；承诺期限以订单的取件期限为准。</p>
+    </div>
+  </section>
+
+  <section id="page-queue" class="page" data-page="queue" hidden>
+    <h1 class="page-title">看看店里现在忙不忙。</h1>
+    <div class="metrics" data-metrics></div>
+    <p id="policy" class="policy"></p>
+    <div class="card">
+      <div class="card-head"><h2>设备状态</h2></div>
+      <div id="devices" class="devices"></div>
+    </div>
+    <div class="card">
+      <div class="card-head"><h2>等待队列</h2><span id="queue-summary" class="muted"></span></div>
+      <ol id="queue" class="queue"></ol>
+      <p class="note">为保护隐私，不显示其他同学的文档名称。顺位是按当前策略推算的开始顺序，新订单或设备变化都可能改变它。</p>
+    </div>
+  </section>
+</main>
+
+<footer class="statusbar">
+  <span id="feedback" role="status" aria-live="polite">模拟支付，不会扣款</span>
+  <button type="button" id="motion" aria-pressed="false">减少动效</button>
+</footer>
+
+<dialog id="pay-dialog" class="sheet-dialog" aria-labelledby="pay-title">
+  <form method="dialog">
+    <header><img src="/brand.png" alt="" width="26" height="26"><h2 id="pay-title">确认这次打印</h2><button value="cancel" class="close" aria-label="关闭">×</button></header>
+    <div class="total"><span>订单总额</span><strong id="pay-total">¥—</strong></div>
+    <dl class="pay-rows">
+      <dt>文档</dt><dd id="pay-document"></dd>
+      <dt>规格</dt><dd id="pay-spec"></dd>
+      <dt>费用</dt><dd id="pay-fee"></dd>
+      <dt>取件</dt><dd id="pay-pickup"></dd>
+    </dl>
+    <h3>支付方式</h3>
+    <div class="methods" role="radiogroup" aria-label="支付方式">
+      <label><input type="radio" name="payment" value="wechat" checked><span><svg viewBox="0 0 32 32" aria-hidden="true"><ellipse cx="12.5" cy="13" rx="9.5" ry="8" fill="#1AAD19"/><ellipse cx="20.5" cy="19.5" rx="8" ry="6.8" fill="#1AAD19" stroke="#fff" stroke-width="1.4"/><circle cx="9.3" cy="11.5" r="1.3" fill="#fff"/><circle cx="15.5" cy="11.5" r="1.3" fill="#fff"/><circle cx="18" cy="18.6" r="1.1" fill="#fff"/><circle cx="23" cy="18.6" r="1.1" fill="#fff"/></svg>微信</span></label>
+      <label><input type="radio" name="payment" value="alipay"><span><svg viewBox="0 0 32 32" aria-hidden="true"><rect x="4" y="4" width="24" height="24" rx="6" fill="#1677FF"/><path d="M10 11h12M16 8.5v4.5M11 15h10c-1 4.5-4.5 8-10 9M14.5 18c2.5 2 5.5 3.6 8.5 4.5" fill="none" stroke="#fff" stroke-width="1.9" stroke-linecap="round"/></svg>支付宝</span></label>
+      <label><input type="radio" name="payment" value="campus_card"><span><svg viewBox="0 0 32 32" aria-hidden="true"><rect x="5" y="8" width="22" height="16" rx="3" fill="none" stroke="#14213E" stroke-width="1.8"/><path d="M5 13h22M9 19h6" stroke="#14213E" stroke-width="1.8"/></svg>校园卡</span></label>
+    </div>
+    <div class="receipt" id="receipt">
+      <div class="receipt-code" id="receipt-code"></div>
+      <div><strong id="receipt-title">微信收款码</strong><p id="receipt-text"></p></div>
+    </div>
+    <p class="note">模拟支付，不会产生真实扣款。</p>
+    <p id="pay-status" class="pay-status" role="status"></p>
+    <footer><button value="cancel" class="secondary">返回修改</button><button type="button" class="primary" id="pay-confirm">确认支付</button></footer>
+  </form>
+</dialog>
+
+<dialog id="cancel-dialog" class="sheet-dialog small" aria-labelledby="cancel-title">
+  <form method="dialog">
+    <header><h2 id="cancel-title">取消这个订单？</h2></header>
+    <p id="cancel-text"></p>
+    <footer><button value="cancel" class="secondary">再想想</button><button type="button" class="primary" id="cancel-confirm">取消订单并退款</button></footer>
+  </form>
+</dialog>
+
+<dialog id="reader" class="reader" aria-label="放大预览">
+  <form method="dialog">
+    <header><span id="reader-title"></span><button value="cancel" class="close" aria-label="关闭">×</button></header>
+    <div class="reader-page" id="reader-page"></div>
+    <footer><button type="button" id="reader-prev" aria-label="上一页">‹</button><span id="reader-index"></span><button type="button" id="reader-next" aria-label="下一页">›</button></footer>
+  </form>
+</dialog>
+
+<div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
+</body>
+</html>

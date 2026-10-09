@@ -29,20 +29,16 @@ std::vector<cps::Job> coreOrders(int scenario) {
     const std::array<QString, 6> titles{{QStringLiteral("报告"), QStringLiteral("作业"),
         QStringLiteral("讲义"), QStringLiteral("表格"), QStringLiteral("材料"), QStringLiteral("简历")}};
     const std::array<int, 6> pages{{12, 2, 6, 3, 8, 1}};
-    std::array<int, 6> priorities{{1, 9, 2, 3, 7, 6}};
     // Times here are in teaching minutes. Zero means no delivery deadline.
     std::array<int, 6> deadlineMinutes{{12, 3, 8, 5, 0, 2}};
     std::array<int, 6> arrivalMinutes{};
     if (scenario == 1) {
         deadlineMinutes = {{4, 2, 8, 5, 10, 1}};
-        priorities = {{2, 5, 1, 3, 4, 6}};
     } else if (scenario == 2) {
         arrivalMinutes = {{0, 0, 1, 2, 3, 4}};
-        priorities = {{6, 0, 1, 2, 1, 3}};
         deadlineMinutes = {{9, 6, 8, 7, 0, 6}};
     } else if (scenario == 3) {
         arrivalMinutes = {{0, 0, 0, 1, 1, 2}};
-        priorities = {{1, 7, 2, 3, 5, 9}};
         deadlineMinutes = {{11, 3, 8, 5, 0, 4}};
     }
     std::vector<cps::Job> result;
@@ -52,7 +48,6 @@ std::vector<cps::Job> coreOrders(int scenario) {
         job.id = ids[index];
         job.title = titles[index].toUtf8().toStdString();
         job.pages = pages[index];
-        job.priority = priorities[index];
         job.submittedMs = arrivalMinutes[index] * Minute / ClockScale;
         // Both print modes have the same demo speed; prices use the real quote.
         job.color = index == 3 || index == 5 || (scenario == 3 && index == 4);
@@ -69,7 +64,7 @@ std::vector<cps::Job> coreOrders(int scenario) {
 
 QStringList dispatchScenarioNames() {
     return {QStringLiteral("长单与短单"), QStringLiteral("临近取件期限"),
-        QStringLiteral("优先级与等待老化"), QStringLiteral("营业高峰与收入")};
+        QStringLiteral("服务档位与等待老化"), QStringLiteral("营业高峰与收益")};
 }
 
 DispatchDemo makeDispatchDemo(int scenario) {
@@ -92,19 +87,15 @@ DispatchDemo makeDispatchDemo(int scenario) {
         totalProcessing += cps::processingMs(orders[index], fleet.front());
     }
     // Any work-conserving ordering finishes by last arrival + total service.
-    // Share this conservative bound across all five rows, including idle time.
+    // Share this conservative bound across all three rows, including idle time.
     const auto coreHorizon = lastArrival + totalProcessing;
     demo.horizonMs = coreHorizon * ClockScale;
-    const std::array<cps::Policy, 5> policies{{cps::Policy::Fcfs, cps::Policy::ShortestJobFirst,
-        cps::Policy::PriorityAging, cps::Policy::Deadline, cps::Policy::Revenue}};
-    const std::array<QString, 5> labels{{QStringLiteral("先来先服务"), QStringLiteral("短任务优先"),
-        QStringLiteral("优先级 + 老化"), QStringLiteral("最早截止优先"), QStringLiteral("收入优先")}};
-    const std::array<QString, 5> explanations{{
-        QStringLiteral("按到达时间派发；已开始的长单不会被打断。"),
-        QStringLiteral("从已到达的订单中先选页数最少的，缩短短单等待。"),
-        QStringLiteral("优先级越大越优先；教学时钟每等待 2 分钟增加 1 分，同分按到达时间。"),
-        QStringLiteral("先处理取件期限最早的订单；无期限排在有期限之后，不保证全部准时。"),
-        QStringLiteral("按单位打印时间的收入，结合临近期限和等待老化排序；整批完成后的总收入相同。")}};
+    const std::array<cps::Policy, 3> policies{{cps::Policy::Fcfs, cps::Policy::ShortestJobFirst, cps::Policy::Balanced}};
+    const std::array<QString, 3> labels{{QStringLiteral("FCFS · 先来先服务"), QStringLiteral("SJF · 短任务优先"), QStringLiteral("综合调度")}};
+    const std::array<QString, 3> explanations{{
+        QStringLiteral("队列按到达顺序，依次分配空闲兼容机；已开始的订单继续打印。"),
+        QStringLiteral("队列按打印面数从少到多，分配最快兼容机，缩短短单等待。"),
+        QStringLiteral("队列兼顾档位、等待、期限与贡献收益；分配时保留稀缺设备，再比较速度和成本。")}};
     for (std::size_t index = 0; index < demo.runs.size(); ++index) {
         auto& run = demo.runs[index];
         run.label = labels[index];

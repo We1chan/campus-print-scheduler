@@ -187,6 +187,21 @@ int main(int argc, char* argv[]) {
         stillConnected.connectTo(socket);
         require(stillConnected.request("snapshot").value("type").toString() == QStringLiteral("snapshot"),
                 "primary coordinator socket was disrupted");
+        for (const auto* name : {"fcfs", "sjf", "balanced", "priority", "deadline", "revenue"}) {
+            const QString requested = QString::fromLatin1(name);
+            const QString canonical = requested == "fcfs" || requested == "sjf" ? requested : QStringLiteral("balanced");
+            const auto response = client.request("set_policy", {{"policy", requested}});
+            require(response.value("type") == "accepted" && response.value("policy") == canonical,
+                    "IPC accepts three canonical policies and migrates retired names");
+            require(client.request("snapshot").value("policy") == canonical, "snapshot uses canonical policy");
+            QFile savedPolicy(QDir(root).filePath("state.json"));
+            require(savedPolicy.open(QIODevice::ReadOnly), "open persisted policy");
+            require(QJsonDocument::fromJson(savedPolicy.readAll()).object().value("policy") == canonical,
+                    "policy migration is persisted before acknowledgement");
+        }
+        require(client.request("set_policy", {{"policy", "typo"}}).value("type") == "error" &&
+                client.request("snapshot").value("policy") == "balanced", "invalid policy cannot mutate the state");
+        require(client.request("set_policy", {{"policy", "fcfs"}}).value("type") == "accepted", "restore baseline policy");
 
         const auto accepted = submit(client, "normal-job", 4);
         require(accepted.value("type").toString() == QStringLiteral("accepted"), "submit rejected");

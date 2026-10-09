@@ -4,8 +4,7 @@
 
 namespace cps {
 bool validPolicy(Policy p) {
-    return p == Policy::Fcfs || p == Policy::ShortestJobFirst || p == Policy::PriorityAging ||
-        p == Policy::Deadline || p == Policy::Revenue;
+    return p == Policy::Fcfs || p == Policy::ShortestJobFirst || p == Policy::Balanced;
 }
 bool validTerms(const Job& j) {
     return (j.paper == PaperSize::A4 || j.paper == PaperSize::A3) &&
@@ -85,5 +84,36 @@ ShopMetrics shopMetrics(const std::vector<Job>& jobs, TimeMs start, TimeMs end) 
     m.revenueCents = m.grossCents - m.refundCents;
     m.contributionCents = m.revenueCents - m.costCents;
     return m;
+}
+ShopQuality shopQuality(const std::vector<Job>& jobs, TimeMs start, TimeMs end) {
+    if (start < 0 || end < start || end > MaxTimeMs) throw std::invalid_argument("invalid quality window");
+    ShopQuality q;
+    std::vector<TimeMs> waits;
+    long double totalWait = 0;
+    Money contribution = 0;
+    for (const auto& j : jobs) {
+        if (j.submittedMs < start || j.submittedMs > end) continue;
+        const auto wait = std::min(end, j.firstStartedMs.value_or(end)) - j.submittedMs;
+        waits.push_back(wait); totalWait += wait;
+        q.potentialContributionCents += std::max<Money>(0, j.quotedCents - directCost(j, Printer{}));
+        const bool completed = j.state == JobState::Completed && j.finishedMs && *j.finishedMs <= end;
+        if (completed) contribution += j.quotedCents - j.refundCents - j.costCents;
+        if (j.service == ServiceTier::Express) {
+            ++q.expressAccepted;
+            if (completed && j.deadlineMs > 0 && *j.finishedMs <= j.deadlineMs) ++q.expressOnTime;
+        }
+    }
+    if (waits.empty()) return q;
+    std::sort(waits.begin(), waits.end());
+    q.averageObservedWaitMs = static_cast<double>(totalWait / waits.size());
+    q.p95ObservedWaitMs = static_cast<double>(waits[(waits.size() * 95 + 99) / 100 - 1]);
+    const double reference = static_cast<double>(serviceWindowMs(ServiceTier::Express));
+    q.waitingScore = 0.5 / (1 + q.averageObservedWaitMs / reference) +
+        0.5 / (1 + q.p95ObservedWaitMs / reference);
+    q.expressOnTimeRate = q.expressAccepted == 0 ? 1.0 : double(q.expressOnTime) / q.expressAccepted;
+    q.contributionScore = q.potentialContributionCents == 0 ? 0.0 :
+        std::clamp(double(contribution) / double(q.potentialContributionCents), 0.0, 1.0);
+    q.overallScore = 100 * (q.waitingScore + q.expressOnTimeRate + q.contributionScore) / 3;
+    return q;
 }
 } // namespace cps
