@@ -67,9 +67,7 @@ jobs:
           QT_QPA_PLATFORM: offscreen
       - name: Capture native desktop control scenarios
         if: runner.os != 'Linux'
-        run: |
-          python -c "from pathlib import Path; Path('runtime').mkdir(exist_ok=True)"
-          ./build/ci/bin/gui_tests${{ runner.os == 'Windows' && '.exe' || '' }} officeDocumentsRealPreview officeStudentPreviewAndReplacement previewPreservesMixedPageDirections editorialMotionRetargeting editorialAnimationFrameBudget editorialReceiptCodes editorialHoverSpreadsAndReturns editorialWindowChrome editorialDocumentPreview studentOrderPaymentAndForecast persistentPoliciesAndReport backendCrashDuringCancellation runningCancelFaultAndReconnect compactWindowKeepsControlsReachable -o runtime/native-gui-tests.txt,txt -o "-,txt"
+        run: python tools/run_native_gui_tests.py --bin-dir build/ci/bin
         env:
           QT_QPA_PLATFORM: ${{ runner.os == 'Windows' && 'windows' || 'cocoa' }}
           CPS_GUI_EVIDENCE_DIR: ${{ github.workspace }}/runtime/native-gui-evidence
@@ -84,6 +82,8 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: campus-print-${{ runner.os }}
+          # Archives are already compressed; avoid compressing hundreds of MB again.
+          compression-level: 0
           path: |
             dist/*.zip
             dist/*.tar.gz
@@ -95,7 +95,9 @@ jobs:
           path: |
             build/ci/Testing/Temporary/
             build/ci/gui-results.xml
+            build/ci/merchant-results.xml
             runtime/native-gui-tests.txt
+            runtime/native-merchant-tests.txt
             runtime/native-gui-evidence/
   verify-desktop-package:
     name: Independent runtime / ${{ matrix.os }}

@@ -68,14 +68,22 @@ def main():
     if office:
         # Keep the full engine, filters, fonts and licenses; copying just the
         # executable does not create a usable Office converter.
-        office_target = destination / "office" if windows else destination / "office" / "LibreOffice.app"
+        # Keep the vendor's signed macOS app outside the Qt app. macdeployqt
+        # otherwise rewrites/signs its nested Python framework and breaks seals.
+        office_target = destination / "office" if windows else output / "office" / "LibreOffice.app"
         def skip_extraction_artifacts(directory, names):
             # An MSI administrative image leaves a packaging database and log
             # beside the engine. They are not runtime modules or license files.
             if windows and Path(directory).resolve() == office:
                 return [name for name in names if name == "extraction.log" or name.lower().endswith(".msi")]
             return []
-        shutil.copytree(office, office_target, symlinks=not windows, ignore=skip_extraction_artifacts)
+        if windows:
+            shutil.copytree(office, office_target, ignore=skip_extraction_artifacts)
+        else:
+            # Preserve macOS framework metadata and resource forks as well as
+            # symlinks. Verify both sides to distinguish source/copy damage.
+            subprocess.run(["/usr/bin/codesign", "--verify", "--deep", "--strict", "--verbose=4", str(office)], check=True)
+            subprocess.run(["/usr/bin/ditto", str(office), str(office_target)], check=True)
     env = dict(os.environ)
     env["PATH"] = str(qt_bin) + os.pathsep + env.get("PATH", "")
     if windows:
@@ -93,9 +101,11 @@ def main():
         subprocess.run([str(deploy), str(bundle), "-always-overwrite", "-codesign=-",
                         *("-executable=" + str(destination / name) for name in names[1:])], env=env, check=True)
         subprocess.run(["/usr/bin/codesign", "--verify", "--deep", "--strict", str(bundle)], check=True)
+        if office:
+            subprocess.run(["/usr/bin/codesign", "--verify", "--deep", "--strict", "--verbose=4", str(office_target)], check=True)
     root = Path(__file__).resolve().parents[1]
     shutil.copy2(root / "docs" / "release.md", output / "README-release.md")
-    for name in ("student-handoff.md", "editorial-frontend.md", "office-preview.md", "interfaces.md", "team.md"):
+    for name in ("student-handoff.md", "editorial-frontend.md", "office-preview.md", "ci-validation.md", "interfaces.md", "team.md"):
         shutil.copy2(root / "docs" / name, output / name)
     shutil.copy2(root / "docs" / "merchant-frontend.md", output / "merchant-frontend.md")
     shutil.copy2(root / "docs" / "merchant-validation.md", output / "merchant-validation.md")

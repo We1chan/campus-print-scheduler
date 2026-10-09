@@ -1,6 +1,7 @@
 #include "merchant_window.hpp"
 #include "coordinator_test_client.hpp"
 #include "native_frame_evidence.hpp"
+#include "windows_test_logs.hpp"
 
 #include <QApplication>
 #include <QComboBox>
@@ -89,7 +90,11 @@ class MerchantTests : public QObject {
     }
 
 private slots:
-    void initTestCase() { initializeMerchantTestResources(); }
+    void initTestCase() {
+        initializeMerchantTestResources();
+        const auto error = isolateTestReportHandles();
+        QVERIFY2(error.isEmpty(), qPrintable(error));
+    }
 
     void nativeDispatchWorkspaceIsInteractiveAndIsolated() {
         MerchantWindow window({},true);window.show();

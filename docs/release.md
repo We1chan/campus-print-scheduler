@@ -18,7 +18,7 @@ python tests/package_smoke.py --package-dir dist/campus-print
 
 `--output-dir` 必须不存在，脚本不会删除或覆盖旧包。Windows 调用 `windeployqt`，macOS 调用
 `macdeployqt` 并创建 `CampusPrint.app`。所有子进程在 GUI 的可执行文件目录，保持现有定位接口。
-Windows 分发整个目录；macOS 分发整个 `.app`。不能单独复制 GUI 可执行文件。
+Windows 分发整个目录；macOS 的 Office 完整包也分发整个目录，包含 `CampusPrint.app` 与同级 `office/LibreOffice.app`。不能单独复制 GUI 可执行文件，或在 Office 完整包中只拿走主 app。
 
 CI 在 Windows/macOS 生成发布目录和文件 SHA-256 清单，清除 Qt SDK 环境变量后运行 GUI 启动和实际打印测试，上传对应产物。
 后续独立 job 使用新的 runner，只下载包，不安装 Qt/CMake/编译器、不构建程序；校验提交号和所有文件哈希，

@@ -126,7 +126,7 @@ if(CPS_BUILD_QT_APPS)
         find_package(Qt6 6.5 REQUIRED COMPONENTS Test)
         add_executable(office_converter_stub tests/office_converter_stub.cpp)
         target_link_libraries(office_converter_stub PRIVATE Qt6::Core cps_options)
-        add_executable(gui_tests tests/gui_tests.cpp tests/native_frame_evidence.cpp)
+        add_executable(gui_tests tests/gui_tests.cpp tests/native_frame_evidence.cpp tests/windows_test_logs.cpp)
         add_dependencies(gui_tests office_converter_stub)
         set_target_properties(gui_tests PROPERTIES AUTOMOC ON)
         target_link_libraries(gui_tests PRIVATE cps_gui Qt6::Test cps_options)
@@ -137,7 +137,7 @@ if(CPS_BUILD_QT_APPS)
         add_test(NAME gui COMMAND gui_tests -o "${CMAKE_BINARY_DIR}/gui-results.xml,junitxml" -o -,txt)
         set_tests_properties(gui PROPERTIES TIMEOUT 300 ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
 
-        add_executable(merchant_tests tests/merchant_tests.cpp tests/native_frame_evidence.cpp)
+        add_executable(merchant_tests tests/merchant_tests.cpp tests/native_frame_evidence.cpp tests/windows_test_logs.cpp)
         set_target_properties(merchant_tests PROPERTIES AUTOMOC ON)
         target_link_libraries(merchant_tests PRIVATE cps_gui Qt6::Test cps_options)
         add_test(NAME merchant COMMAND merchant_tests -o "${CMAKE_BINARY_DIR}/merchant-results.xml,junitxml" -o -,txt)
@@ -165,6 +165,9 @@ if(CPS_BUILD_QT_APPS)
         add_test(NAME shop_experiments COMMAND "${Python3_EXECUTABLE}"
             "${CMAKE_SOURCE_DIR}/tests/shop_experiments_test.py" --experiment "$<TARGET_FILE:shop-experiments>")
         set_tests_properties(shop_experiments PROPERTIES TIMEOUT 45)
+        add_test(NAME package_layout COMMAND "${Python3_EXECUTABLE}"
+            "${CMAKE_SOURCE_DIR}/tests/package_layout_test.py")
+        set_tests_properties(package_layout PROPERTIES TIMEOUT 10)
         add_test(NAME workload_tools COMMAND "${Python3_EXECUTABLE}"
             "${CMAKE_SOURCE_DIR}/tests/workload_tools_test.py"
             --replay "$<TARGET_FILE:scheduler-replay>"

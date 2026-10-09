@@ -23,7 +23,7 @@ Word 保留分页；PPT 保留幻灯片尺寸；Excel 使用 `calc_pdf_Export`�
 
 ## 运行依赖与打包
 
-发现顺序：`CPS_OFFICE_EXECUTABLE` 显式绝对路径（错误时不静默回退）→ 可执行目录内完整 `office/` → 系统常见 LibreOffice 安装路径 → PATH。Windows 包内为 `office/program/soffice.com`；macOS 为 `CampusPrint.app/Contents/MacOS/office/LibreOffice.app/Contents/MacOS/soffice`。不要只复制 soffice 单个文件。
+发现顺序：`CPS_OFFICE_EXECUTABLE` 显式绝对路径（错误时不静默回退）→ 完整发布目录的 `office/` → 系统常见 LibreOffice 安装路径 → PATH。Windows 包内为 `office/program/soffice.com`；macOS 为 `office/LibreOffice.app/Contents/MacOS/soffice`，与 `CampusPrint.app` 同处发布目录，GUI 从自身可执行目录向上三级定位。不要只复制 soffice 单个文件。
 
 Windows 私有部署，Python >=3.11：
 
@@ -45,6 +45,10 @@ python tests/office_package_smoke.py --package-dir dist/editorial-v11
 
 macOS `--office-dir .tools/libreoffice/LibreOffice.app`，开发时显式设置 `CPS_OFFICE_EXECUTABLE` 为该 app 内 `Contents/MacOS/soffice` 的绝对路径。带引擎的包显著大于 PDF-only 包；`release-manifest.json` 记录 `office_preview_bundled`。默认不联网获取转换器，不将用户文件发送至在线转换服务。未带引擎的轻量包需依赖系统安装，不得称为零依赖的 Office 预览包。
 
+macOS 必须分发整个发布目录（主应用 + `office/` + 配套材料）。转换器保留独立的上游签名，不放入 Qt app 内部；使用原生 `ditto` 复制 framework 元数据、资源叉和符号链接，避免 Qt 部署工具重写内部框架或通用复制丢失原生元数据。复制前后校验转换器，并对主应用执行 `codesign --verify --deep --strict`，再在独立 runner 真实转换，不能跳过签名校验或全局关闭系统安全机制。
+
+macOS 签名回归的已确认原因：重定位后首次运行会重新生成 LibreOfficePython.framework 内已签名的 `*.pyc`，实际日志列出 `encodings`、`collections`、`re` 等缓存内容被改写。应用的转换子进程与测试输入生成均设置 `PYTHONDONTWRITEBYTECODE=1`，不修改全局环境。安装后、复制前后及独立包六格式导入后都校验上游签名；不得通过删除缓存或重新签署厂商 app 掩盖该问题。
+
 ## 可复现验收
 
 测试依赖：`python-docx==1.2.0 python-pptx==1.0.2 openpyxl==3.1.5`。生成 Word 两页、16:9 PPT 两张、Excel 指定打印区域及分页两页，并导出三个旧二进制格式。中文、空格路径作为测试输入。
@@ -61,7 +65,7 @@ $env:CPS_GUI_EVIDENCE_DIR = (Join-Path (Get-Location) 'runtime/office-evidence')
 
 CI 安装真实 LibreOffice、生成六格式输入，在 Windows/macOS/Linux 执行真实导入；Windows/macOS 另外保存原生窗口截图，打包完整引擎。在第二台 runner 解压、校验 manifest，使用包内引擎和渲染器测试六格式；SDK 路径及外部转换器配置均被移除。
 
-部署诊断命令不会启动后台或显示窗口：`campus-print --check-preview <文件> --preview-report <JSON路径>`；成功返回 0，报告含实际页数、页面尺寸、首末页渲染结果。失败返回 65（报告写入失败为 74）。独立包验证必须成功渲染真实页，不能只检查 exe 存在或转换 PDF 存在。
+部署诊断命令不会启动后台或显示窗口：`campus-print --check-preview <文件> --preview-report <JSON路径>`；成功返回 0，报告含实际页数、页面尺寸、首末页渲染结果及转换器路径 `converter`。失败返回 65（报告写入失败为 74）。独立包验证不设置转换器覆盖，必须自动发现包内引擎、成功渲染真实页，不能只检查 exe 存在或转换 PDF 存在，也不能让系统安装掩盖部署缺失。
 
 ## 验证记录
 

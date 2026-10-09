@@ -7,6 +7,7 @@
 #include "office_preview.hpp"
 #include "coordinator_test_client.hpp"
 #include "native_frame_evidence.hpp"
+#include "windows_test_logs.hpp"
 #include "cps/runtime/job_io.hpp"
 #include <QProcess>
 #include <memory>
@@ -83,6 +84,10 @@ class GuiTests : public QObject {
         QVERIFY(dialog && dialog->isVisible());
     }
 private slots:
+    void initTestCase() {
+        const auto error = isolateTestReportHandles();
+        QVERIFY2(error.isEmpty(), qPrintable(error));
+    }
     void officeConversionLifecycle() {
         const auto previous = qgetenv("CPS_OFFICE_EXECUTABLE");
         const bool wasSet = qEnvironmentVariableIsSet("CPS_OFFICE_EXECUTABLE");
