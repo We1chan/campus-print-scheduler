@@ -1244,33 +1244,18 @@ void StudentWindow::applyView(const ViewState &view) {
             {own ? QStringLiteral("我的订单 · ") + job.title : QStringLiteral("其他订单"), "", -1,
              own ? "accent" : ""},
             job.specification + QStringLiteral(" · %1 面").arg(job.sheets),
-<<<<<<< HEAD
             !known ? text::blocked(job.blocked) : view_.paused ? text::afterResume(job.estimatedStartMs - text::forecastNow(view_))
                 : text::clock(job.estimatedStartMs),
-=======
-            !known         ? text::blocked(job.blocked)
-            : view_.paused ? text::afterResume(job.estimatedStartMs - view_.nowMs)
-                           : text::clock(job.estimatedStartMs),
->>>>>>> korwave/feat/merchant-editorial
             known && !view_.paused ? text::clock(job.estimatedFinishMs) : QStringLiteral("—")};
         for (int column = 0; column < cells.size(); ++column)
             ui::setCell(queue_, row, column, cells[column]);
     }
 
     metricValues_[0]->setText(QStringLiteral("%1 单").arg(waiting.size()));
-<<<<<<< HEAD
     metricHints_[0]->setText(QStringLiteral("%1 / %2 台设备正在打印").arg(printing).arg(view_.printers.size()));
     metricValues_[1]->setText(view_.queueClearMs < 0 ? (waiting.empty() && printing == 0 ? QStringLiteral("无需等待") : QStringLiteral("暂无法预计"))
         : text::duration(view_.queueClearMs - text::forecastNow(view_)));
     metricHints_[1]->setText(view_.paused ? QStringLiteral("店铺暂停派发，恢复后开始计时") : QStringLiteral("按当前队列推算，不含新订单"));
-=======
-    metricHints_[0]->setText(
-        QStringLiteral("%1 / %2 台设备正在打印").arg(printing).arg(view_.printers.size()));
-    metricValues_[1]->setText(view_.queueClearMs < 0 ? QStringLiteral("无需等待")
-                                                     : text::duration(view_.queueClearMs - view_.nowMs));
-    metricHints_[1]->setText(view_.paused ? QStringLiteral("店铺暂停派发，恢复后开始计时")
-                                          : QStringLiteral("按当前队列推算，不含新订单"));
->>>>>>> korwave/feat/merchant-editorial
     metricValues_[2]->setText(QStringLiteral("%1 单").arg(active));
     metricHints_[2]->setText(
         !soonest       ? QStringLiteral("暂无可预计的进行中订单")
