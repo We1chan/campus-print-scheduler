@@ -18,7 +18,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [windows-latest, macos-latest, ubuntu-24.04]
+        # A desktop-only follow-up reuses an already-green Linux result when
+        # only validation files changed. Ordinary pushes/PRs still run all OSes.
+        os: ${{ fromJSON(contains(github.event.head_commit.message, '[desktop ci]') && '["windows-latest","macos-latest"]' || '["windows-latest","macos-latest","ubuntu-24.04"]') }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 35
     steps:

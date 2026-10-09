@@ -21,7 +21,9 @@ class PackageLayoutTests(unittest.TestCase):
         app = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(app)
         with tempfile.TemporaryDirectory(prefix="paperroom-layout-") as directory:
-            root = Path(directory)
+            # macOS /var aliases /private/var; use the same canonical paths
+            # as the production packager, including deployment-tool matching.
+            root = Path(directory).resolve()
             source, qt, output = root / "bin", root / "qt", root / "release"
             office = root / "vendor/LibreOffice.app"
             for name in ("campus-print", "print-coordinator", "print-supervisor",

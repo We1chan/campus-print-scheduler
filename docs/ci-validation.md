@@ -25,10 +25,12 @@ python tools/run_native_gui_tests.py --bin-dir build/ci/bin --log-dir runtime/na
 
 两分支本机记录分别保存在被忽略的 `runtime/ci-repair-*` 与 `runtime/merchant-evidence/ci-repair-*`。最终远端结果以这轮交付提交对应的 Actions run 为准：包括 Windows/macOS/Linux 构建和完整 CTest，Windows/macOS 原生场景、发布包及独立运行检查。本机 Windows 通过不等于 macOS/Linux 已验证。
 
-额度策略：先汇总已有失败日志，在本机复现和修复后集中推送，每个分支只启动一轮新的 CI，不重跑旧失败。发布产物已经是 ZIP/TAR.GZ，上传时不再二次压缩；完整平台、签名和独立运行检查保留。
+额度策略：先汇总已有失败日志，在本机复现和修复后集中推送。后续若只修改验证文件、Linux 已通过且 Linux 运行代码未变，可用提交标记 `[desktop ci]` 仅补 Windows/macOS；普通推送和 PR 仍验证全部平台。不能用此标记跳过尚未验证的 Linux 运行代码。发布产物已经是 ZIP/TAR.GZ，上传时不再二次压缩；完整平台、签名和独立运行检查保留。
 
 ## 两端功能说明
 
 本机最终 Release / Qt 6.10.1 / MinGW 13.1：学生完整 CTest 14/14，原生学生场景 21 passed、零失败、零跳过。应用及系统对照的实际阴影均通过严格像素检查，退出后 XML 报告可独占打开。店主工作树另通过完整 CTest 16/16 和原生专项 6 passed。
 
 学生端三页、真实本地预览、订单与排队入口见 README 开头和 [学生端交接](student-handoff.md)。店主端功能和调度工作台位置见店主分支 README；此学生分支未引入店主端界面。
+
+首轮远端的业务测试均通过；新增打包回归测试误把 macOS `/var` 与 `/private/var`、Windows 短路径与完整路径当成不同目录，阻止了后续发布验收。已统一临时根目录的真实路径，并用目录 junction 和 Windows 8.3 别名在本机先复现失败、再验证修正。补验证保留两端的原生场景、真实签名、打包及独立运行，不重复 Linux 构建；应用运行代码与首轮相同。
