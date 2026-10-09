@@ -103,7 +103,7 @@ def main():
             subprocess.run(["/usr/bin/codesign", "--verify", "--deep", "--strict", "--verbose=4", str(office_target)], check=True)
     root = Path(__file__).resolve().parents[1]
     shutil.copy2(root / "docs" / "release.md", output / "README-release.md")
-    for name in ("student-handoff.md", "editorial-frontend.md", "office-preview.md", "interfaces.md", "team.md"):
+    for name in ("student-handoff.md", "editorial-frontend.md", "office-preview.md", "ci-validation.md", "interfaces.md", "team.md"):
         shutil.copy2(root / "docs" / name, output / name)
     # Keep the design evidence links usable in the redistributed document.
     image_output = output / "images"

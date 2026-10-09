@@ -1,6 +1,8 @@
 # 学生端代理交接与部署
 
 Status: implemented; Windows local validation recorded below; remote CI is authoritative for other platforms.
+
+2026-10-09 增量：完整 Release CTest 14/14、原生 GUI 21 passed（0 failed / 0 skipped）通过，包含六种真实 Office 格式及严格 Windows 阴影像素检查。测试初始化防止报告句柄被后台继承；原生窗口检查用普通系统窗口确认桌面阴影能力，详细边界见 [跨平台验证](ci-validation.md)。
 Scope: Qt Widgets 学生客户端「纸间」，分支 `feat/print-editorial`。本文件是当前实现与部署的入口；设计迭代证据见 `editorial-frontend.md`，经营协议见 `interfaces.md`。
 
 ## 接手顺序与完成条件
