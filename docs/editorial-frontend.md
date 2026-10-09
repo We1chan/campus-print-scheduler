@@ -1,12 +1,34 @@
 # 纸间第二版：俯视印刷编辑台
 
+## 分支提交前复核（2026-10-09）
+
+本分支 `feat/print-editorial` 的 README 开头新增三页功能表、学生启动方式，以及摘要文字适配和 Windows 外框阴影的修复说明；明确本地原件、模拟支付与共享后台的数据目录边界。
+
+本机 Release 构建及完整 CTest 13/13 通过，Windows 原生窗口外框、文档阅读器、下单/支付/订单与排队摘要检查全部通过（含初始化/清理为 5 passed）。摘要检查覆盖三种窗口尺寸及空队列、暂停派发、可取件状态，本机 DPR 为 1.25。日志为 `runtime/student-final-ctest.txt` 和 `runtime/student-final-native.txt`。现有 `editorial-v13` 运行版本保留；本轮补充说明并修正测试的后台就绪等待，不变更运行程序行为。
+
+远端 Windows 的预测回归曾在后台连接尚未就绪时直接发出暂停请求，慢启动时请求会被正确拒绝，随后订单开始打印。测试现先等待实际暂停控件可用，再等待后台暂停状态显示，之后才提交三个预测任务；保留全部原有预测时间与恢复派发断言。本机修正后的完整 CTest 13/13 通过。远端平台结果以最终提交对应的 Actions 为准。
+
+后台就绪由首次已连接快照触发的 `backendReady` 信号确认；不能仅以控件初始的 enabled 属性判断连接状态。
+
+## v13 原生窗口轮廓和阴影（2026-10-08）
+
+与店主端共用窗口框架，Windows DWM 绘制低对比度浅灰轮廓、圆角和柔和外部阴影；失焦时轮廓淡化，最大化时取消扩展边距并继续按工作区避开任务栏。自绘顶部导航及原窗口操作保留。Windows 11 圆角/边色提示在旧版本系统上由 DWM 忽略。
+
+原生窗口、文档预览和订单/排队指标回归共 5 passed / 0 failed（含初始化/清理），日志为 `runtime/student-v13-native-tests.txt`。原生外框验收读取 DWM 属性，并在自建纯色背景上捕获实际合成画面、检查底部阴影像素；截图在 `runtime/student-v13-frame/student-native-frame.png`。完整 Release CTest 与独立发布包验收日志分别为 `runtime/native-frame-ctest.txt`、`runtime/student-v13-package-verification.txt`。独立包 `editorial-v13` 沿用 `runtime/editorial-shop`，学生原图标、旧包和所有概念图保留。
+
+## v12 指标卡文字完整性修复（2026-10-08）
+
+“我的订单”和“排队情况”共用的指标卡跟随外层画布缩放，但原来三行文字仍保留固定字号和默认布局间距，导致“无需等待”等大字被压缩裁切。指标卡现在局部同步字号、边距与间距，保留原字体家族、字重、配色和文案。
+
+原生 `studentOrderPaymentAndForecast` 在 DPR 1.25 / 1.6 下通过，并在 920×640、1180×820、1420×888 三种窗口尺寸检查两页所有相关可见标签的实际字体宽度/行高与文字框，覆盖空队列、暂停与可取件状态。日志为 `runtime/student-text-{125,160}.txt`，截图在同名目录。发布版本为独立 `editorial-v12`，旧包和现有店铺数据保留。
+
 独立分支 `feat/print-editorial`，工作树 `campus-print-editorial`。以已经确认的白红墨蓝效果图为依据：顶部导航、三张倾斜纸张、右侧设置、固定底部结算。保留原经营模式的报价、学生订单、模拟支付、取消退款、设备与排队信息。
 
 代理接手、部署命令、配置和完成条件以 [student-handoff.md](student-handoff.md) 为入口。本文件保留设计迭代与已执行的本机证据。正式发布使用 Release preset；此前 v3–v8 本机发布包来自 `dev` Debug 构建。
 
 ## 运行
 
-Windows 双击桌面的“纸间打印”快捷方式或仓库根目录 `start-editorial.vbs`，只显示 UI，不打开命令行窗口。优先运行 `dist/editorial-v10` 的 Release 发布包，兼容旧的 v9/v8/v7/v6/v5/v4/v3/v2，否则运行 `build/dev/bin`；构建版本需要匹配的 Qt 在 PATH 中。`start-editorial.cmd` 保留用于命令行兼容。独立发布包也提供 `start-student.vbs`，其数据使用默认用户目录。启动参数为 `--role student`，数据独立存放在本工作树的 `runtime/editorial-shop`，不共用第一版的数据目录。
+Windows 双击桌面的“纸间打印”快捷方式或仓库根目录 `start-editorial.vbs`，只显示 UI，不打开命令行窗口。优先运行 `dist/editorial-v13` 的 Release 发布包，兼容旧的 v12/v11/v10/v9/v8/v7/v6/v5/v4/v3/v2，否则运行 `build/dev/bin`；构建版本需要匹配的 Qt 在 PATH 中。`start-editorial.cmd` 保留用于命令行兼容。独立发布包也提供 `start-student.vbs`，其数据使用默认用户目录。启动参数为 `--role student`，数据独立存放在本工作树的 `runtime/editorial-shop`，不共用第一版的数据目录。
 
 空白状态展示明确标注的示例报告；选择文件后，纸张会显示本机文件内容。可拖入文件或按 Ctrl+O，Ctrl+1/2/3 切换下单、我的订单与排队情况。
 

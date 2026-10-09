@@ -1,6 +1,8 @@
 # 学生端代理交接与部署
 
 Status: implemented; Windows local validation recorded below; remote CI is authoritative for other platforms.
+
+2026-10-09 增量：完整 Release CTest 14/14、原生 GUI 21 passed（0 failed / 0 skipped）通过，包含六种真实 Office 格式及严格 Windows 阴影像素检查。测试初始化防止报告句柄被后台继承；原生窗口检查用普通系统窗口确认桌面阴影能力，详细边界见 [跨平台验证](ci-validation.md)。
 Scope: Qt Widgets 学生客户端「纸间」，分支 `feat/print-editorial`。本文件是当前实现与部署的入口；设计迭代证据见 `editorial-frontend.md`，经营协议见 `interfaces.md`。
 
 ## 接手顺序与完成条件
@@ -109,7 +111,7 @@ python tools/package_app.py --bin-dir build/ci/bin --qt-bin "<Qt安装目录>/bi
 python tests/package_smoke.py --package-dir dist/editorial-v10
 ```
 
-分发整个目录/ZIP（Windows）或 `.app` 与同包材料（macOS），含 GUI、coordinator、supervisor、worker、回放工具、匹配 Qt plugins、PDFium 与许可证。脚本拒绝覆盖旧输出。`release-manifest.json` 包含提交、工作树状态和文件 SHA-256；有效交付要求提交匹配、工作树 clean，并且 smoke 检查通过。macOS 使用 ad-hoc 签名，不等于正式 notarization。
+分发整个目录/ZIP（Windows）或整个发布目录（macOS；Office 完整包包含主 `.app`、同级 `office/` 和配套材料），含 GUI、coordinator、supervisor、worker、回放工具、匹配 Qt plugins、PDFium 与许可证。脚本拒绝覆盖旧输出。`release-manifest.json` 包含提交、工作树状态和文件 SHA-256；有效交付要求提交匹配、工作树 clean，并且 smoke 检查通过。macOS 主应用使用 ad-hoc 签名，转换器保留独立上游签名；这不等于本项目正式 notarization。
 
 包内携带 `README-release.md`、本文件、设计验证说明和清理说明。Windows 双击 `start-student.vbs` 只显示学生 UI；运行学生端需显式 `--role student`，直接启动 EXE 默认老板端。显式配置共享数据的例子：
 
