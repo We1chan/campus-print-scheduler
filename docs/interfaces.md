@@ -130,6 +130,7 @@ supervisor 启动的 worker 在原子输出首行写入本次 execution_token，
 - `<state-dir>/state.json`：完整 Scheduler/策略/打印机数快照，使用 QSaveFile 原子替换。
 - `<state-dir>/control/<job_id>.<attempt>.cancel`：Running 取消的持久意图；attempt 防止旧取消误伤后续重试。
 - 使用 QLockFile，禁用按锁年龄自动失效；依靠进程存活判断处理崩溃遗留锁。
+- Windows 恢复时，元数据未写完整的遗留锁只通过 Qt 的独占打开与删除操作回收；仍由进程持有的锁受系统共享模式保护，不能按等待时长或空文件直接删除。
 - 当前约定仅针对本机文件系统；不声称网络共享文件系统的锁和原子写保证相同。
 
 ## 退出码
@@ -151,7 +152,7 @@ Windows 的 TerminateProcess 与 POSIX 信号的退出值不同，测试只依�
 
 ## GUI/coordinator 统一协议
 
-GUI 使用状态目录派生的 `QLocalServer` 名称（规范路径的 SHA-256 前 16 位）。Windows 路径规范后忽略大小写。
+GUI 使用状态目录派生的 `QLocalServer` 名称（规范路径的 SHA-256 前 16 位）。Windows 路径规范后展开 DOS 8.3 短路径别名，再忽略大小写，确保 Python 网关与 Qt 客户端连接同一目录的后台。
 每条命令为一行 JSON，必含 `schema_version: 1`、非空 `request_id`、`type`。回复回传 request_id；异步事件不代替命令确认。
 修改操作先持久化再回复 accepted，丢失确认时客户端不自动重发。命令帧上限 8 MiB，GUI 回复帧上限 64 MiB。
 

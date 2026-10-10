@@ -223,7 +223,22 @@ private:
     bool lockIsFree(const QString& path) const {
         QLockFile probe(path);
         probe.setStaleLockTime(0);
-        if (!probe.tryLock(0)) return false;
+        if (!probe.tryLock(0)) {
+#ifdef Q_OS_WIN
+            // A killed process can leave the file before Qt writes its PID.
+            // With age expiry disabled, Qt cannot classify that orphan as stale.
+            // Qt's Windows removeStaleLockFile uses an exclusive native open
+            // with DELETE_ON_CLOSE; a live owner's handle prevents removal even
+            // while its metadata is incomplete. Do not generalize to POSIX.
+            qint64 pid = 0;
+            QString hostname, appname;
+            if (probe.error() != QLockFile::LockFailedError ||
+                probe.getLockInfo(&pid, &hostname, &appname) ||
+                !probe.removeStaleLockFile() || !probe.tryLock(0)) return false;
+#else
+            return false;
+#endif
+        }
         probe.unlock();
         return true;
     }

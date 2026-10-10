@@ -61,6 +61,7 @@ if(CPS_BUILD_QT_APPS)
         src/runtime/state_store.cpp
         src/runtime/shop_io.cpp
         src/platform/daemon.cpp
+        src/platform/path.cpp
         src/platform/stdio.cpp)
     target_include_directories(cps_runtime PUBLIC include)
     target_link_libraries(cps_runtime PUBLIC Qt6::Core cps_core PRIVATE cps_options)

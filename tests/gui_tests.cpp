@@ -813,7 +813,9 @@ private slots:
         BackendDirectory root(QDir::tempPath() + QStringLiteral("/界面 测试-XXXXXX"));
         QVERIFY(root.isValid());
         PrintWindow window({root.path(), 10, false});
+        QSignalSpy ready(&window, &PrintWindow::backendReady);
         window.show();
+        QTRY_VERIFY_WITH_TIMEOUT(!ready.isEmpty(), 15000);
         auto* title = window.findChild<QLineEdit*>("jobTitle");
         auto* pages = window.findChild<QSpinBox*>("jobPages");
         auto* submit = window.findChild<QPushButton*>("submitJob");
@@ -822,6 +824,11 @@ private slots:
         auto* feedback = window.findChild<QLabel*>("feedback");
         QVERIFY(title && pages && submit && pause && table && feedback);
         QTest::mouseClick(pause, Qt::LeftButton);
+        CoordinatorClient client(root.path());
+        QJsonObject snapshot;
+        // Wait for readiness and the asynchronous IPC pause before submitting
+        // 20 ms jobs that must remain queued until cancellation.
+        QTRY_VERIFY((snapshot = client.request("snapshot")).value("paused").toBool());
         openForm(window);
         title->setText("   ");
         QTest::mouseClick(submit, Qt::LeftButton);
@@ -839,6 +846,7 @@ private slots:
         QTRY_COMPARE(table->model()->index(0, 3).data().toString(), QStringLiteral("已取消"));
         window.findChild<QPushButton*>("navWorkspace")->click();
         QTest::mouseClick(pause, Qt::LeftButton);
+        QTRY_VERIFY(!(snapshot = client.request("snapshot")).isEmpty() && !snapshot.value("paused").toBool());
         window.findChild<QPushButton*>("navHistory")->click();
         QTRY_COMPARE_WITH_TIMEOUT(table->model()->index(1, 3).data().toString(), QStringLiteral("已完成"), 10000);
         QTRY_COMPARE(table->model()->index(2, 3).data().toString(), QStringLiteral("已完成"));
@@ -1138,6 +1146,20 @@ private slots:
                 if (file.open(QIODevice::ReadOnly))
                     qInfo().noquote() << "Crash recovery" << name << QString::fromUtf8(file.read(16384));
             }
+            qInfo().noquote() << "Crash recovery snapshot"
+                << QJsonDocument(client.request("snapshot")).toJson(QJsonDocument::Compact);
+            for (const auto& item : readObject(root.path() + "/state.json").value("jobs").toArray()) {
+                const auto id = item.toObject().value("job_id").toString();
+                for (const auto& name : {"." + id + ".supervisor.lock", "." + id + ".output.lock",
+                                         id + ".events.jsonl"}) {
+                    QFile file(QDir(root.path() + "/output").filePath(name));
+                    qInfo().noquote() << "Crash recovery evidence" << name << "exists" << file.exists();
+                    if (file.open(QIODevice::ReadOnly))
+                        qInfo().noquote() << "bytes" << file.size() << QString::fromUtf8(file.read(8192));
+                }
+            }
+            qInfo().noquote() << "Crash recovery control files"
+                << QDir(root.path() + "/control").entryList(QDir::Files | QDir::Hidden);
             if (auto *log = window.findChild<QPlainTextEdit*>())
                 qInfo().noquote() << "Crash recovery GUI log:" << log->toPlainText().right(8192);
         });

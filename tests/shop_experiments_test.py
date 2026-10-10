@@ -38,6 +38,10 @@ def main():
             assert run["contribution_cents"] == run["revenue_cents"] - run["cost_cents"]
             assert run["late"] == sum(j["finished_ms"] > j["deadline_ms"] for j in completed)
             assert run["unfinished_at_close"] == len(jobs) - len(completed)
+            first_waits = [j["first_started_ms"] - j["submitted_ms"] for j in jobs.values()
+                           if j["first_started_ms"] is not None]
+            assert run["first_started"] == len(first_waits)
+            assert run["max_first_wait_ms"] == max(first_waits, default=0)
             key = (run["mode"], run["budget_sensitive_percent"], run["discounts"])
             inputs = [(j["job_id"], j["submitted_ms"], j["pages"], j["copies"], j["quoted_cents"], j["deadline_ms"])
                       for j in jobs.values()]

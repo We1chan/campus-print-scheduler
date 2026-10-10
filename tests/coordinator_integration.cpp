@@ -11,6 +11,11 @@
 #include <QTemporaryDir>
 #include <QThread>
 #include <QUuid>
+#ifdef Q_OS_WIN
+#include <QDateTime>
+#include <QLockFile>
+#include <qt_windows.h>
+#endif
 
 #include <iostream>
 #include <stdexcept>
@@ -145,6 +150,129 @@ void shutdown(Client& client, QProcess& process) {
     require(process.exitStatus() == QProcess::NormalExit && process.exitCode() == 0,
             "coordinator shutdown failed");
 }
+
+#ifdef Q_OS_WIN
+void incompleteRecoveryLocks(const QString& executable) {
+    QTemporaryDir temporary;
+    require(temporary.isValid(), "incomplete-lock temporary directory unavailable");
+    const QString root = temporary.path();
+    const QDir output(QDir(root).filePath("output"));
+    require(QDir().mkpath(output.path()), "cannot create incomplete-lock output directory");
+
+    // Reproduce the interval after QLockFile's CREATE_NEW but before its PID
+    // write, using exactly Qt 6.10.2's Windows access and sharing flags.
+    struct IncompleteLock {
+        HANDLE handle;
+        explicit IncompleteLock(const QString& path)
+            : handle(CreateFileW(reinterpret_cast<LPCWSTR>(QDir::toNativeSeparators(path).utf16()),
+                GENERIC_READ | GENERIC_WRITE, FILE_SHARE_READ, nullptr,
+                CREATE_NEW, FILE_ATTRIBUTE_NORMAL, nullptr)) {}
+        ~IncompleteLock() { if (handle != INVALID_HANDLE_VALUE) CloseHandle(handle); }
+        bool release() {
+            if (handle == INVALID_HANDLE_VALUE || !CloseHandle(handle)) return false;
+            handle = INVALID_HANDLE_VALUE;
+            return true;
+        }
+        IncompleteLock(const IncompleteLock&) = delete;
+        IncompleteLock& operator=(const IncompleteLock&) = delete;
+    };
+    const QString supervisorPath = output.filePath(".held-supervisor.supervisor.lock");
+    const QString writerPath = output.filePath(".held-writer.output.lock");
+    IncompleteLock supervisorLock(supervisorPath), writerLock(writerPath);
+    require(supervisorLock.handle != INVALID_HANDLE_VALUE && writerLock.handle != INVALID_HANDLE_VALUE,
+            "cannot hold incomplete native locks");
+    for (const auto& path : {supervisorPath, writerPath}) {
+        QLockFile probe(path);
+        probe.setStaleLockTime(0);
+        qint64 pid = 0;
+        QString hostname, appname;
+        require(!probe.tryLock(0) && probe.error() == QLockFile::LockFailedError &&
+                !probe.getLockInfo(&pid, &hostname, &appname), "incomplete lock fixture is not incomplete");
+        require(!probe.removeStaleLockFile(), "native removal stole a held incomplete lock");
+    }
+
+    const double submitted = static_cast<double>(QDateTime::currentMSecsSinceEpoch() - 10);
+    const auto cancellingJob = [&](const QString& id) {
+        return QJsonObject{{"job_id", id}, {"title", id}, {"pages", 2}, {"copies", 1},
+            {"submitted_ms", submitted}, {"state", "cancelling"}, {"priority", 0},
+            {"max_attempts", 3}, {"attempts", 1}, {"queued_since_ms", submitted},
+            {"accumulated_wait_ms", 1}, {"last_changed_ms", submitted + 2},
+            {"first_started_ms", submitted + 1}, {"finished_ms", QJsonValue(QJsonValue::Null)},
+            {"runs", QJsonArray{QJsonObject{{"started_ms", submitted + 1},
+                {"stopped_ms", QJsonValue(QJsonValue::Null)}}}}};
+    };
+    auto queued = cancellingJob("after-lock-release");
+    queued.insert("state", "queued"); queued.insert("attempts", 0);
+    queued.insert("accumulated_wait_ms", 0); queued.insert("last_changed_ms", submitted);
+    queued.insert("first_started_ms", QJsonValue(QJsonValue::Null)); queued.insert("runs", QJsonArray{});
+    const auto state = QJsonDocument(QJsonObject{{"schema_version", 1},
+        {"kind", "campus-print-state"}, {"saved_at_ms", submitted + 2}, {"policy", "fcfs"},
+        {"printers", 2}, {"aging_interval_ms", 30000}, {"jobs", QJsonArray{
+            cancellingJob("held-supervisor"), cancellingJob("held-writer"), queued}}}).toJson();
+    QFile stateFile(QDir(root).filePath("state.json"));
+    require(stateFile.open(QIODevice::WriteOnly) && stateFile.write(state) == state.size(),
+            "cannot write incomplete-lock recovery state");
+    stateFile.close();
+
+    QProcess coordinator;
+    QJsonObject lastSnapshot;
+    try {
+        const auto socket = socketName();
+        startCoordinator(coordinator, executable, root, socket);
+        Client client;
+        client.connectTo(socket);
+        QElapsedTimer held; held.start();
+        do {
+            lastSnapshot = client.request("snapshot");
+            for (const auto* id : {"held-supervisor", "held-writer"}) {
+                const auto job = jobFromSnapshot(lastSnapshot, id);
+                require(job.value("state") == "cancelling" && job.value("recovering").toBool() &&
+                        job.value("attempts").toInt() == 1 && job.value("finished_ms").isNull(),
+                        "held incomplete lock allowed recovery to settle or retry");
+                require(!QFileInfo::exists(output.filePath(QString(id) + ".txt")) &&
+                        !QFileInfo::exists(output.filePath(QString(id) + ".events.jsonl")),
+                        "held incomplete lock allowed an executor to start");
+            }
+            const auto waiting = jobFromSnapshot(lastSnapshot, "after-lock-release");
+            require(waiting.value("state") == "queued" && waiting.value("attempts").toInt() == 0,
+                    "held recovery locks released a printer slot");
+            QThread::msleep(50);
+        } while (held.elapsed() < 1000); // Cover more than three 200 ms recovery passes.
+        for (const auto& path : {supervisorPath, writerPath})
+            require(QFileInfo::exists(path) && QFileInfo(path).size() == 0,
+                    "held incomplete lock was removed or rewritten");
+        require(supervisorLock.release() && writerLock.release(), "cannot release native lock handles");
+        // The same empty files now have no OS owner. No age expiry is involved.
+        for (const auto* id : {"held-supervisor", "held-writer"}) {
+            const auto job = waitForState(client, id, "cancelled");
+            require(job.value("attempts").toInt() == 1 && !job.value("finished_ms").isNull() &&
+                    !job.value("recovering").toBool(), "orphan lock recovery did not settle the original attempt");
+            require(!QFileInfo::exists(output.filePath(QString(id) + ".txt")),
+                    "cancelled orphan-lock job exposed output");
+        }
+        waitForState(client, "after-lock-release", "completed");
+        shutdown(client, coordinator);
+        require(!QFileInfo::exists(supervisorPath) && !QFileInfo::exists(writerPath),
+                "recovered orphan lock files survived");
+        require(QDir(QDir(root).filePath("control")).entryList(QDir::Files).isEmpty(),
+                "recovered orphan locks left cancellation markers");
+    } catch (...) {
+        std::cerr << "Incomplete-lock recovery snapshot: "
+                  << QJsonDocument(lastSnapshot).toJson(QJsonDocument::Compact).constData() << '\n';
+        for (const auto& path : {supervisorPath, writerPath}) {
+            QFile file(path);
+            std::cerr << path.toStdString() << " exists=" << QFileInfo::exists(path)
+                      << " size=" << QFileInfo(path).size();
+            if (file.open(QIODevice::ReadOnly)) std::cerr << " bytes=" << file.read(1024).toHex().constData();
+            std::cerr << '\n';
+        }
+        std::cerr << "Cancellation markers: " << QDir(QDir(root).filePath("control"))
+            .entryList(QDir::Files).join(", ").toStdString() << '\n'
+            << coordinator.readAllStandardError().constData();
+        throw;
+    }
+}
+#endif
 
 } // namespace
 
@@ -307,6 +435,8 @@ int main(int argc, char* argv[]) {
                 "unusable output directory must fail coordinator startup with 73");
 
 #ifdef Q_OS_WIN
+        incompleteRecoveryLocks(executable);
+
         QProcess daemonRejected;
         daemonRejected.setProgram(executable);
         auto daemonArgs = coordinatorArgs(root, socketName());
