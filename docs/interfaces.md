@@ -151,7 +151,7 @@ Windows 的 TerminateProcess 与 POSIX 信号的退出值不同，测试只依�
 
 ## GUI/coordinator 统一协议
 
-GUI 使用状态目录派生的 `QLocalServer` 名称（规范路径的 SHA-256 前 16 位）。Windows 路径规范后忽略大小写。
+GUI 使用状态目录派生的 `QLocalServer` 名称（规范路径的 SHA-256 前 16 位）。Windows 路径规范后展开 DOS 8.3 短路径别名，再忽略大小写，确保 Python 网关与 Qt 客户端连接同一目录的后台。
 每条命令为一行 JSON，必含 `schema_version: 1`、非空 `request_id`、`type`。回复回传 request_id；异步事件不代替命令确认。
 修改操作先持久化再回复 accepted，丢失确认时客户端不自动重发。命令帧上限 8 MiB，GUI 回复帧上限 64 MiB。
 

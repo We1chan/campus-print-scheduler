@@ -1,5 +1,6 @@
 #include "cps/runtime/state_store.hpp"
 #include "cps/runtime/shop_io.hpp"
+#include "cps/platform/path.hpp"
 
 #include <QFile>
 #include <QDir>
@@ -87,7 +88,9 @@ QString coordinatorSocketName(const QString& stateDirectory) {
     QString path = info.canonicalFilePath();
     if (path.isEmpty()) path = QDir(stateDirectory).absolutePath();
 #ifdef Q_OS_WIN
-    path = path.toCaseFolded();
+    // Qt canonicalFilePath resolves links but keeps DOS 8.3 aliases. Python's
+    // Path.resolve expands them, so both clients must hash the same long path.
+    path = expandPathAliases(path).toCaseFolded();
 #endif
     const auto digest = QCryptographicHash::hash(path.toUtf8(), QCryptographicHash::Sha256).toHex().left(16);
     return QStringLiteral("campus-print-%1").arg(QString::fromLatin1(digest));

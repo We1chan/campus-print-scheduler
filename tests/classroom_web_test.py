@@ -86,55 +86,101 @@ class Client:
 class ClassroomTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
+        cls.ready = False
         cls.directory = tempfile.TemporaryDirectory(prefix="课堂 扫码-")
+        cls.addClassCleanup(cls.directory.cleanup)
         cls.state = Path(cls.directory.name)
         cls.log = (cls.state / "test-coordinator.log").open("wb")
+        cls.addClassCleanup(cls.log.close)
         cls.process = subprocess.Popen([str(EXECUTABLE), "--state-dir", str(cls.state), "--shop-mode", "--page-ms", "10"],
                                        stdout=cls.log, stderr=cls.log,
                                        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+        # Class cleanups also run when setUpClass fails, unlike tearDownClass.
+        cls.addClassCleanup(cls.stop_coordinator)
         # The converter stub copies a fixture PDF; without it Office falls back to manual pages.
         cls.environment = os.environ.get("CPS_OFFICE_EXECUTABLE")
+        cls.addClassCleanup(cls.restore_environment)
         os.environ["CPS_OFFICE_EXECUTABLE"] = str(OFFICE_STUB) if OFFICE_STUB else "missing-converter"
         cls.app = web.Application(EXECUTABLE, cls.state, "http://127.0.0.1", "CLASSROOM")
+        cls.addClassCleanup(cls.app.pool.shutdown, wait=True)
         deadline = time.monotonic() + 15
         while True:
             try:
                 cls.app.backend.snapshot(fresh=True)
                 break
-            except web.Problem:
-                if time.monotonic() > deadline:
-                    raise
+            except web.Problem as error:
+                if cls.process.poll() is not None or time.monotonic() > deadline:
+                    try:
+                        probe = subprocess.run([str(EXECUTABLE), "--state-dir", str(cls.app.state),
+                                                "--request", '{"type":"snapshot"}'], capture_output=True,
+                                               timeout=10, creationflags=web.NO_WINDOW)
+                        detail = (f"request_exit={probe.returncode}, stdout={probe.stdout[-2000:]!r}, "
+                                  f"stderr={probe.stderr[-2000:]!r}")
+                    except (OSError, subprocess.TimeoutExpired) as probe_error:
+                        detail = f"diagnostic request failed: {probe_error}"
+                    log = (cls.state / "test-coordinator.log").read_text(encoding="utf-8", errors="replace")
+                    raise RuntimeError(f"Coordinator startup failed: service_exit={cls.process.poll()}, "
+                                       f"{detail}, service_log={log[-4000:]}") from error
                 time.sleep(.05)
         cls.app.backend.request("set_paused", paused=True)
         cls.app.backend.invalidate()
         cls.server = web.Server(("127.0.0.1", 0), cls.app)
+        cls.addClassCleanup(cls.server.server_close)
         cls.base = f"http://127.0.0.1:{cls.server.server_address[1]}"
         cls.app.public_url = cls.base
         cls.app.join_url = cls.base + "/join?code=CLASSROOM"
         cls.thread = threading.Thread(target=cls.server.serve_forever, daemon=True)
         cls.thread.start()
+        cls.addClassCleanup(cls.server.shutdown)
+        cls.ready = True
 
     @classmethod
-    def tearDownClass(cls):
-        cls.server.shutdown()
-        cls.server.server_close()
+    def restore_environment(cls):
         if cls.environment is None:
             os.environ.pop("CPS_OFFICE_EXECUTABLE", None)
         else:
             os.environ["CPS_OFFICE_EXECUTABLE"] = cls.environment
+
+    @classmethod
+    def stop_coordinator(cls):
         try:
-            cls.app.backend.request("set_paused", paused=False)
-            cls.app.backend.request("shutdown")
-            cls.process.wait(timeout=15)
+            if cls.process.poll() is None and hasattr(cls, "app"):
+                cls.app.backend.request("set_paused", paused=False)
+                cls.app.backend.request("shutdown")
+                cls.process.wait(timeout=15)
+        except (web.Problem, subprocess.TimeoutExpired):
+            if cls.ready:
+                raise
         finally:
             if cls.process.poll() is None:
                 cls.process.kill()
                 cls.process.wait(timeout=5)
-            cls.log.close()
-            cls.directory.cleanup()
 
     def setUp(self):
         self.client = Client(self.base)
+
+    @unittest.skipUnless(os.name == "nt", "Windows DOS path aliases")
+    def test_windows_short_and_long_state_paths_share_backend(self):
+        import ctypes
+        from ctypes import wintypes
+
+        short_path = ctypes.WinDLL("kernel32", use_last_error=True).GetShortPathNameW
+        short_path.argtypes = (wintypes.LPCWSTR, wintypes.LPWSTR, wintypes.DWORD)
+        short_path.restype = wintypes.DWORD
+        long_state = str(self.state.resolve())
+        required = short_path(long_state, None, 0)
+        self.assertGreater(required, 0, "GetShortPathNameW failed")
+        buffer = ctypes.create_unicode_buffer(required)
+        length = short_path(long_state, buffer, required)
+        self.assertGreater(length, 0)
+        self.assertLess(length, required)
+        if buffer.value.casefold() == long_state.casefold():
+            self.skipTest("The test volume does not provide a DOS 8.3 alias")
+        # The same real coordinator must be reachable through both spellings.
+        short_snapshot = web.Backend(EXECUTABLE, buffer.value).snapshot(fresh=True)
+        long_snapshot = web.Backend(EXECUTABLE, long_state).snapshot(fresh=True)
+        self.assertEqual(short_snapshot["coordinator_pid"], self.process.pid)
+        self.assertEqual(long_snapshot["coordinator_pid"], self.process.pid)
 
     def test_access_and_csrf(self):
         outsider = Client(self.base, join=False)

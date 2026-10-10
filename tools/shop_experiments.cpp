@@ -109,7 +109,7 @@ int main(int argc, char** argv) {
             row.insert("accepted", int(orders.size())); row.insert("lost_before_order", count - int(orders.size()));
             row.insert("unfinished_at_close", int(orders.size()) - r.business.completed);
             row.insert("average_first_wait_ms", r.performance.averageFirstWaitMs); row.insert("utilization", r.performance.utilization);
-            row.insert("max_first_wait_ms", r.performance.maxFirstWaitMs);
+            row.insert("max_first_wait_ms", static_cast<qint64>(r.performance.maxFirstWaitMs));
             row.insert("first_started", int(r.performance.firstStarted));
             std::vector<cps::TimeMs> waits;
             long double observedWait = 0;
