@@ -203,11 +203,11 @@ def _check_process_console(kernel, user, pid, name):
             return False
         raise ctypes.WinError(error)
 
-    def alive():
-        status = kernel.WaitForSingleObject(process, 0)
-        if status == 0:  # WAIT_OBJECT_0: exited, even if PID/object still exists
+    def alive(timeout_ms=0):
+        status = kernel.WaitForSingleObject(process, timeout_ms)
+        if status == 0:  # WAIT_OBJECT_0: completed process termination
             return False
-        if status != 258:  # WAIT_TIMEOUT: still running
+        if status != 258:  # WAIT_TIMEOUT: process object is not signalled
             raise ctypes.WinError(ctypes.get_last_error())
         return True
 
@@ -225,12 +225,18 @@ def _check_process_console(kernel, user, pid, name):
                 raise RuntimeError(f"{name} ({pid}) has an unwanted visible console")
             return True
         error = ctypes.get_last_error()
-        if not alive():  # target exited between liveness and console checks
+        # Process signalling follows termination cleanup. Allow a brief exit
+        # grace for access denied, but require the retained process handle to
+        # actually signal; an uninspected target never earns coverage credit.
+        exit_grace_ms = 250 if error == 5 else 0
+        if not alive(exit_grace_ms):
             return False
         if error == 6:  # ERROR_INVALID_HANDLE: a live target has no console
             return True
-        # Never waive access denied or other errors for a live target.
-        raise ctypes.WinError(error)
+        # Preserve denial and other errors for a still-nonsignalled target.
+        raise ctypes.WinError(
+            error, f"AttachConsole failed for {name} ({pid}); target did not signal "
+                   f"exit within {exit_grace_ms} ms: {ctypes.FormatError(error).strip()}")
     finally:
         kernel.CloseHandle(process)
 

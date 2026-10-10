@@ -130,6 +130,7 @@ supervisor 启动的 worker 在原子输出首行写入本次 execution_token，
 - `<state-dir>/state.json`：完整 Scheduler/策略/打印机数快照，使用 QSaveFile 原子替换。
 - `<state-dir>/control/<job_id>.<attempt>.cancel`：Running 取消的持久意图；attempt 防止旧取消误伤后续重试。
 - 使用 QLockFile，禁用按锁年龄自动失效；依靠进程存活判断处理崩溃遗留锁。
+- Windows 恢复时，元数据未写完整的遗留锁只通过 Qt 的独占打开与删除操作回收；仍由进程持有的锁受系统共享模式保护，不能按等待时长或空文件直接删除。
 - 当前约定仅针对本机文件系统；不声称网络共享文件系统的锁和原子写保证相同。
 
 ## 退出码
