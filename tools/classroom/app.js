@@ -423,6 +423,16 @@ function decodeText(buffer) {
   try { return new TextDecoder("gb18030").decode(buffer); } catch { return new TextDecoder().decode(buffer); }
 }
 
+function loadDocText(doc) {
+  if (doc.textLoading || doc.textFailed) return;
+  doc.textLoading = true;
+  fetch(`/api/document/${doc.record.upload_id}`, {credentials: "same-origin", cache: "no-store"})
+    .then(response => response.ok ? response.arrayBuffer() : Promise.reject(new Error("text load")))
+    .then(buffer => { doc.lines = decodeText(buffer).split(/\r\n|\r|\n/); })
+    .catch(() => { doc.textFailed = true; })
+    .finally(() => { doc.textLoading = false; renderProof(); });
+}
+
 function fileMeta(doc) {
   const record = doc.record;
   const size = record.size >= 1048576 ? `${(record.size / 1048576).toFixed(1)} MiB` : `${Math.max(1, Math.round(record.size / 1024))} KiB`;
@@ -599,14 +609,19 @@ function faceFor(page, pixels) {
     image.src = previewUrl(page, previewWidth(pixels));
     return image;
   }
-  if (doc.url && local === 1) {
+  if (doc.record.kind === "image" && local === 1) {
     const image = node("img", "photo");
     image.alt = doc.record.name;
     image.addEventListener("load", () => { aspects.set(page, image.naturalWidth > image.naturalHeight ? 1 / PORTRAIT : PORTRAIT); layoutSheet(); });
-    image.src = doc.url;
+    image.addEventListener("error", () => image.replaceWith(placeholderFace(page, "图片预览加载失败，可稍后重试")));
+    image.src = doc.url || `/api/document/${doc.record.upload_id}`;
     return image;
   }
-  if (doc.lines) return node("pre", "text-page", doc.lines.slice((local - 1) * 50, local * 50).join("\n"));
+  if (doc.record.kind === "text") {
+    if (doc.lines) return node("pre", "text-page", doc.lines.slice((local - 1) * 50, local * 50).join("\n"));
+    loadDocText(doc);
+    return placeholderFace(page, doc.textFailed ? "文本预览加载失败，可稍后重试" : "正在载入文本…");
+  }
   const record = doc.record;
   const message = uploadCount ? "正在上传…" : record.status === "converting" ? "正在转换预览…"
     : record.kind === "pdf" ? "展示电脑未启用 PDF 预览" : record.preview === "none" ? "此格式暂无预览" : "重新选择文件可查看预览";

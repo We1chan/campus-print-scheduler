@@ -378,6 +378,22 @@ class ClassroomTests(unittest.TestCase):
         self.assertEqual(status, 422)
         self.assertIn("PDF", problem["error"])
 
+    def test_document_endpoint_previews_images_and_text(self):
+        png = b"\x89PNG\r\n\x1a\n" + b"0" * 64
+        _, image = self.client.upload("照片.png", png)
+        status, body = self.client.raw(f"/api/document/{image['upload_id']}")
+        self.assertEqual((status, body), (200, png))
+        _, note = self.client.upload("笔记.txt", b"first\nsecond\n")
+        status, body = self.client.raw(f"/api/document/{note['upload_id']}")
+        self.assertEqual((status, body), (200, b"first\nsecond\n"))
+        # Only the owning session may read the stored document.
+        outsider = Client(self.base)
+        self.assertEqual(outsider.raw(f"/api/document/{image['upload_id']}")[0], 404)
+        # PDFs preview through rendered pages, never through the raw endpoint.
+        _, pdf = self.client.upload("讲义.pdf", make_pdf([(595, 842)]))
+        self.assertEqual(self.client.raw(f"/api/document/{pdf['upload_id']}")[0], 404)
+        self.assertEqual(self.client.raw("/api/document/" + "f" * 32)[0], 404)
+
     def test_office_conversion(self):
         if not self.app.office.available:
             # Without a converter the student types the page count.

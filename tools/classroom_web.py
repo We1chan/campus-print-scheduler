@@ -788,6 +788,16 @@ class Handler(BaseHTTPRequestHandler):
             # Pages of an upload never change; let the phone cache them.
             self.reply(200, image, "image/png", {"Cache-Control": "private, max-age=86400, immutable"})
             return
+        match = re.fullmatch(r"/api/document/([a-f0-9]{32})", path)
+        if method == "GET" and match:
+            record = app.metadata(match[1], session)
+            if record.get("kind") not in {"image", "text"}:
+                raise Problem(404, "该文件没有可直接预览的内容。")
+            data = (app.uploads / (match[1] + ".bin")).read_bytes()
+            mime = ("image/png" if record["name"].lower().endswith(".png") else "image/jpeg") \
+                if record["kind"] == "image" else "text/plain; charset=utf-8"
+            self.reply(200, data, mime, {"Cache-Control": "private, max-age=86400, immutable"})
+            return
         match = re.fullmatch(r"/payment-code/(wechat|alipay)", path)
         if method == "GET" and match:
             code = app.payment_code(match[1])

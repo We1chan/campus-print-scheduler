@@ -42,7 +42,7 @@ powershell -ExecutionPolicy Bypass -File .\start-classroom-demo.ps1 -BindAddress
 - **我的订单**：本浏览器的订单、状态、排队顺位与预计时间、打印进度、取件码，等待或打印中可取消并模拟退款。
 - **排队情况**：当前策略、四项全店指标、六台设备状态与进度、按当前策略推算的等待队列。其他同学的文档名和称呼不会发到手机，只显示“其他订单”与规格。
 
-页数识别：PDF 由网关用 PDFium（`python tools/setup_pdfium.py` 安装到 `.tools/pdfium`）读取页数并渲染预览，页数随文档锁定；Word / PPT / Excel 在展示电脑装有 LibreOffice 时于后台逐个转换为 PDF 后同样处理（发现顺序同 [Office 预览](office-preview.md)，另查找 `.tools/libreoffice`），未安装时提示学生手动填写页数；图片固定 1 页；文本按约 50 行一页估算，可修改。图片与文本在手机本地预览。
+页数识别：PDF 由网关用 PDFium（`python tools/setup_pdfium.py` 安装到 `.tools/pdfium`）读取页数并渲染预览，页数随文档锁定；Word / PPT / Excel 在展示电脑装有 LibreOffice 时于后台逐个转换为 PDF 后同样处理（发现顺序同 [Office 预览](office-preview.md)，另查找 `.tools/libreoffice`），未安装时提示学生手动填写页数；图片固定 1 页；文本按约 50 行一页估算，可修改。图片与文本由网关的 `GET /api/document/<upload_id>` 端点按会话归属持久提供预览（仅放行 image / text 类型，PDF/Office 走渲染页端点），刷新或重进页面后仍能预览，不再依赖浏览器本地 blob。
 
 二维码页同时显示课堂码、全店数量、设备进度和匿名等待队列，适合投屏讲解策略对队列顺序的影响；Qt 老板窗口用于讲解具体订单调度。
 
