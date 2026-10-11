@@ -43,6 +43,7 @@ MAX_FILE = 10 * 1024 * 1024
 MAX_STORAGE = 300 * 1024 * 1024
 MAX_CONVERTED = 64 * 1024 * 1024
 MAX_PAGES = 1000
+MAX_DOCS = 10
 ID = re.compile(r"^[a-f0-9]{32}$")
 IMAGES = {".png", ".jpg", ".jpeg"}
 TEXTS = {".txt", ".md"}
@@ -484,11 +485,50 @@ class Application:
         save_bytes(cache, image)
         return image
 
+    def resolve_documents(self, documents, session, preview):
+        # A merged multi-file order carries one entry per uploaded file; the first
+        # file anchors the job id, ownership and title, so the coordinator schema and
+        # the single-file path stay untouched.
+        if len(documents) > MAX_DOCS:
+            raise Problem(422, f"一次最多合并 {MAX_DOCS} 个文件。")
+        records, seen, total = [], set(), 0
+        for item in documents:
+            identifier = item.get("upload_id") if isinstance(item, dict) else None
+            pages = item.get("pages") if isinstance(item, dict) else None
+            if not isinstance(identifier, str) or not ID.fullmatch(identifier):
+                raise Problem(404, "文件不存在。")
+            if identifier in seen:
+                raise Problem(422, "同一文件不能重复提交。")
+            if type(pages) is not int or not 1 <= pages <= MAX_PAGES:
+                raise Problem(422, "每个文件的页数须为 1–1000 的整数。")
+            seen.add(identifier)
+            record = self.metadata(identifier, session)
+            if not preview and record.get("status") == "converting":
+                raise Problem(409, "文档仍在转换，完成后会自动显示页数。")
+            if record.get("pages_locked") and pages != record["pages"]:
+                raise Problem(422, "页数已按文档自动识别，不能修改。")
+            records.append(record)
+            total += pages
+        if not 1 <= total <= MAX_PAGES:
+            raise Problem(422, "合计页数须为 1–1000。")
+        return records, total
+
     def order(self, body, session, preview=False):
-        # A quote may come before any file is chosen, as in the Qt student client.
-        record = None if preview and body.get("upload_id") is None else self.metadata(body.get("upload_id"), session)
-        if not preview and record.get("status") == "converting":
-            raise Problem(409, "文档仍在转换，完成后会自动显示页数。")
+        documents = body.get("documents")
+        record = None
+        if isinstance(documents, list) and documents:
+            records, total = self.resolve_documents(documents, session, preview)
+            suffix = f" 等{len(records)}份" if len(records) > 1 else ""
+            title = (records[0]["name"] + suffix)[:200]
+            anchor = records[0]["upload_id"]
+            body = {**body, "pages": total}
+        else:
+            # A quote may come before any file is chosen, as in the Qt student client.
+            record = None if preview and body.get("upload_id") is None else self.metadata(body.get("upload_id"), session)
+            if not preview and record.get("status") == "converting":
+                raise Problem(409, "文档仍在转换，完成后会自动显示页数。")
+            title = record["name"] if record else "报价预览"
+            anchor = record["upload_id"] if record else None
         for field, minimum, maximum in (("pages", 1, MAX_PAGES), ("copies", 1, 100)):
             if type(body.get(field)) is not int or not minimum <= body[field] <= maximum:
                 raise Problem(422, "页数须为 1–1000，份数须为 1–100 的整数。")
@@ -507,8 +547,8 @@ class Application:
         if not isinstance(student, str) or len(student.strip()) > 32 or any(ord(c) < 32 for c in student):
             raise Problem(422, "学号或昵称不能超过 32 个字符。")
         # Price, priority, ownership and job id can never be supplied by a phone.
-        return dict(job_id=job_id(record["upload_id"]) if record else "quote-preview",
-                    title=record["name"] if record else "报价预览",
+        return dict(job_id=job_id(anchor) if anchor else "quote-preview",
+                    title=title,
                     customer=student.strip() or "访客 " + session[:4].upper(),
                     **{key: body[key] for key in ("pages", "copies", "paper", "color", "duplex", "service", "payment")})
 
@@ -523,7 +563,9 @@ class Application:
 
     def submit(self, body, session):
         job = self.order(body, session)
-        legacy = "web-" + body["upload_id"]
+        documents = body.get("documents")
+        anchor = documents[0]["upload_id"] if isinstance(documents, list) and documents else body["upload_id"]
+        legacy = "web-" + anchor
         # Stable per-upload id makes a lost HTTP reply safe to reconcile, including
         # after a gateway restart. Never retry a timed-out mutation internally.
         with self.backend.mutation:

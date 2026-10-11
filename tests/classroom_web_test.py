@@ -258,6 +258,33 @@ class ClassroomTests(unittest.TestCase):
         self.assertEqual(mine[0]["pickup_code"], submitted["pickup_code"])
         self.assertEqual(mine[0]["sheets"], 6)
 
+    def test_multi_file_merged_order(self):
+        _, first = self.client.upload("封面.pdf", make_pdf([(595, 842), (595, 842)]))
+        _, second = self.client.upload("正文.pdf", make_pdf([(595, 842), (595, 842), (595, 842)]))
+        self.assertTrue(first["pages_locked"] and second["pages_locked"])
+        batch = [{"upload_id": first["upload_id"], "pages": 2}, {"upload_id": second["upload_id"], "pages": 3}]
+        base = dict(documents=batch, copies=1, paper="a4", color=False, duplex=False, service="standard", payment="wechat")
+        self.assertEqual(self.client.json("/api/quote", dict(base))[0], 200)
+        status, submitted = self.client.json("/api/submit", dict(base))
+        self.assertEqual(status, 200)
+        self.assertEqual(submitted["job_id"], web.job_id(first["upload_id"]))
+        self.assertEqual(submitted["pickup_code"], first["upload_id"][:6].upper())
+        row = next(row for row in self.app.backend.snapshot(fresh=True)["jobs"] if row["job_id"] == submitted["job_id"])
+        self.assertEqual(row["pages"], 5)
+        self.assertEqual(row["title"], "封面.pdf 等2份")
+        # A locked file's page count cannot be padded in the merged total.
+        self.assertEqual(self.client.json("/api/submit", {**base, "documents": [
+            {"upload_id": first["upload_id"], "pages": 2}, {"upload_id": second["upload_id"], "pages": 4}]})[0], 422)
+        # Duplicate files in one batch are rejected.
+        self.assertEqual(self.client.json("/api/submit", {**base, "documents": [
+            {"upload_id": first["upload_id"], "pages": 2}, {"upload_id": first["upload_id"], "pages": 2}]})[0], 422)
+        # A file the session does not own is invisible to the batch.
+        outsider = Client(self.base)
+        self.assertEqual(outsider.json("/api/submit", {**base, "documents": [
+            {"upload_id": first["upload_id"], "pages": 2}, {"upload_id": "f" * 32, "pages": 1}]})[0], 404)
+        # Resubmitting the identical batch reconciles instead of double-ordering.
+        self.assertEqual(self.client.json("/api/submit", dict(base))[0], 200)
+
     def test_display_name_and_quote_before_upload(self):
         status, quoted = self.client.json("/api/quote", dict(pages=8, copies=1, paper="a4", color=True, duplex=True,
                                                              service="standard", payment="wechat"))

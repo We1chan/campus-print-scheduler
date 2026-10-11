@@ -3,6 +3,7 @@
 // prices, deadlines and forecasts always come from the coordinator.
 const $ = id => document.getElementById(id);
 const MAX_FILE = 10 * 1024 * 1024;
+const MAX_DOCS = 10;
 const EXTENSIONS = [".pdf", ".txt", ".md", ".png", ".jpg", ".jpeg", ".doc", ".docx", ".ppt", ".pptx", ".xls", ".xlsx"];
 const PREVIEW_WIDTHS = [480, 960, 1440];
 const PORTRAIT = Math.SQRT2;
@@ -63,7 +64,43 @@ const radio = name => document.querySelector(`input[name="${name}"]:checked`).va
 const integer = (id, low, high) => Math.min(high, Math.max(low, Math.round(Number($(id).value)) || low));
 
 let csrf = "", view = null, connected = false;
-let upload = null, local = null, uploading = null, conversionTimer = 0;
+let docs = [], uploading = null, uploadToken = 0, uploadCount = 0, conversionTimer = 0;
+const activeRequests = new Set();
+// One merged order may bundle several uploaded files; docs[0] anchors the job id,
+// the paper preview and the reader, exactly like the old single-document flow.
+const primary = () => docs.length ? docs[0] : null;
+const primaryRecord = () => primary() ? primary().record : null;
+const hasDocs = () => docs.length > 0;
+const recordReady = record => record && record.preview === "pdf" && record.status === "ready";
+const IMAGE_TYPES = [".png", ".jpg", ".jpeg"];
+const TEXT_TYPES = [".txt", ".md"];
+const extensionOf = name => name.includes(".") ? name.slice(name.lastIndexOf(".")).toLowerCase() : "";
+const docPages = doc => doc.record.pages_locked ? doc.record.pages : (docs.length === 1 ? integer("pages", 1, 1000) : doc.pages);
+const mergedDocuments = () => docs.map(doc => ({upload_id: doc.record.upload_id, pages: docPages(doc)}));
+// Single file keeps the original upload_id request shape; a merge sends documents[]
+// so the gateway sums the pages and anchors the job on the first file.
+function orderBody(base) {
+  if (!docs.length || !docs[0].record) return base;
+  if (docs.length === 1) return {...base, upload_id: docs[0].record.upload_id};
+  return {...base, documents: mergedDocuments()};
+}
+function recalcPages() {
+  const single = docs.length === 1 && docs[0].record && !docs[0].record.pages_locked;
+  const total = single ? integer("pages", 1, 1000) : Math.min(1000, docs.reduce((sum, doc) => sum + (doc.record ? doc.pages : 0), 0));
+  if (!single) $("pages").value = total;
+  if (docs.length === 1 && docs[0].record) docs[0].pages = total;
+  return total;
+}
+function syncPages() { lockPages(!(docs.length === 1 && docs[0].record && !docs[0].record.pages_locked)); recalcPages(); }
+function locate(page) {
+  let offset = 0;
+  for (const doc of docs) {
+    const count = doc.record ? docPages(doc) : 0;
+    if (page <= offset + count) return {doc, local: page - offset};
+    offset += count;
+  }
+  return {doc: docs.length ? docs[docs.length - 1] : null, local: 1};
+}
 let quote = null, quoteState = "pending", quoteError = "", quoteSequence = 0, quoteTimer = 0, quoteRefresh = 0, queueSignature = "";
 let sheetIndex = 1, showingBack = false, rotation = 0, highlight = "", cancelTarget = null, readerPage = 1;
 const aspects = new Map();
@@ -109,7 +146,8 @@ function render(state) {
   connected = true;
   renderConnection();
   $("student").placeholder = state.visitor;
-  if (upload && state.jobs.some(job => job.job_id === jobIdFor(upload.upload_id))) clearDocument(true);
+  const anchor = primaryRecord();
+  if (anchor && state.jobs.some(job => job.job_id === jobIdFor(anchor.upload_id))) clearDocument(true);
   renderMetrics();
   renderOrders();
   renderDevices();
@@ -293,48 +331,91 @@ function options() {
     duplex: radio("duplex") === "double", service: radio("service"), payment: radio("payment"), student: $("student").value.trim()};
 }
 
-async function chooseFile(file) {
-  if (!file) return;
-  clearDocument(true);
-  const extension = file.name.includes(".") ? file.name.slice(file.name.lastIndexOf(".")).toLowerCase() : "";
-  if (!EXTENSIONS.includes(extension)) { say("请选择 PDF、图片、文本或 Office 文档。", "error"); return; }
-  if (!file.size || file.size > MAX_FILE) { say("文件不能为空且不能超过 10 MiB。", "error"); return; }
-  local = {file, url: [".png", ".jpg", ".jpeg"].includes(extension) ? URL.createObjectURL(file) : null, lines: null};
-  if ([".txt", ".md"].includes(extension)) local.lines = decodeText(await file.arrayBuffer()).split(/\r\n|\r|\n/);
-  $("file-name").textContent = file.name;
+async function chooseFiles(fileList) {
+  const incoming = Array.from(fileList || []);
+  if (!incoming.length) return;
+  if (docs.length + incoming.length > MAX_DOCS) { say(`最多合并 ${MAX_DOCS} 个文件（已选 ${docs.length} 个）。`, "error"); $("file").value = ""; return; }
+  for (const file of incoming) {
+    const extension = extensionOf(file.name);
+    if (!EXTENSIONS.includes(extension)) { say(`「${file.name}」不是支持的文件格式。`, "error"); $("file").value = ""; return; }
+    if (!file.size || file.size > MAX_FILE) { say(`「${file.name}」为空或超过 10 MiB。`, "error"); $("file").value = ""; return; }
+  }
+  $("file").value = "";
   $("file-card").classList.add("has-file");
-  $("file-info").textContent = "正在上传 0%";
-  $("upload-progress").hidden = false;
   $("remove-file").hidden = false;
-  say("正在上传文件…");
+  $("choose-label").firstChild.textContent = "加选文件";
+  $("upload-progress").hidden = false;
+  $("upload-progress").value = 0;
+  uploadToken += 1;
+  const token = uploadToken;
+  uploadCount += 1;
   updateActions();
-  const request = new XMLHttpRequest();
-  uploading = request;
-  request.open("POST", "/api/upload");
-  request.setRequestHeader("X-CSRF-Token", csrf);
-  request.setRequestHeader("X-File-Name", encodeURIComponent(file.name));
-  request.setRequestHeader("Content-Type", "application/octet-stream");
-  request.upload.addEventListener("progress", event => {
-    if (!event.lengthComputable) return;
-    const percent = Math.round(100 * event.loaded / event.total);
-    $("upload-progress").value = percent;
-    $("file-info").textContent = `正在上传 ${percent}%`;
-  });
-  request.addEventListener("loadend", () => {
-    if (uploading !== request) return;
-    uploading = null;
-    $("upload-progress").hidden = true;
-    let result = {};
-    try { result = JSON.parse(request.responseText); } catch { /* reported below */ }
-    if (request.status === 201) {
-      applyUpload(result, true);
-      say(result.status === "converting" ? "文件已上传，正在准备预览…" : "文件已上传，确认打印设置后下单。", "ready");
-    } else {
-      clearDocument(true);
-      say(request.status ? result.error || "上传失败，请重试。" : "上传中断，请检查网络后重新选择文件。", "error");
+  const total = incoming.length;
+  let index = 0;
+  for (const file of incoming) {
+    if (token !== uploadToken) return;
+    const extension = extensionOf(file.name);
+    const doc = {record: null, url: IMAGE_TYPES.includes(extension) ? URL.createObjectURL(file) : null, lines: null, pages: 0};
+    if (TEXT_TYPES.includes(extension)) doc.lines = decodeText(await file.arrayBuffer()).split(/\r\n|\r|\n/);
+    try {
+      const record = await uploadOne(file, index, total, token);
+      if (token !== uploadToken) { if (doc.url) URL.revokeObjectURL(doc.url); return; }
+      doc.record = record;
+      doc.pages = record.pages;
+      docs.push(doc);
+      persistDocs();
+      index += 1;
+      renderFileList();
+      recalcPages();
+      renderProof();
+    } catch (error) {
+      if (doc.url) URL.revokeObjectURL(doc.url);
+      say(error.message || "上传失败，请重试。", "error");
+      break;
     }
+  }
+  if (token !== uploadToken) return;
+  uploadCount = Math.max(0, uploadCount - 1);
+  $("upload-progress").hidden = true;
+  if (!docs.length) { clearDocument(true); return; }
+  if (uploading === null || uploadCount === 0) uploading = null;
+  syncPages();
+  scheduleQuote();
+  updateActions();
+  pollConversion();
+  say(docs.length > 1 ? `已上传 ${docs.length} 个文件，确认设置后合并为一单。` : "文件已上传，确认打印设置后下单。", "ready");
+}
+
+function uploadOne(file, index, total, token) {
+  return new Promise((resolve, reject) => {
+    const request = new XMLHttpRequest();
+    activeRequests.add(request);
+    uploading = request;
+    request.open("POST", "/api/upload");
+    request.setRequestHeader("X-CSRF-Token", csrf);
+    request.setRequestHeader("X-File-Name", encodeURIComponent(file.name));
+    request.setRequestHeader("Content-Type", "application/octet-stream");
+    request.upload.addEventListener("progress", event => {
+      if (token !== uploadToken || !event.lengthComputable) return;
+      const overall = Math.round(((index + event.loaded / event.total) / total) * 100);
+      $("upload-progress").value = overall;
+      $("file-info").textContent = `正在上传 ${index + 1}/${total} · ${overall}%`;
+    });
+    request.addEventListener("loadend", () => {
+      activeRequests.delete(request);
+      if (uploading === request) uploading = null;
+      if (token !== uploadToken) { reject(new Error("上传已取消。")); return; }
+      let result = {};
+      try { result = JSON.parse(request.responseText); } catch { /* reported below */ }
+      if (request.status === 201) resolve(result);
+      else reject(new Error(request.status ? result.error || "上传失败，请重试。" : "上传中断，请检查网络后重新选择文件。"));
+    });
+    request.send(file);
   });
-  request.send(file);
+}
+
+function persistDocs() {
+  storage.set("sessionStorage", "paperroom.upload", docs.length ? JSON.stringify(docs.map(doc => doc.record.upload_id)) : null);
 }
 
 function decodeText(buffer) {
@@ -342,44 +423,82 @@ function decodeText(buffer) {
   try { return new TextDecoder("gb18030").decode(buffer); } catch { return new TextDecoder().decode(buffer); }
 }
 
-function applyUpload(record, fresh) {
-  const changed = !upload || upload.upload_id !== record.upload_id || upload.status !== record.status || upload.pages !== record.pages;
-  upload = record;
-  storage.set("sessionStorage", "paperroom.upload", record.upload_id);
-  $("file-name").textContent = record.name;
+function fileMeta(doc) {
+  const record = doc.record;
   const size = record.size >= 1048576 ? `${(record.size / 1048576).toFixed(1)} MiB` : `${Math.max(1, Math.round(record.size / 1024))} KiB`;
-  const pages = record.status === "converting" ? (record.queue_position > 0 ? `正在转换预览 · 前面 ${record.queue_position} 个` : "正在转换预览…")
-    : record.pages_locked ? `共 ${record.pages} 页` : "页数待确认";
-  $("file-info").textContent = `${size} · ${pages}`;
-  $("page-note").textContent = record.note;
-  $("choose-label").firstChild.textContent = "更换文件";
-  $("remove-file").hidden = false;
+  const pages = record.status === "converting" ? (record.queue_position > 0 ? `前面 ${record.queue_position} 个` : "正在转换预览…")
+    : record.pages_locked ? `共 ${record.pages} 页` : `${docPages(doc)} 页 · 待确认`;
+  return `${size} · ${pages}`;
+}
+
+function renderFileList() {
+  const list = $("file-list");
+  if (!list) return;
+  if (!docs.length) { list.hidden = true; list.replaceChildren(); return; }
+  list.hidden = false;
+  list.replaceChildren(...docs.map((doc, position) => {
+    const row = node("li", "file-row");
+    const text = node("div", "file-row-text");
+    text.append(node("strong", "", doc.record ? doc.record.name : "上传中…"), node("span", "", doc.record ? fileMeta(doc) : " "));
+    const remove = node("button", "file-row-remove", "移除");
+    remove.type = "button";
+    remove.addEventListener("click", () => removeDoc(position));
+    row.append(text, remove);
+    return row;
+  }));
+  const first = docs[0].record;
+  $("file-name").textContent = docs.length > 1 ? `${first.name} 等${docs.length}份` : first.name;
+  $("file-info").textContent = docs.length > 1 ? `共 ${docs.length} 个文件 · 合计 ${recalcPages()} 页` : fileMeta(docs[0]);
+  $("page-note").textContent = docs.length > 1 ? "多文件将合并为一单，合计页数为各文件之和。" : first.note;
+  $("choose-label").firstChild.textContent = docs.length > 1 ? "加选文件" : "更换文件";
+}
+
+function applyUpload(record, fresh) {
+  const existing = docs.find(doc => doc.record && doc.record.upload_id === record.upload_id);
+  if (existing) { existing.record = record; if (record.status !== "converting") existing.pages = record.pages; }
+  else docs.push({record, url: null, lines: null, pages: record.pages});
+  if (fresh) { aspects.clear(); sheetIndex = 1; showingBack = false; rotation = 0; }
+  persistDocs();
   $("file-card").classList.add("has-file");
-  if (fresh || changed) {
-    $("pages").value = record.pages;
-    aspects.clear();
-    sheetIndex = 1;
-    showingBack = false;
-    if (fresh) rotation = 0;
-  }
-  lockPages(Boolean(record.pages_locked));
+  $("remove-file").hidden = false;
+  renderFileList();
+  syncPages();
   clearTimeout(conversionTimer);
-  if (record.status === "converting") conversionTimer = setTimeout(checkConversion, 1500);
-  if (changed) { renderProof(); scheduleQuote(); }
+  pollConversion();
+  renderProof();
+  scheduleQuote();
   updateActions();
 }
 
-async function checkConversion() {
-  if (!upload) return;
-  try {
-    const record = await api(`/api/upload/${upload.upload_id}`);
-    if (upload && record.upload_id === upload.upload_id) {
-      applyUpload(record, false);
-      if (record.status !== "converting") say(record.preview === "pdf" ? "文档已转换并载入，确认打印设置后下单。" : record.note, record.preview === "pdf" ? "ready" : "error");
-    }
-  } catch {
-    conversionTimer = setTimeout(checkConversion, 3000);
+function removeDoc(index) {
+  const doc = docs[index];
+  if (!doc) return;
+  if (doc.url) URL.revokeObjectURL(doc.url);
+  docs.splice(index, 1);
+  persistDocs();
+  if (!docs.length) { clearDocument(false); return; }
+  aspects.clear();
+  sheetIndex = 1;
+  showingBack = false;
+  renderFileList();
+  syncPages();
+  renderProof();
+  scheduleQuote();
+  updateActions();
+}
+
+async function pollConversion() {
+  clearTimeout(conversionTimer);
+  if (!docs.some(doc => doc.record && doc.record.status === "converting")) return;
+  for (const doc of docs) {
+    if (!doc.record || doc.record.status !== "converting") continue;
+    try {
+      const record = await api(`/api/upload/${doc.record.upload_id}`);
+      if (record.upload_id === doc.record.upload_id) applyUpload(record, false);
+    } catch { /* retry below */ }
   }
+  if (docs.some(doc => doc.record && doc.record.status === "converting")) conversionTimer = setTimeout(pollConversion, 1500);
+  else say(docs.every(doc => !doc.record || doc.record.preview === "pdf" || doc.record.pages_locked) ? "文档已就绪，确认打印设置后下单。" : "有文件未能自动识别页数，请手动确认。", "ready");
 }
 
 function lockPages(locked) {
@@ -389,20 +508,26 @@ function lockPages(locked) {
 }
 
 function clearDocument(keepMessage) {
-  if (uploading) { const request = uploading; uploading = null; request.abort(); }
-  if (local && local.url) URL.revokeObjectURL(local.url);
+  uploadToken += 1;
+  uploading = null;
+  uploadCount = 0;
+  for (const request of activeRequests) request.abort();
+  activeRequests.clear();
   clearTimeout(conversionTimer);
-  upload = local = null;
-  storage.set("sessionStorage", "paperroom.upload", null);
+  for (const doc of docs) if (doc.url) URL.revokeObjectURL(doc.url);
+  docs = [];
+  persistDocs();
   $("file").value = "";
   $("file-name").textContent = "选择要打印的文件";
-  $("file-info").textContent = "PDF / Word / PPT / Excel / 图片 / 文本 · 最大 10 MiB";
+  $("file-info").textContent = "PDF / Word / PPT / Excel / 图片 / 文本 · 单个最大 10 MiB · 一次最多 10 个";
   $("page-note").textContent = "页数按文档自动识别；无法识别时请手动填写。";
   $("choose-label").firstChild.textContent = "选择文件";
   $("remove-file").hidden = true;
   $("file-card").classList.remove("has-file");
   $("upload-progress").hidden = true;
+  renderFileList();
   lockPages(false);
+  $("pages").value = 8;
   aspects.clear();
   sheetIndex = 1;
   showingBack = false;
@@ -421,12 +546,13 @@ function pageOn(sheet, back) {
 }
 
 function previewUrl(page, width) {
-  return `/api/preview/${upload.upload_id}/${page}?w=${width}`;
+  const {doc, local} = locate(page);
+  return `/api/preview/${doc.record.upload_id}/${local}?w=${width}`;
 }
 function previewWidth(pixels) {
   return PREVIEW_WIDTHS.find(width => width >= pixels) || PREVIEW_WIDTHS[PREVIEW_WIDTHS.length - 1];
 }
-const pdfReady = () => upload && upload.preview === "pdf" && upload.status === "ready";
+const pdfReadyAt = page => { const {doc, local} = locate(page); return !!doc && !!doc.record && docPages(doc) >= local && recordReady(doc.record); };
 
 function sampleFace(page) {
   const face = node("div", page === 1 ? "sample cover" : "sample body");
@@ -451,14 +577,17 @@ function sampleFace(page) {
 
 function placeholderFace(page, message) {
   const face = node("div", "placeholder");
-  face.append(node("strong", "", upload ? upload.name : ""), node("span", "", `第 ${page} 页`), node("small", "", message));
+  const name = primaryRecord() ? primaryRecord().name : "";
+  face.append(node("strong", "", name), node("span", "", `第 ${page} 页`), node("small", "", message));
   return face;
 }
 
 function faceFor(page, pixels) {
   if (page === 0) return node("div", "blank", "背面留白");
-  if (!upload && !uploading) return sampleFace(page);
-  if (pdfReady()) {
+  if (!docs.length && !uploadCount) return sampleFace(page);
+  const {doc, local} = locate(page);
+  if (!doc || !doc.record) return placeholderFace(page, uploadCount ? "正在上传…" : "重新选择文件可查看预览");
+  if (recordReady(doc.record)) {
     const image = node("img", "page-image");
     image.alt = `第 ${page} 页`;
     image.decoding = "async";
@@ -470,20 +599,22 @@ function faceFor(page, pixels) {
     image.src = previewUrl(page, previewWidth(pixels));
     return image;
   }
-  if (local && local.url && page === 1) {
+  if (doc.url && local === 1) {
     const image = node("img", "photo");
-    image.alt = upload ? upload.name : "";
-    image.addEventListener("load", () => { aspects.set(1, image.naturalWidth > image.naturalHeight ? 1 / PORTRAIT : PORTRAIT); layoutSheet(); });
-    image.src = local.url;
+    image.alt = doc.record.name;
+    image.addEventListener("load", () => { aspects.set(page, image.naturalWidth > image.naturalHeight ? 1 / PORTRAIT : PORTRAIT); layoutSheet(); });
+    image.src = doc.url;
     return image;
   }
-  if (local && local.lines) return node("pre", "text-page", local.lines.slice((page - 1) * 50, page * 50).join("\n"));
-  const message = uploading ? "正在上传…" : upload && upload.status === "converting" ? "正在转换预览…"
-    : upload && upload.kind === "pdf" ? "展示电脑未启用 PDF 预览" : upload && upload.preview === "none" ? "此格式暂无预览" : "重新选择文件可查看预览";
+  if (doc.lines) return node("pre", "text-page", doc.lines.slice((local - 1) * 50, local * 50).join("\n"));
+  const record = doc.record;
+  const message = uploadCount ? "正在上传…" : record.status === "converting" ? "正在转换预览…"
+    : record.kind === "pdf" ? "展示电脑未启用 PDF 预览" : record.preview === "none" ? "此格式暂无预览" : "重新选择文件可查看预览";
   return placeholderFace(page, message);
 }
 
 function renderProof() {
+  if (docs.length) recalcPages();
   const count = sheetCount();
   sheetIndex = Math.min(Math.max(sheetIndex, 1), count);
   const duplex = options().duplex;
@@ -500,11 +631,12 @@ function renderProof() {
   $("proof-next").disabled = sheetIndex >= count;
   $("proof-flip").disabled = !duplex;
   $("proof-flip").textContent = showingBack ? "正面" : "翻面";
-  $("proof-rotate").disabled = !upload;
+  $("proof-rotate").disabled = !hasDocs();
   const side = duplex ? (showingBack ? " · 背面" : " · 正面") : "";
-  $("proof-caption").textContent = upload || uploading ? `第 ${sheetIndex} 张纸${side} · 共 ${count} 张` : "示例文档 · 选择你的文件开始预览";
+  $("proof-caption").textContent = hasDocs() || uploadCount ? `第 ${sheetIndex} 张纸${side} · 共 ${count} 张` : "示例文档 · 选择你的文件开始预览";
   // Warm the next sheet so swiping does not wait for the gateway.
-  if (pdfReady() && sheetIndex < count) new Image().src = previewUrl(pageOn(sheetIndex + 1, false), previewWidth(pixels));
+  const next = sheetIndex < count ? pageOn(sheetIndex + 1, false) : 0;
+  if (next && pdfReadyAt(next)) new Image().src = previewUrl(next, previewWidth(pixels));
   updateSummary();
   layoutSheet();
 }
@@ -544,7 +676,7 @@ function renderReader() {
   paper.style.setProperty("--u", `${Math.min(window.innerWidth - 32, 760) / 100}px`);
   paper.append(face);
   $("reader-page").replaceChildren(paper);
-  $("reader-title").textContent = upload ? upload.name : "示例文档";
+  $("reader-title").textContent = primaryRecord() ? primaryRecord().name : "示例文档";
   $("reader-index").textContent = `第 ${readerPage} / ${printedPages()} 页`;
   $("reader-prev").disabled = readerPage <= 1;
   $("reader-next").disabled = readerPage >= printedPages();
@@ -568,7 +700,7 @@ async function requestQuote(sequence) {
     quote = null; quoteState = "invalid"; renderQuote(); return;
   }
   try {
-    const result = await api("/api/quote", upload ? {...order, upload_id: upload.upload_id} : order);
+    const result = await api("/api/quote", orderBody(order));
     if (sequence !== quoteSequence) return;
     quote = result;
     quoteState = result.type === "quote" ? "ok" : "error";
@@ -614,9 +746,9 @@ function updateSummary() {
 function blocker() {
   if (!connected) return "店铺暂时连不上，恢复连接后即可支付。";
   if (view && !view.shop_enabled) return "这个数据目录不是经营模式，无法下单。";
-  if (uploading) return "正在上传文件…";
-  if (!upload) return "先选择要打印的文件。";
-  if (upload.status === "converting") return "正在准备文档预览，完成后即可下单。";
+  if (uploadCount || uploading) return "正在上传文件…";
+  if (!hasDocs()) return "先选择要打印的文件。";
+  if (docs.some(doc => doc.record && doc.record.status === "converting")) return "正在准备文档预览，完成后即可下单。";
   if (quoteState === "ok") return "";
   if (quoteState === "pending") return "正在向店铺确认报价…";
   return "当前设置暂时无法下单，原因见上方说明。";
@@ -635,7 +767,8 @@ function openPayment() {
   if (blocker()) return;
   const order = options();
   $("pay-total").textContent = text.money(quote.quoted_cents);
-  $("pay-document").textContent = upload.name;
+  const name = primaryRecord() ? primaryRecord().name : "";
+  $("pay-document").textContent = docs.length > 1 ? `${name} 等${docs.length}份` : name;
   $("pay-spec").textContent = `${text.spec(order)} · ${order.pages} 页 × ${order.copies} 份`;
   $("pay-fee").textContent = `${order.pages * order.copies} 面 · ${quote.paper_sheets} 张纸 · 原价 ${text.money(quote.base_cents)} · ${DISCOUNTS[order.service]}`;
   $("pay-pickup").textContent = $("eta").textContent;
@@ -671,11 +804,11 @@ function setPaying(busy) {
 }
 
 async function confirmPayment() {
-  if (!upload) return;
+  if (!hasDocs()) return;
   setPaying(true);
   $("pay-status").textContent = "支付处理中…";
   try {
-    const result = await api("/api/submit", {...options(), upload_id: upload.upload_id});
+    const result = await api("/api/submit", orderBody(options()));
     $("pay-dialog").close();
     highlight = result.job_id;
     clearDocument(true);
@@ -725,7 +858,7 @@ function setMotion(reduced) {
 
 function wire() {
   window.addEventListener("hashchange", showPage);
-  $("file").addEventListener("change", () => chooseFile($("file").files[0]));
+  $("file").addEventListener("change", () => chooseFiles($("file").files));
   $("remove-file").addEventListener("click", () => clearDocument(false));
   for (const stepper of document.querySelectorAll(".stepper")) {
     const input = $(stepper.dataset.for);
@@ -790,10 +923,19 @@ function wire() {
 }
 
 async function restoreUpload() {
-  // Mobile browsers may reload the page after the file picker; keep the upload.
-  const identifier = storage.get("sessionStorage", "paperroom.upload");
-  if (!identifier || !/^[a-f0-9]{32}$/.test(identifier)) return;
-  try { applyUpload(await api(`/api/upload/${identifier}`), true); } catch { storage.set("sessionStorage", "paperroom.upload", null); }
+  // Mobile browsers may reload the page after the file picker; keep the uploads.
+  const raw = storage.get("sessionStorage", "paperroom.upload");
+  if (!raw) return;
+  let identifiers;
+  try { identifiers = JSON.parse(raw); } catch { identifiers = null; }
+  if (!Array.isArray(identifiers) || !identifiers.length || !identifiers.every(id => /^[a-f0-9]{32}$/.test(id))) {
+    storage.set("sessionStorage", "paperroom.upload", null);
+    return;
+  }
+  try {
+    for (const identifier of identifiers) applyUpload(await api(`/api/upload/${identifier}`), false);
+    if (docs.length) { aspects.clear(); rotation = 0; renderFileList(); syncPages(); renderProof(); }
+  } catch { storage.set("sessionStorage", "paperroom.upload", null); }
 }
 
 wire();
