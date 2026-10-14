@@ -8,7 +8,7 @@
 cmake --preset dev
 cmake --build --preset dev --parallel 4
 ./build/dev/bin/campus-print --demo-mode --demo-workload --data-dir runtime/shop-demo                  # 老板后台
-./build/dev/bin/campus-print --role student --student 2024000001 --data-dir runtime/shop-demo       # 学生端
+python tools/classroom_web.py --coordinator ./build/dev/bin/print-coordinator --state-dir runtime/shop-demo --open-browser # 学生网页
 ```
 
 两个界面是连接同一后台的两个进程，使用相同的 `--data-dir`。老板后台右上角的“打开学生端”会以相同数据目录启动学生端。

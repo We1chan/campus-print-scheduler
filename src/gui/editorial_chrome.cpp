@@ -9,7 +9,7 @@ EditorialChrome::EditorialChrome(QWidget *window, qreal titleHeight, qreal refer
         : QObject(window), window_(window), titleHeight_(titleHeight), referenceHeight_(referenceHeight),
           resizable_(resizable) {
         window->setWindowFlag(Qt::FramelessWindowHint);
-        window->setWindowIcon(editorialBrandIcon());
+        window->setWindowIcon(window->parentWidget() ? window->parentWidget()->windowIcon() : QApplication::windowIcon());
         qApp->installEventFilter(this);
 #ifdef Q_OS_WIN
         if (QGuiApplication::platformName() == QLatin1String("windows"))

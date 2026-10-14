@@ -1,12 +1,86 @@
 """Run deployed binaries with SDK paths removed; not a substitute for clean-OS acceptance."""
 import argparse
+from http.cookiejar import CookieJar
+import importlib.util
 import json
 import os
 from pathlib import Path
 import subprocess
 import sys
 import tempfile
+import threading
 import time
+from urllib.parse import quote
+from urllib.request import build_opener, HTTPCookieProcessor, ProxyHandler, Request
+
+
+def sample_pdf():
+    drawing = "0.8 0.2 0.1 rg 30 30 100 100 re f\n"
+    objects = ["<< /Type /Catalog /Pages 2 0 R >>",
+               "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+               "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Contents 4 0 R >>",
+               f"<< /Length {len(drawing)} >>\nstream\n{drawing}endstream"]
+    output, offsets = b"%PDF-1.4\n", []
+    for index, body in enumerate(objects, 1):
+        offsets.append(len(output))
+        output += f"{index} 0 obj\n{body}\nendobj\n".encode()
+    table = len(output)
+    output += f"xref\n0 {len(objects) + 1}\n0000000000 65535 f \n".encode()
+    output += b"".join(f"{offset:010d} 00000 n \n".encode() for offset in offsets)
+    return output + f"trailer\n<< /Size {len(objects) + 1} /Root 1 0 R >>\nstartxref\n{table}\n%%EOF\n".encode()
+
+
+def verify_web_client(package, coordinator, state):
+    """Exercise the packaged gateway against the same backend as the owner."""
+    sys.path.insert(0, str(package / ".tools" / "pdfium"))
+    spec = importlib.util.spec_from_file_location("packaged_web", package / "tools" / "classroom_web.py")
+    web = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(web)
+    application = web.Application(coordinator, state, "http://127.0.0.1", "PACKAGE")
+    if not application.pdf.available:
+        raise RuntimeError("Packaged web PDF renderer cannot be loaded")
+    server = web.Server(("127.0.0.1", 0), application)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    client = build_opener(ProxyHandler({}), HTTPCookieProcessor(CookieJar()))
+    base = f"http://127.0.0.1:{server.server_address[1]}"
+
+    def read(path, body=None, headers=None):
+        with client.open(Request(base + path, body, headers or {}), timeout=15) as response:
+            return response.read()
+
+    try:
+        read("/join?code=PACKAGE")
+        csrf = json.loads(read("/api/state"))["csrf"]
+        for path in ("/", "/present", "/style.css", "/app.js", "/present.js", "/brand.png", "/favicon.png"):
+            if not read(path):
+                raise RuntimeError("Empty packaged web asset: " + path)
+        upload = json.loads(read("/api/upload", sample_pdf(), {
+            "X-CSRF-Token": csrf, "X-File-Name": quote("网页 中文任务.pdf"),
+            "Content-Type": "application/octet-stream"}))
+        if not read(f"/api/preview/{upload['upload_id']}/1?w=480").startswith(b"\x89PNG"):
+            raise RuntimeError("Packaged web preview did not render")
+        order = dict(upload_id=upload["upload_id"], pages=1, copies=1, paper="a4",
+                     color=False, duplex=False, service="standard", payment="wechat")
+        headers = {"X-CSRF-Token": csrf, "Content-Type": "application/json"}
+        body = json.dumps(order).encode()
+        if json.loads(read("/api/quote", body, headers))["quoted_cents"] <= 0:
+            raise RuntimeError("Packaged web quote failed")
+        submitted = json.loads(read("/api/submit", body, headers))
+        deadline = time.monotonic() + 15
+        while time.monotonic() < deadline:
+            rows = application.backend.snapshot(fresh=True)["jobs"]
+            row = next((item for item in rows if item["job_id"] == submitted["job_id"]), None)
+            if row and row["state"] == "completed":
+                break
+            time.sleep(.1)
+        else:
+            raise RuntimeError("Packaged web order did not finish printing")
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+        application.pool.shutdown(wait=True)
 
 
 def main():
@@ -17,11 +91,10 @@ def main():
     windows = sys.platform == "win32"
     binaries = package if windows else package / "CampusPrint.app" / "Contents" / "MacOS"
     suffix = ".exe" if windows else ""
-    student_gui = binaries / ("campus-print" + suffix)
-    owner_gui = student_gui
+    owner_gui = binaries / ("campus-print" + suffix)
     if windows:
         from windows_desktop import check_gui_binary, check_backend_consoles
-        check_gui_binary(student_gui, expected_icon=package / "paperroom.ico")
+        check_gui_binary(owner_gui, expected_icon=package / "paperroom-merchant-v3.ico")
         merchant_gui = binaries / "campus-print-merchant.exe"
         if merchant_gui.is_file():
             owner_gui = merchant_gui
@@ -38,16 +111,6 @@ def main():
                                 env=env, cwd=root, capture_output=True, timeout=20)
         if result.returncode:
             raise RuntimeError(f"Deployed GUI failed ({result.returncode}): {result.stderr!r}")
-        # A separate directory exercises the student's own detached backend launch.
-        student_root = root / "student"
-        student = subprocess.run([str(student_gui), "--role", "student",
-                                  "--smoke-test", "--data-dir", str(student_root)],
-                                 env=env, cwd=root, capture_output=True, timeout=20)
-        if student.returncode:
-            raise RuntimeError(f"Deployed student frontend failed ({student.returncode}): {student.stderr!r}")
-        pdfium_name = "pdfium.dll" if windows else "libpdfium.dylib"
-        if not (binaries / pdfium_name).is_file() or not (package / "licenses" / "pdfium").is_dir():
-            raise RuntimeError("Deployed package is missing its PDF renderer or licenses")
         coordinator = binaries / ("print-coordinator" + suffix)
         def request(command):
             response = subprocess.run([str(coordinator), "--state-dir", str(root),
@@ -56,20 +119,6 @@ def main():
             if response.returncode:
                 raise RuntimeError(f"Deployed coordinator request failed: {response.stderr} {response.stdout}")
             return json.loads(response.stdout)
-        # Validate and stop the student's otherwise persistent backend as well.
-        student_coordinator = subprocess.run([str(coordinator), "--state-dir", str(student_root),
-                                              "--request", '{"type":"snapshot"}'],
-                                             env=env, capture_output=True, timeout=12)
-        try:
-            if student_coordinator.returncode:
-                raise RuntimeError("Student frontend did not start its own coordinator")
-            if windows:
-                observed = check_backend_consoles(json.loads(student_coordinator.stdout)["coordinator_pid"])
-                if "print-coordinator.exe" not in observed:
-                    raise RuntimeError("Student coordinator console check did not observe a live process")
-        finally:
-            subprocess.run([str(coordinator), "--state-dir", str(student_root), "--request", '{"type":"shutdown"}'],
-                           env=env, capture_output=True, check=True, timeout=12)
         try:
             request(dict(type="set_paused", paused=True))
             request(dict(type="submit_batch", jobs=[
@@ -101,6 +150,7 @@ def main():
                 output = root / "output" / (item["job_id"] + ".txt")
                 if item["attempts"] != 1 or output.read_text(encoding="utf-8").count("sheet=") != item["pages"]:
                     raise RuntimeError("Deployed persistent job duplicated or produced incorrect output")
+            verify_web_client(package, coordinator, root)
         finally:
             request(dict(type="shutdown"))
             deadline = time.monotonic() + 5
@@ -122,7 +172,7 @@ def main():
         content = (root / "package-job.txt").read_text(encoding="utf-8")
         if content.count("sheet=") != 2:
             raise RuntimeError("Deployed worker output does not match the requested job")
-    print("Deployed GUI reopen, persistent coordinator queue and supervisor/worker printing passed with SDK paths removed.")
+    print("Deployed owner GUI, student web client, persistent queue and supervisor/worker printing passed with SDK paths removed.")
     if windows:
         print("Windows GUI subsystem, all embedded app icon sizes/bytes and console-free coordinator/supervisor/worker verified.")
 

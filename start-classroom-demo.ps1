@@ -14,8 +14,9 @@ $StateDirectory = [IO.Path]::GetFullPath($StateDirectory)
 
 # Prefer the source build so a historical demo package cannot hide new changes.
 $taskApp = @(
+    (Join-Path $taskRoot 'build/ci/bin/campus-print.exe'),
     (Join-Path $taskRoot 'build/dev/bin/campus-print.exe'),
-    (Join-Path $taskRoot 'dist/paper-demo/campus-print.exe')
+    (Join-Path $taskRoot 'campus-print.exe')
 ) | Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1
 if (-not $taskApp) { throw 'Build campus-print first; see docs/classroom-demo.md.' }
 $taskCoordinator = Join-Path (Split-Path $taskApp) 'print-coordinator.exe'

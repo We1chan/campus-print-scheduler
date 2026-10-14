@@ -18,11 +18,6 @@ def main():
     binaries = args.bin_dir.resolve()
     suffix = ".exe" if sys.platform == "win32" else ""
     scenarios = [("gui_tests", "native-gui-tests.txt", [
-        "officeDocumentsRealPreview", "officeStudentPreviewAndReplacement",
-        "previewPreservesMixedPageDirections", "editorialMotionRetargeting",
-        "editorialAnimationFrameBudget", "editorialReceiptCodes",
-        "editorialHoverSpreadsAndReturns", "editorialWindowChrome",
-        "editorialDocumentPreview", "studentOrderPaymentAndForecast",
         "persistentPoliciesAndReport", "backendCrashDuringCancellation",
         "runningCancelFaultAndReconnect", "compactWindowKeepsControlsReachable"])]
     if sys.platform == "win32" and (binaries / "merchant_tests.exe").is_file():

@@ -6,7 +6,7 @@
 
 ## 本分支：纸间店主端与调度工作台
 
-分支：`feat/merchant-editorial`。Windows 本地入口为根目录 `start-merchant.vbs`；完整发布包中使用 `start-merchant.vbs` 连接持久后台，或使用 `preview-merchant.vbs` 打开独立样例。
+当前分支：`main`。Windows 本地入口为根目录 `start-merchant.vbs`；完整发布包中使用 `start-merchant.vbs` 连接持久后台，或使用 `preview-merchant.vbs` 打开独立样例。
 
 | 页面 | 主要功能 |
 | --- | --- |
@@ -23,19 +23,19 @@
 
 两端沿用统一字体、字号与平面按钮反馈；四页使用同尺寸纸面横幅和相同指标分割，窗口保留浅色轮廓与阴影，店铺及策略菜单使用淡灰圆角阴影。店主专用图标覆盖桌面、程序与任务栏。
 
-## 本分支：纸间学生端
+## 学生端：网页
 
-分支：`feat/print-editorial`。Windows 使用根目录 `start-editorial.vbs`，或完整发布包中的 `start-student.vbs`；源码启动必须指定 `--role student`，直接运行 EXE 默认打开老板端。
+学生端只保留 `tools/classroom/` 网页和 `tools/classroom_web.py` HTTP 网关。Windows 运行 `start-classroom-demo.ps1` 打开老板窗口与扫码展示页，学生通过手机或电脑浏览器进入。
 
-| 顶栏页面 | 主要功能 |
+| 页面 | 主要功能 |
 | --- | --- |
-| 下单打印 | 选择本地 PDF、图片、文本及 Word/PPT/Excel，纸叠预览、单双面翻页和放大阅读，选择打印规格与服务、查看报价并模拟支付 |
-| 我的订单 | 查看本人订单、状态、取件码和后台预计时间，取消等待中的订单 |
-| 排队情况 | 查看当前队列、设备进度和预计清空时间，展示本人进行中订单及可取件数量 |
+| 下单打印 | 上传 PDF、图片、文本及 Word/PPT/Excel，浏览真实预览，选择打印规格与服务，查看报价并模拟支付 |
+| 我的订单 | 按浏览器会话查看本人订单、进度、取件码与后台预计时间，取消自己的订单 |
+| 排队情况 | 查看设备、匿名等待队列与预计清空时间 |
 
-最近的界面修复：订单与排队页的摘要文字随窗口尺寸调整字号、边距和行距，避免文字遮挡；Windows 窗口增加浅色轮廓、系统圆角与阴影，保留自绘标题栏及窗口操作。文档预览、纸叠悬停动画、减少动效和原有下单流程继续保留。
+上传原件保存在网关指定数据目录，coordinator 只接收订单元数据。网页与老板端使用同一状态目录共享队列；支付和打印仍为模拟。旧 Qt 学生窗口、桌面预览/动画和学生 VBS 入口已删除，`--role student` 不再支持。
 
-**下单、付款确认和打印仍使用模拟后端；本地文档正文不会传给店主。** 两端只有使用相同 `--data-dir` 才共享订单。桌面入口的本地数据目录约定见 [学生端交接与部署](docs/student-handoff.md)，具体行为和验证见 [设计与验证](docs/editorial-frontend.md)。店主端的调度工作台已在本地合并，运行老板端即可进入。
+启动、预览依赖和验收见 [学生端交接](docs/student-handoff.md) 与 [网页课堂演示](docs/classroom-demo.md)。
 
 ## 当前交付：v0.2 经营调度
 
@@ -54,8 +54,6 @@
 
 [经营规则与演示说明](docs/shop.md) · [实验结果](docs/shop-results.md) · [协议契约](docs/interfaces.md)
 
-本分支提供「纸间」学生端：俯视纸张工作台、真实本地文档预览、无系统标题栏窗口、悬停展开、主题订单/队列与模拟支付。代理接手与部署先读 [学生端交接](docs/student-handoff.md)，视觉及性能证据见 [设计与验证](docs/editorial-frontend.md)。Windows 的学生入口为 `start-editorial.vbs` 或发布包 `start-student.vbs`；原 `start-studio-demo.cmd` 仍用于两端演示。
-
 本分支另提供按四张确认概念图实现的「纸间」店主端，默认老板入口包含订单工作台、打印队列、设备管理和营业统计。运行 `--merchant-showcase` 查看独立交互样例；真实模式继续连接共同持久后台。启动方式、实际截图、功能与协议边界见 [店主端说明](docs/merchant-frontend.md)。
 课堂互动新增 [手机扫码演示](docs/classroom-demo.md)：手机网页上传、报价与模拟下单，进入同一后台队列；Windows 运行 `start-classroom-demo.ps1` 可打开老板窗口和二维码页。支持局域网演示，之后可经 ECS HTTPS + SSH 反向隧道接入域名。
 
@@ -63,7 +61,7 @@
 cmake --preset dev
 cmake --build --preset dev --parallel 4
 ./build/dev/bin/campus-print --demo-mode --demo-workload --data-dir runtime/shop-demo   # 老板后台
-./build/dev/bin/campus-print --role student --data-dir runtime/shop-demo                # 学生端，另一个终端
+python tools/classroom_web.py --coordinator ./build/dev/bin/print-coordinator --state-dir runtime/shop-demo --open-browser # 学生网页，另一个终端
 ```
 
 使用新的经营数据目录；原有目录不会被自动覆盖。新快照为 schema 3，支持读取 schema 1 / 2。预计时间是估算而非承诺，支付与学号均为模拟。以下是继续沿用的后台与课程基础：

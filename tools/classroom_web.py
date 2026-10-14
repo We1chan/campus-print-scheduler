@@ -159,27 +159,28 @@ class PdfEngine:
 
 
 def office_executable():
-    # Same discovery as OfficePreview::executable(), plus the private copy that
-    # tools/setup_office_preview.py installs. An explicit override is authoritative.
+    # Prefer the bundled engine, then the private development installation.
+    # An explicit override is authoritative.
     explicit = os.environ.get("CPS_OFFICE_EXECUTABLE")
     if explicit is not None:
         path = Path(explicit)
         return path if path.is_absolute() and path.is_file() else None
     candidates = []
     if sys.platform == "win32":
-        roots = [ROOT / ".tools" / "libreoffice"] + [Path(os.environ[name]) / "LibreOffice" for name in
+        roots = [ROOT / "office", ROOT / ".tools" / "libreoffice"] + [Path(os.environ[name]) / "LibreOffice" for name in
                                                      ("ProgramW6432", "ProgramFiles", "ProgramFiles(x86)") if os.environ.get(name)]
         candidates += [root / "program" / name for root in roots for name in ("soffice.com", "soffice.exe")]
         candidates += [shutil.which("soffice.com"), shutil.which("soffice.exe")]
     elif sys.platform == "darwin":
-        candidates += [ROOT / ".tools/libreoffice/LibreOffice.app/Contents/MacOS/soffice",
+        candidates += [ROOT / "office/LibreOffice.app/Contents/MacOS/soffice",
+                       ROOT / ".tools/libreoffice/LibreOffice.app/Contents/MacOS/soffice",
                        Path("/Applications/LibreOffice.app/Contents/MacOS/soffice")]
     candidates += [shutil.which("libreoffice"), shutil.which("soffice")]
     return next((Path(item) for item in candidates if item and Path(item).is_file()), None)
 
 
 class OfficeConverter:
-    """One background LibreOffice conversion at a time, isolated like the Qt preview."""
+    """One background LibreOffice conversion at a time, with a private profile."""
     TIMEOUT = 90
     CAPACITY = 30
 

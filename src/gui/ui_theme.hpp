@@ -198,23 +198,12 @@ QFrame#studioRail QPushButton[role="nav"] { color: #62687D; background: transpar
 QFrame#studioRail QPushButton[role="nav"]:checked { color: #4548E8; background: transparent; border-bottom: 2px solid #4548E8; }
 QFrame#studioRail QPushButton[role="nav"]:hover { color: #4548E8; background: #F4F5FE; }
 QFrame#studioRail QPushButton[role="nav"]:focus { border: 1px solid #4548E8; }
-QLabel#studentPageTitle { color: #24273B; font-size: 39px; font-weight: 600; }
-QLabel[role="atelierSubtitle"] { color: #73788E; font-size: 15px; }
-QLabel[role="atelierHint"] { color: #73788E; font-size: 12px; padding-top: 18px; }
-QFrame[role="atelierForm"], QFrame[role="atelierStage"] { background: transparent; border: none; }
-QFrame[role="atelierReceipt"] { background: transparent; border: none; border-left: 1px solid #DFE2EF; }
-QFrame[role="atelierDock"] { background: white; border: 1px solid #E1E4F2; border-radius: 14px; }
 QLabel[role="price"] { color: #4548E8; font-size: 42px; }
 QFrame[role="summary"] { background: transparent; border: none; }
 QPushButton[role="choice"]:checked { background: #EEEEFF; color: #373ADB; border-color: #4548E8; }
 QPushButton[role="primary"] { background: #4548E8; border-color: #4548E8; border-radius: 12px; padding: 13px 18px; }
 QPushButton[role="primary"]:hover { background: #373ADB; border-color: #373ADB; }
 QPushButton[role="primary"]:disabled { background: #C5C7EC; border-color: #C5C7EC; color: #FFFFFF; }
-QPushButton[role="proofAction"] { color: #4548E8; background: #FFFFFF; border: 1px solid #E8E9F4; border-radius: 32px; padding: 0; font-size: 12px; }
-QPushButton[role="proofAction"]:hover { color: #373ADB; border-color: #4548E8; background: #F9F9FF; }
-QPushButton[role="proofAction"]:checked { color: white; background: #4548E8; border-color: #4548E8; }
-QPushButton[role="proofAction"]:focus { border: 2px solid #4548E8; }
-QPushButton[role="proofAction"]:disabled { color: #A1A5BD; background: #FAFAFE; border-color: #E8E9F4; }
 )");
 }
 
@@ -329,14 +318,7 @@ inline QWidget* brand(Icon kind, const QString& title, const QString& subtitle) 
 }
 
 struct Tint { QColor ink, fill; };
-inline Tint tint(const QString& name, bool editorial = false) {
-    if (editorial) {
-        if (name == QLatin1String("ready")) return {QColor("#B93424"), QColor("#FFF0E9")};
-        if (name == QLatin1String("waiting")) return {QColor("#786757"), QColor("#F3EEE6")};
-        if (name == QLatin1String("error")) return {QColor("#9E3025"), QColor("#FCE7E2")};
-        if (name == QLatin1String("info")) return {QColor("#14213E"), QColor("#EEF0F2")};
-        return {QColor("#7B7E82"), QColor("#F1F0EC")};
-    }
+inline Tint tint(const QString& name) {
     if (name == QLatin1String("ready")) return {QColor("#267663"), QColor("#EAF5F1")};
     if (name == QLatin1String("waiting")) return {QColor("#805817"), QColor("#FAF2E4")};
     if (name == QLatin1String("error")) return {QColor("#A34239"), QColor("#FBEDEA")};
@@ -359,15 +341,14 @@ struct Cell {
 
 class CellDelegate : public QStyledItemDelegate {
 public:
-    explicit CellDelegate(QObject* parent = nullptr, bool editorial = false)
-        : QStyledItemDelegate(parent), editorial_(editorial) {}
+    explicit CellDelegate(QObject* parent = nullptr) : QStyledItemDelegate(parent) {}
     void paint(QPainter* painter, const QStyleOptionViewItem& option, const QModelIndex& index) const override {
         painter->save();
         painter->setClipRect(option.rect);
         painter->setRenderHint(QPainter::Antialiasing);
         painter->fillRect(option.rect, QColor(option.state.testFlag(QStyle::State_Selected)
-            ? editorial_ ? "#FFF2EC" : "#EEEEFC" : "#FFFFFF"));
-        painter->setPen(QColor(editorial_ ? "#E5E2DC" : "#EDF0F5"));
+            ? "#EEEEFC" : "#FFFFFF"));
+        painter->setPen(QColor("#EDF0F5"));
         painter->drawLine(option.rect.bottomLeft(), option.rect.bottomRight());
         const QRect area = option.rect.adjusted(10, 0, -10, 0);
         const auto value = index.data().toString();
@@ -375,7 +356,7 @@ public:
         const auto emphasis = index.data(EmphasisRole).toString();
         painter->setFont(cellFont(option.font, emphasis, !toneName.isEmpty()));
         if (!toneName.isEmpty()) {
-            const auto colors = tint(toneName, editorial_);
+            const auto colors = tint(toneName);
             const int width = std::min(area.width(), painter->fontMetrics().horizontalAdvance(value) + 18);
             const QRect pill(area.left(), area.center().y() - 11, width, 24);
             painter->setPen(Qt::NoPen); painter->setBrush(colors.fill); painter->drawRoundedRect(pill, 6, 6);
@@ -387,16 +368,16 @@ public:
             painter->drawText(QRect(area.left(), area.top() + 6, area.width(), 18), Qt::AlignLeft | Qt::AlignVCenter,
                               painter->fontMetrics().elidedText(value, Qt::ElideRight, area.width()));
             const QRectF track(area.left(), area.bottom() - 11, std::min(area.width(), 120), 4);
-            painter->setPen(Qt::NoPen); painter->setBrush(QColor(editorial_ ? "#E9E5DF" : "#E4E9F2")); painter->drawRoundedRect(track, 2, 2);
+            painter->setPen(Qt::NoPen); painter->setBrush(QColor("#E4E9F2")); painter->drawRoundedRect(track, 2, 2);
             if (ratio > 0) {
-                painter->setBrush(QColor(editorial_ ? "#D63D29" : "#4548E8"));
+                painter->setBrush(QColor("#4548E8"));
                 painter->drawRoundedRect(QRectF(track.left(), track.top(), std::max(4., track.width() * ratio), 4), 2, 2);
             }
         } else {
-            painter->setPen(QColor(emphasis == QLatin1String("accent") ? editorial_ ? "#D63D29" : "#373ADB"
-                : emphasis == QLatin1String("strong") ? editorial_ ? "#14213E" : "#24273B"
-                : emphasis == QLatin1String("muted") ? editorial_ ? "#81838A" : "#8A96A9"
-                : editorial_ ? "#3E485B" : "#3E4A60"));
+            painter->setPen(QColor(emphasis == QLatin1String("accent") ? "#373ADB"
+                : emphasis == QLatin1String("strong") ? "#24273B"
+                : emphasis == QLatin1String("muted") ? "#8A96A9"
+                : "#3E4A60"));
             painter->drawText(area, Qt::AlignLeft | Qt::AlignVCenter, painter->fontMetrics().elidedText(value, Qt::ElideRight, area.width()));
         }
         painter->restore();
@@ -409,7 +390,6 @@ public:
         return {width, 42};
     }
 private:
-    bool editorial_;
     static QFont cellFont(QFont font, const QString& emphasis, bool pill) {
         font.setPixelSize(pill ? 12 : 13);
         if (emphasis == QLatin1String("strong") || emphasis == QLatin1String("accent")) font.setWeight(QFont::DemiBold);
@@ -418,11 +398,11 @@ private:
 };
 
 // A read-only list with the shared row height, header and cell painting.
-inline QTableWidget* listTable(const char* name, const QStringList& headers, bool editorial = false) {
+inline QTableWidget* listTable(const char* name, const QStringList& headers) {
     auto* view = new QTableWidget(0, static_cast<int>(headers.size()));
     view->setObjectName(name);
     view->setHorizontalHeaderLabels(headers);
-    view->setItemDelegate(new CellDelegate(view, editorial));
+    view->setItemDelegate(new CellDelegate(view));
     view->horizontalHeader()->setSectionResizeMode(QHeaderView::Stretch);
     view->horizontalHeader()->setDefaultAlignment(Qt::AlignLeft | Qt::AlignVCenter);
     view->horizontalHeader()->setHighlightSections(false);
@@ -483,7 +463,7 @@ inline QDialog* confirm(QWidget* parent, const char* name, const QString& title,
     return dialog;
 }
 
-// Shared by the owner console and the student client so both render Chinese text
+// Owner console font fallback for Chinese text
 // with an installed CJK family instead of fallback boxes.
 inline void applyTheme(QWidget& window) {
     QFont interfaceFont = window.font();

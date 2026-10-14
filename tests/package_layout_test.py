@@ -27,7 +27,7 @@ class PackageLayoutTests(unittest.TestCase):
             source, qt, output = root / "bin", root / "qt", root / "release"
             office = root / "vendor/LibreOffice.app"
             for name in ("campus-print", "print-coordinator", "print-supervisor",
-                         "print-worker", "scheduler-replay", "shop-experiments", "libpdfium.dylib"):
+                         "print-worker", "scheduler-replay", "shop-experiments"):
                 source.mkdir(exist_ok=True)
                 (source / name).write_bytes(b"binary fixture")
             qt.mkdir()
@@ -41,6 +41,13 @@ class PackageLayoutTests(unittest.TestCase):
             licenses = root / ".tools/pdfium/pypdfium2-fixture.dist-info/licenses"
             licenses.mkdir(parents=True)
             (licenses / "LICENSE").touch()
+            renderer = root / ".tools/pdfium/pypdfium2"
+            renderer.mkdir()
+            (renderer / "__init__.py").touch()
+            (root / "tools").mkdir()
+            (root / "tools/classroom_web.py").touch()
+            shutil.copytree(script.parents[1] / "tools/classroom", root / "tools/classroom")
+            shutil.copytree(script.parents[1] / "assets/editorial", root / "assets/editorial")
             (root / "docs/images").mkdir(parents=True)
             for document in script.parents[1].joinpath("docs").glob("*.md"):
                 (root / "docs" / document.name).touch()
@@ -84,6 +91,9 @@ class PackageLayoutTests(unittest.TestCase):
             self.assertIn(office, verified)
             self.assertIn(copied, verified)
             self.assertIn(output / "CampusPrint.app", verified)
+            self.assertTrue((output / "tools/classroom/index.html").is_file())
+            self.assertTrue((output / ".tools/pdfium/pypdfium2/__init__.py").is_file())
+            self.assertFalse((output / "start-student.vbs").exists())
 
 
 if __name__ == "__main__":

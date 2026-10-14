@@ -45,7 +45,7 @@ using namespace cps::gui;
 using namespace cps::gui::merchant;
 
 // The static cps_gui library does not automatically retain its resource object.
-static void initializeMerchantTestResources() { Q_INIT_RESOURCE(editorial_assets); }
+static void initializeMerchantTestResources() { Q_INIT_RESOURCE(merchant_assets); }
 
 class MerchantTests : public QObject {
     Q_OBJECT
@@ -494,7 +494,7 @@ private slots:
         QVERIFY(QTest::qWaitForWindowExposed(&window));
         QVERIFY(!window.windowIcon().isNull());
         QVERIFY(!window.windowIcon().pixmap(32,32).isNull());
-        QVERIFY(window.windowIcon().pixmap(32,32).toImage()!=editorialBrandIcon().pixmap(32,32).toImage());
+        QCOMPARE(window.windowIcon().pixmap(32,32).toImage(), merchantBrandIcon().pixmap(32,32).toImage());
 #ifdef Q_OS_WIN
         if(QGuiApplication::platformName()==QStringLiteral("windows")) {
             IPropertyStore* store=nullptr;

@@ -1,4 +1,4 @@
-"""Export the existing two-paper vector mark as PNG and Windows ICO (stdlib only)."""
+"""Export the existing two-paper web brand as PNG (stdlib only)."""
 from pathlib import Path
 import struct
 import zlib
@@ -39,13 +39,6 @@ def png(size):
             + chunk(b"IDAT", zlib.compress(bytes(rows), 9)) + chunk(b"IEND", b""))
 
 
-sizes = [16, 24, 32, 48, 64, 128, 256]
-images = [png(size) for size in sizes]
-offset = 6 + 16 * len(sizes)
-entries = bytearray()
-for size, data in zip(sizes, images):
-    (root / f"brand-{size}.png").write_bytes(data)
-    entries.extend(struct.pack("<BBBBHHII", size % 256, size % 256, 0, 0, 1, 32, len(data), offset))
-    offset += len(data)
-(root / "paperroom.ico").write_bytes(struct.pack("<HHH", 0, 1, len(sizes)) + entries + b"".join(images))
-print("Exported paperroom.ico and seven PNG sizes from the existing vector mark.")
+for size in (64, 128):
+    (root / f"brand-{size}.png").write_bytes(png(size))
+print("Exported the web brand and favicon PNGs from the existing vector mark.")

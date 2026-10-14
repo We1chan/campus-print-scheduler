@@ -2,7 +2,6 @@
 #include "merchant_shell.hpp"
 #include "merchant_dispatch_painter.hpp"
 #include "editorial_chrome.hpp"
-#include "document_preview.hpp"
 #include <QApplication>
 #include <QDesktopServices>
 #include <QFileDialog>
@@ -208,7 +207,7 @@ private:
             if(page==0)paintWorkbench(d,state,selection);else if(page==1)paintQueue(d,state,selection);else if(page==2)paintDevices(d,state,selection);else paintStats(d,state,selection);
         }
         p.fillRect(QRectF(0,0,1586,56),QColor("#FAFAF9"));d.rule(0,55,1586);
-        p.drawImage(QRectF(39,10,41,35),QImage(":/editorial/brand-128.png"));
+        p.drawImage(QRectF(39,10,41,35),QImage(":/merchant/icons-v3/brand-128.png"));
         d.text(92,8,63,38,QStringLiteral("纸间"),24,navy,true);p.setPen(ruleColor);p.drawLine(163,16,163,40);d.text(181,8,92,38,QStringLiteral("店主端"),16,slate);
         if(page==4){
             d.text(690,5,205,45,QStringLiteral("调度工作台"),18,navy,true,false,Qt::AlignCenter);p.fillRect(QRectF(735,52,115,4),red);

@@ -55,16 +55,23 @@ def main():
     destination.mkdir(parents=True, exist_ok=True)
     for name in names:
         shutil.copy2(source / (name + suffix), destination / (name + suffix))
-    pdfium_name = "pdfium.dll" if windows else "libpdfium.dylib"
-    pdfium = source / pdfium_name
-    if not pdfium.is_file():
-        parser.error("PDF preview renderer is missing; run tools/setup_pdfium.py, reconfigure and rebuild")
-    shutil.copy2(pdfium, destination / pdfium_name)
     root = Path(__file__).resolve().parents[1]
-    license_dirs = list((root / ".tools" / "pdfium").glob("pypdfium2-*.dist-info/licenses"))
+    pdfium = root / ".tools" / "pdfium"
+    if not (pdfium / "pypdfium2" / "__init__.py").is_file():
+        parser.error("Web PDF preview needs the Python renderer; run tools/setup_pdfium.py")
+    license_dirs = list(pdfium.glob("pypdfium2-*.dist-info/licenses"))
     if not license_dirs:
         parser.error("PDFium redistribution licenses are missing from .tools/pdfium")
     shutil.copytree(license_dirs[0], output / "licenses" / "pdfium")
+    shutil.copytree(pdfium, output / ".tools" / "pdfium", ignore=shutil.ignore_patterns("__pycache__", "*.pyc", "bin"))
+    (output / "tools").mkdir()
+    shutil.copy2(root / "tools" / "classroom_web.py", output / "tools" / "classroom_web.py")
+    shutil.copytree(root / "tools" / "classroom", output / "tools" / "classroom")
+    brand = output / "assets" / "editorial"
+    brand.mkdir(parents=True)
+    for name in ("brand-64.png", "brand-128.png"):
+        shutil.copy2(root / "assets" / "editorial" / name, brand / name)
+    shutil.copytree(root / "assets" / "editorial" / "payment-codes", brand / "payment-codes")
     if office:
         # Keep the full engine, filters, fonts and licenses; copying just the
         # executable does not create a usable Office converter.
@@ -105,7 +112,7 @@ def main():
             subprocess.run(["/usr/bin/codesign", "--verify", "--deep", "--strict", "--verbose=4", str(office_target)], check=True)
     root = Path(__file__).resolve().parents[1]
     shutil.copy2(root / "docs" / "release.md", output / "README-release.md")
-    for name in ("student-handoff.md", "editorial-frontend.md", "office-preview.md", "ci-validation.md", "interfaces.md", "team.md"):
+    for name in ("student-handoff.md", "classroom-demo.md", "office-preview.md", "ci-validation.md", "interfaces.md", "team.md"):
         shutil.copy2(root / "docs" / name, output / name)
     shutil.copy2(root / "docs" / "merchant-frontend.md", output / "merchant-frontend.md")
     shutil.copy2(root / "docs" / "merchant-validation.md", output / "merchant-validation.md")
@@ -113,19 +120,10 @@ def main():
     # Keep the design evidence links usable in the redistributed document.
     image_output = output / "images"
     image_output.mkdir()
-    for path in sorted((root / "docs" / "images").glob("editorial-*.png")):
-        shutil.copy2(path, image_output / path.name)
     for path in sorted((root / "docs" / "images").glob("merchant-*.png")):
         shutil.copy2(path, image_output / path.name)
     if windows:
-        (output / "start-student.vbs").write_text('''Option Explicit
-Dim fs, shell, root
-Set fs = CreateObject("Scripting.FileSystemObject")
-Set shell = CreateObject("WScript.Shell")
-root = fs.GetParentFolderName(WScript.ScriptFullName)
-shell.CurrentDirectory = root
-shell.Run Chr(34) & fs.BuildPath(root, "campus-print.exe") & Chr(34) & " --role student --data-dir " & Chr(34) & fs.BuildPath(root, "runtime\\shop") & Chr(34), 1, False
-''', encoding="ascii")
+        shutil.copy2(root / "start-classroom-demo.ps1", output / "start-classroom-demo.ps1")
         for launcher, flags in (("start-merchant.vbs", ""), ("preview-merchant.vbs", " --merchant-showcase")):
             (output / launcher).write_text('''Option Explicit
 Dim fs, shell, root
@@ -135,7 +133,6 @@ root = fs.GetParentFolderName(WScript.ScriptFullName)
 shell.CurrentDirectory = root
 shell.Run Chr(34) & fs.BuildPath(root, "campus-print-merchant.exe") & Chr(34) & "''' + flags + ''' --data-dir " & Chr(34) & fs.BuildPath(root, "runtime\\shop") & Chr(34), 1, False
 ''', encoding="ascii")
-        shutil.copy2(root / "assets" / "editorial" / "paperroom.ico", output / "paperroom.ico")
         shutil.copy2(root / "assets" / "merchant" / "paperroom-merchant.ico", output / "paperroom-merchant.ico")
         shutil.copy2(root / "assets" / "merchant" / "icons-v3" / "paperroom-merchant.ico", output / "paperroom-merchant-v3.ico")
     shutil.copy2(root / "docs" / "clean-up.md", output / "clean-up.md")

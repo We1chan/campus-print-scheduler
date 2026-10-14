@@ -40,7 +40,7 @@ void Painter::headline(qreal x,qreal y,qreal h,const QString& prefix,const QStri
     const QFontMetricsF metrics(font);
     const qreal prefixWidth=metrics.horizontalAdvance(prefix);
     const qreal accentWidth=metrics.horizontalAdvance(accent);
-    // The accent follows the same measured baseline as print_proof.hpp.
+    // Place the accent at the measured text baseline.
     p.setFont(font);p.setPen(navy);
     p.drawText(QRectF(x,y,prefixWidth+2,h),Qt::AlignLeft|Qt::AlignVCenter,prefix);
     p.setPen(red);

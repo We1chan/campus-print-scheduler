@@ -1,19 +1,19 @@
 # 纸间店主端
 
-分支 `feat/merchant-editorial`，独立工作树 `campus-print-merchant`，从学生端提交 `42f77a1` 建立。学生端原工作树与其未提交概念图文件均保留。
+店主端已合并到 `main`。学生端统一为网页，原 Qt 学生窗口和专属预览代码已移除；老板端仍使用共用窗口与对话框控件。
 
 ## 打开
 
-Windows 发布包中双击 `preview-merchant.vbs` 查看与概念图对应的交互样例；双击 `start-merchant.vbs` 连接真实持久队列。`start-student.vbs` 与真实店主端共同使用包内 `runtime/shop`，两端可以同时运行。样例完全独立，不读取或写入真实队列。
+Windows 发布包中双击 `preview-merchant.vbs` 查看与概念图对应的交互样例；双击 `start-merchant.vbs` 连接真实持久队列。学生通过网页进入，网关 `--state-dir` 指向老板端同一目录即可共享队列；Windows 可用 `start-classroom-demo.ps1` 同时启动老板端和网页。样例完全独立，不读取或写入真实队列。
 
-本机桌面的“纸间 · 店主工作台”通过源码根目录 `start-merchant.vbs` 启动最新的 `merchant-v13` 发布包，兼容已有旧版本。新版沿用 v3 的专用 `campus-print-merchant.exe` 和加大门店角标的图标；学生启动脚本继续使用原 `campus-print.exe`。已运行过 v1 时继续使用其 `runtime/shop` 队列；全新安装使用本工作树的 `runtime/merchant-shop`。两个数据目录均需要保留。现有学生快捷方式、品牌 PNG/ICO 和旧店主图标均保留，新版图标另存于 `assets/merchant/icons-v3/`，发布包另带 `paperroom-merchant-v3.ico`。
+本机桌面的“纸间 · 店主工作台”通过源码根目录 `start-merchant.vbs` 启动最新的 `merchant-v13` 发布包，兼容已有旧版本。新版沿用 v3 的专用 `campus-print-merchant.exe` 和加大门店角标的图标；`campus-print.exe` 也只提供老板端。已运行过 v1 时继续使用其 `runtime/shop` 队列；全新安装使用本工作树的 `runtime/merchant-shop`。两个数据目录均需要保留。网页品牌 PNG 和旧店主图标保留，新版图标另存于 `assets/merchant/icons-v3/`，发布包另带 `paperroom-merchant-v3.ico`。
 
 源码构建后的等价命令：
 
 ```powershell
 build/ci/bin/campus-print-merchant.exe --merchant-showcase
 build/ci/bin/campus-print-merchant.exe --data-dir runtime/shop
-build/ci/bin/campus-print.exe --role student --data-dir runtime/shop
+python tools/classroom_web.py --coordinator build/ci/bin/print-coordinator.exe --state-dir runtime/shop --open-browser
 ```
 
 开发启动须配置对应 Qt/MinGW DLL 的 PATH，发布包已包含运行库。旧老板控制台使用 `--classic-owner`；原有 legacy、demo-workload 入口仍保留。
