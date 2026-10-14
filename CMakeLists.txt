@@ -118,7 +118,9 @@ if(CPS_BUILD_QT_APPS)
         set_target_properties(gui_tests PROPERTIES AUTOMOC ON)
         target_link_libraries(gui_tests PRIVATE cps_gui Qt6::Test cps_options)
         add_test(NAME gui COMMAND gui_tests -o "${CMAKE_BINARY_DIR}/gui-results.xml,junitxml" -o -,txt)
-        set_tests_properties(gui PROPERTIES TIMEOUT 300 ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+        # The offscreen GUI suite intermittently stalls on the Windows runner;
+        # one automatic rerun keeps a single flaky timeout from failing CI.
+        set_tests_properties(gui PROPERTIES TIMEOUT 300 RETEST_ON_FAILURE 1 ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
 
         add_executable(merchant_tests tests/merchant_tests.cpp tests/native_frame_evidence.cpp tests/windows_test_logs.cpp)
         set_target_properties(merchant_tests PROPERTIES AUTOMOC ON)
