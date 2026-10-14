@@ -223,12 +223,12 @@ class ClassroomTests(unittest.TestCase):
         order.update(quoted_cents=1, customer="another-student", priority=100, job_id="forged")
         status, result = self.client.json("/api/quote", order)
         self.assertEqual(status, 200)
-        self.assertEqual(result["quoted_cents"], 1530)
+        self.assertEqual(result["quoted_cents"], 1454)
         self.assertEqual(result["paper_sheets"], 4)
         self.assertIn("estimated_finish_ms", result)
         # Every tier is priced by the backend; slower tiers are cheaper.
         tiers = result["tiers"]
-        self.assertEqual(tiers["flexible"], 1530)
+        self.assertEqual(tiers["flexible"], 1454)
         self.assertGreater(tiers["express"], tiers["standard"])
         self.assertGreater(tiers["standard"], tiers["flexible"])
         before = len(self.app.backend.snapshot(fresh=True)["jobs"])
@@ -244,7 +244,7 @@ class ClassroomTests(unittest.TestCase):
         self.assertNotEqual(row["customer"], "another-student")
         self.assertTrue(row["customer"].startswith("访客 "))
         self.assertEqual(row["priority"], 0)
-        self.assertEqual(row["quoted_cents"], 1530)
+        self.assertEqual(row["quoted_cents"], 1454)
         order["pages"] = 4
         self.assertEqual(self.client.json("/api/submit", order)[0], 409)
         # Persisted HMAC key and upload record survive gateway restart.

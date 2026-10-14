@@ -785,7 +785,7 @@ function openPayment() {
   const name = primaryRecord() ? primaryRecord().name : "";
   $("pay-document").textContent = docs.length > 1 ? `${name} 等${docs.length}份` : name;
   $("pay-spec").textContent = `${text.spec(order)} · ${order.pages} 页 × ${order.copies} 份`;
-  $("pay-fee").textContent = `${order.pages * order.copies} 面 · ${quote.paper_sheets} 张纸 · 原价 ${text.money(quote.base_cents)} · ${DISCOUNTS[order.service]}`;
+  $("pay-fee").textContent = `${order.pages * order.copies} 面 · ${quote.paper_sheets} 张纸 · 原价 ${text.money(quote.base_cents)} · ${DISCOUNTS[order.service]}${order.duplex ? " · 双面 95 折" : ""}`;
   $("pay-pickup").textContent = $("eta").textContent;
   $("pay-status").textContent = "";
   $("pay-status").className = "pay-status";

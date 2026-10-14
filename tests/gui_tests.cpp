@@ -80,9 +80,9 @@ private slots:
         auto* table = window.findChild<QTableView*>("jobsTable");
         QTRY_COMPARE(table->model()->rowCount(), 1);
         QTRY_COMPARE(table->model()->index(0, 3).data().toString(), QStringLiteral("已完成"));
-        QCOMPARE(table->model()->index(0, 8).data().toString(), QStringLiteral("¥15.30"));
-        QTRY_COMPARE(revenue->text(), QStringLiteral("¥15.30"));
-        QCOMPARE(window.findChild<QLabel*>("paid_counter")->text(), QStringLiteral("¥15.30"));
+        QCOMPARE(table->model()->index(0, 8).data().toString(), QStringLiteral("¥14.54"));
+        QTRY_COMPARE(revenue->text(), QStringLiteral("¥14.54"));
+        QCOMPARE(window.findChild<QLabel*>("paid_counter")->text(), QStringLiteral("¥14.54"));
         QCOMPARE(completed->text(), QStringLiteral("1 单"));
         QCOMPARE(window.findChild<QLabel*>("ordersOnTime")->text(), QStringLiteral("1 单"));
         // Search narrows the records; clearing it brings the order back.
@@ -121,11 +121,11 @@ private slots:
         refund->click();
         auto* confirmRefund = window.findChild<QDialog*>("refundDialog");
         QVERIFY(confirmRefund && confirmRefund->isVisible());
-        QCOMPARE(revenue->text(), QStringLiteral("¥15.30")); // nothing happens before the confirmation
+        QCOMPARE(revenue->text(), QStringLiteral("¥14.54")); // nothing happens before the confirmation
         if (!evidence.isEmpty()) QVERIFY(confirmRefund->grab().save(QDir(evidence).filePath("shop-refund.png")));
         confirmRefund->findChild<QPushButton*>("confirmAction")->click();
         QTRY_COMPARE(revenue->text(), QStringLiteral("¥0.00"));
-        QCOMPARE(window.findChild<QLabel*>("ledgerRefund")->text(), QStringLiteral("¥15.30"));
+        QCOMPARE(window.findChild<QLabel*>("ledgerRefund")->text(), QStringLiteral("¥14.54"));
         QTRY_VERIFY(!refund->isEnabled()); // already refunded in full
         window.close(); QTRY_VERIFY(!window.isVisible());
     }
