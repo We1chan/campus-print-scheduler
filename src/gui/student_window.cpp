@@ -1,5 +1,6 @@
 #include "student_window.hpp"
 #include "office_preview.hpp"
+#include "order_preview_store.hpp"
 #include "ui_theme.hpp"
 #include "editorial_surface.hpp"
 #include "editorial_chrome.hpp"
@@ -166,6 +167,7 @@ DocumentInfo inspectDocument(const QString &path) {
 StudentWindow::StudentWindow(WindowOptions options, const QString &studentId, QWidget *parent)
     : QMainWindow(parent) {
     paymentCodesDirectory_ = QDir(options.stateDirectory).filePath("payment-codes");
+    previewStoreDirectory_ = options.stateDirectory;
     setWindowTitle(QStringLiteral("纸间 · 俯视印刷编辑台"));
     setMinimumSize(920, 640);
     const auto available = screen()->availableGeometry();
@@ -786,7 +788,7 @@ void StudentWindow::clearDocument() {
     fileName_->setProperty("fullText", QVariant());
     fileName_->setText(QStringLiteral("拖入文件，或点击选择"));
     fileName_->setToolTip({});
-    file_->setText(QStringLiteral("PDF / Word / PPT / Excel / 图片 / 文本 · 本地预览"));
+    file_->setText(QStringLiteral("PDF / Word / PPT / Excel / 图片 / 文本 · 下单后店主可查看首页"));
     choose_->setText(QStringLiteral("选择文件"));
     remove_->hide();
     ui::restyle(drop_, "state", "");
@@ -1084,10 +1086,12 @@ void StudentWindow::applyOrderResult(bool accepted, const QString &id, const QSt
             paymentDialog_->findChild<QPushButton *>(QStringLiteral("paymentMethod_") + name)->setEnabled(true);
         return;
     }
+    const bool coverSaved = !documentChosen_ || saveOrderCover(previewStoreDirectory_,id,proof_->renderedPage(0));
     if (paymentDialog_)
         paymentDialog_->accept();
     ui::say(feedback_,
             QStringLiteral("支付成功（模拟），订单已进入队列。取件码 %1").arg(text::pickupCode(id)), "ready");
+    if (!coverSaved) ui::say(feedback_,QStringLiteral("支付成功（模拟），订单已提交；封面未能保存，可由店主选择原文件补充预览。"),"waiting");
     clearDocument();
     pendingSelect_ = id; // show the student where the order they just paid for is
     pages_->setCurrentIndex(1);

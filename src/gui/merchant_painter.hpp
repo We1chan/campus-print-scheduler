@@ -4,6 +4,7 @@
 #include <QImage>
 #include <QRectF>
 #include <QFont>
+#include <QCache>
 namespace cps::gui::merchant {
 // Student editorial palette: strong text, action accent, secondary text, rules and availability.
 inline const QColor navy("#14213E"), red("#D63D29"), slate("#69748A"), ruleColor("#DADDE2"), green("#138342");
@@ -24,6 +25,8 @@ struct Selection { int order = 0, device = 0, filter = 0, offset = 0, queueOffse
 struct Assets {
     QImage workbench, queue, devices, stats, texture, heroCoffee, heroLeaf, paperBackground, dispatchBackground;
     Assets();
+    QImage orderCover(const QString& path) const;
+    mutable QCache<QString,QImage> coverCache{8192};
 };
 class Painter {
 public:
@@ -54,5 +57,11 @@ QVector<int> visibleOrders(const Snapshot& state,const Selection& selection);
 void paintWorkbench(Painter& d,const Snapshot& state,const Selection& selection);
 void paintQueue(Painter& d,const Snapshot& state,const Selection& selection);
 void paintDevices(Painter& d,const Snapshot& state,const Selection& selection);
+struct StatsMetricLayout {
+    std::array<QRectF,4> columns;
+    std::array<qreal,3> dividers;
+    int valueSize = 32;
+};
+StatsMetricLayout statsMetricLayout(const Snapshot& state);
 void paintStats(Painter& d,const Snapshot& state,const Selection& selection);
 }

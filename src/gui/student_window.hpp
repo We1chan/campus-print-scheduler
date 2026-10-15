@@ -107,6 +107,7 @@ private:
     QTimer* quoteDelay_ = nullptr;
     QPointer<QDialog> paymentDialog_;
     QString paymentCodesDirectory_;
+    QString previewStoreDirectory_;
     QStringList orderIds_;
     QString successMessage_;
     QString pendingSelect_;  // order to select in "我的订单" once a snapshot lists it

@@ -1,6 +1,7 @@
 #include "merchant_painter.hpp"
 #include <algorithm>
 #include <cmath>
+#include <QFontMetricsF>
 
 namespace cps::gui::merchant {
 namespace {
@@ -113,74 +114,125 @@ void documentPreview(Painter& d, const Order& order, const QRectF& rect)
     }
 }
 
-void sidebarHeading(Painter& d, const Order* order, bool queue, bool showcase)
+void sidebarHeading(Painter& d, const Order* order, bool queue)
 {
     d.text(1175,79,375,52,queue ? QStringLiteral("队列详情") : QStringLiteral("订单详情"),18,navy,true);
     if (!order) {
         d.text(1175,140,370,36,QStringLiteral("暂无订单"),18,secondary);
-        d.icon(QStringLiteral("document"),1321,267,70,ruleColor);
-        d.text(1175,368,374,36,QStringLiteral("选择订单查看详情"),16,secondary,false,false,Qt::AlignCenter);
+        d.icon(queue ? QStringLiteral("printer") : QStringLiteral("document"),1321,267,70,ruleColor);
+        d.text(1175,368,374,36,queue ? QStringLiteral("选择工单查看派发与进度") : QStringLiteral("选择订单查看详情"),16,secondary,false,false,Qt::AlignCenter);
         return;
     }
-    d.text(1175,134,78,30,order->id,16,secondary);
-    d.badge(QRectF(1250,134,83,29),order->state);
-    if(showcase)documentPreview(d,*order,QRectF(1238,144,264,319));
-    else {d.panel({1238,144,264,319},Qt::white,ruleColor,4);d.icon(QStringLiteral("document"),1340,209,58,secondary);d.text(1254,287,230,36,QStringLiteral("文件元数据"),16,navy,true,false,Qt::AlignCenter);d.text(1254,330,230,33,QStringLiteral("原件尚未传输"),14,secondary,false,false,Qt::AlignCenter);}
-    d.text(1175,486,378,40,order->title,16,navy,true);
+    if (queue) {
+        d.text(1175,134,255,30,order->id,14,secondary);
+        d.badge(QRectF(1450,134,103,30),order->state);
+    }
 }
 
 void workbenchSidebar(Painter& d, const Snapshot& state, const Selection& selection)
 {
     const Order* order=selectedOrder(state,selection);
-    sidebarHeading(d,order,false,state.showcase);
+    sidebarHeading(d,order,false);
     if (!order) return;
-    d.panel(QRectF(1303,446,124,35),Qt::white,ruleColor,18);
-    d.icon(QStringLiteral("search"),1325,452,20);
-    d.text(1350,446,67,35,QStringLiteral("查看文件"),14,navy,true);
-    d.hit(QRectF(1303,446,124,35),QStringLiteral("view-file"),QString::number(selection.order),QStringLiteral("查看文件"));
-    d.rule(1175,535,378);
-    d.text(1175,545,350,29,QStringLiteral("打印参数"),16,navy,true);
-    d.detailRow(576,QStringLiteral("纸张"),order->a3 ? QStringLiteral("A3") : QStringLiteral("A4"));
-    d.detailRow(606,QStringLiteral("页数 / 份数"),QStringLiteral("%1 页 / %2 份").arg(order->pages).arg(order->copies));
-    d.detailRow(636,QStringLiteral("色彩 / 单双面"),QStringLiteral("%1 / %2").arg(order->color ? QStringLiteral("彩色") : QStringLiteral("黑白"),order->duplex ? QStringLiteral("双面") : QStringLiteral("单面")));
-    d.detailRow(666,QStringLiteral("打印服务"),order->service);
-    d.detailRow(696,QStringLiteral("订单金额"),money(order->amountCents));
-    d.detailRow(726,QStringLiteral("取件时间"),pickup(*order)+QStringLiteral(" 前"));
-    d.rule(1175,760,378);
-    d.text(1175,781,105,29,QStringLiteral("分配打印机"),14,navy,true);
+    const QImage cover=d.assets.orderCover(order->coverPath);
+    if(!cover.isNull()) {
+        const QRectF area(1175,143,378,370);
+        QSizeF size=cover.size();size.scale(area.size(),Qt::KeepAspectRatio);
+        const QRectF paper(area.center()-QPointF(size.width()/2,size.height()/2),size);
+        d.panel(paper.translated(3,4),QColor(20,33,62,12),Qt::transparent,3);
+        d.p.drawImage(paper,cover);
+    } else if (state.showcase) documentPreview(d,*order,QRectF(1240,143,248,370));
+    else {
+        d.panel({1240,143,248,370},Qt::white,ruleColor,4);
+        d.icon(QStringLiteral("document"),1335,238,58,secondary);
+        d.text(1248,317,232,36,QStringLiteral("暂无文件封面"),16,navy,true,false,Qt::AlignCenter);
+        d.text(1248,360,232,33,QStringLiteral("选择本机文件补充预览"),14,secondary,false,false,Qt::AlignCenter);
+    }
+    d.panel(QRectF(1303,525,124,35),Qt::white,ruleColor,18);
+    d.icon(QStringLiteral("search"),1325,531,20);
+    d.text(1350,525,67,35,QStringLiteral("查看文件"),14,navy,true);
+    d.hit(QRectF(1303,525,124,35),QStringLiteral("view-file"),QString::number(selection.order),QStringLiteral("查看文件"));
+    d.text(1175,570,259,44,order->title,16,navy,true);
+    d.badge(QRectF(1450,577,103,30),order->state);
+    d.rule(1175,620,378);
+    d.text(1175,633,350,29,QStringLiteral("打印参数"),16,navy,true);
+    d.detailRow(672,QStringLiteral("纸张"),order->a3 ? QStringLiteral("A3") : QStringLiteral("A4"));
+    d.detailRow(707,QStringLiteral("页数 / 份数"),QStringLiteral("%1 页 / %2 份").arg(order->pages).arg(order->copies));
+    d.detailRow(742,QStringLiteral("色彩 / 单双面"),QStringLiteral("%1 / %2").arg(order->color ? QStringLiteral("彩色") : QStringLiteral("黑白"),order->duplex ? QStringLiteral("双面") : QStringLiteral("单面")));
+    d.detailRow(777,QStringLiteral("打印服务"),order->service);
+    d.detailRow(812,QStringLiteral("订单金额"),money(order->amountCents));
+    d.detailRow(847,QStringLiteral("取件时间"),pickup(*order)+QStringLiteral(" 前"));
+    d.rule(1175,887,378);
+    d.text(1175,897,105,38,QStringLiteral("分配打印机"),14,navy,true);
     const Device* device=selectedDevice(state,selection);
     const QString name=device ? device->name : QStringLiteral("选择设备");
-    d.panel(QRectF(1274,777,162,38),Qt::white,QColor("#B9C3D7"),5);
-    d.text(1286,780,129,32,name,14,navy,true);
-    d.text(1410,780,22,32,QStringLiteral("⌄"),16,navy);
+    d.panel(QRectF(1274,897,162,38),Qt::white,QColor("#B9C3D7"),5);
+    d.text(1286,900,116,32,name,14,navy,true);
+    d.icon(QStringLiteral("chevron-down"),1410,908,18,secondary);
     const int next=state.devices.isEmpty() ? -1 : (selection.device+1)%state.devices.size();
-    d.hit(QRectF(1274,777,162,38),QStringLiteral("select-device"),QString::number(next),QStringLiteral("选择打印设备"));
-    d.dot(1462,794,device && device->online ? QStringLiteral("设备在线") : QStringLiteral("设备离线"),device && device->online ? green : slate);
-    d.text(1450,806,112,23,device && device->paper > 0 ? QStringLiteral("纸张充足，可开始打印") : QStringLiteral("请检查设备纸张"),11,secondary);
+    d.hit(QRectF(1274,897,162,38),QStringLiteral("select-device"),QString::number(next),QStringLiteral("选择打印设备"));
+    d.dot(1462,909,device && device->online ? QStringLiteral("设备在线") : QStringLiteral("设备离线"),device && device->online ? green : slate);
+    d.text(1450,922,112,18,device && device->paper > 0 ? QStringLiteral("纸张充足，可开始打印") : QStringLiteral("请检查设备纸张"),11,secondary);
 }
 
 void queueSidebar(Painter& d, const Snapshot& state, const Selection& selection)
 {
     const Order* order=selectedOrder(state,selection);
-    sidebarHeading(d,order,true,state.showcase);
+    sidebarHeading(d,order,true);
     if (!order) return;
-    d.rule(1175,525,378);
+    d.text(1175,176,378,48,order->title,16,navy,true);
     const Device* device=order->printer>=0 && order->printer<state.devices.size() ? &state.devices[order->printer] : nullptr;
     int position=0;
     for (int i=0;i<state.orders.size();++i) {
         if (state.orders[i].printer==order->printer && state.orders[i].state==QStringLiteral("待打印")) ++position;
         if (i==selection.order) break;
     }
-    const QString location=device ? QStringLiteral("%1队列第 %2 单").arg(device->color ? QStringLiteral("彩色") : QStringLiteral("黑白")).arg(std::max(1,position)) : QStringLiteral("等待分配设备");
-    d.detailRow(543,QStringLiteral("队列位置"),location);
-    d.detailRow(576,QStringLiteral("打印规格"),QStringLiteral("%1 / %2 / %3").arg(order->a3 ? QStringLiteral("A3") : QStringLiteral("A4"),order->color ? QStringLiteral("彩色") : QStringLiteral("黑白"),order->duplex ? QStringLiteral("双面") : QStringLiteral("单面")));
-    d.detailRow(609,QStringLiteral("页数 / 份数"),QStringLiteral("%1 页 / %2 份").arg(order->pages).arg(order->copies));
-    d.detailRow(642,QStringLiteral("打印服务"),order->service);
-    d.detailRow(675,QStringLiteral("取件时间"),pickup(*order)+QStringLiteral(" 前"));
-    d.detailRow(708,QStringLiteral("分配设备"),device ? device->name : QStringLiteral("未分配"));
-    d.rule(1175,750,378);
-    d.button(QRectF(1175,768,179,46),QStringLiteral("↕  调整顺序"),QStringLiteral("reorder"),QString::number(selection.order));
-    d.button(QRectF(1374,768,177,46),QStringLiteral("⇄  转移设备"),QStringLiteral("transfer"),QString::number(selection.order));
+    const bool waiting=order->state==QStringLiteral("待打印");
+    const bool printing=order->state==QStringLiteral("打印中");
+    const bool completed=order->state==QStringLiteral("待取件") || order->state==QStringLiteral("已完成");
+    const bool stopped=order->state==QStringLiteral("已取消") || order->state==QStringLiteral("失败");
+    const int total=std::max(1,order->pages*order->copies);
+    const double progress=std::clamp(double(order->printed)/total,0.,1.);
+    const QString location=printing ? QStringLiteral("正在打印") : completed ? QStringLiteral("已完成打印") :
+        stopped ? order->state : device ? QStringLiteral("设备队列第 %1 单").arg(std::max(1,position)) : QStringLiteral("等待自动分配");
+
+    d.panel({1175,245,378,120},Qt::white,ruleColor,6);
+    d.icon(QStringLiteral("printer"),1195,269,43,device ? navy : secondary);
+    d.text(1256,258,277,36,device ? device->name : QStringLiteral("等待分配设备"),16,navy,true);
+    d.text(1256,301,277,29,location,14,secondary);
+    d.text(1195,334,338,22,device ? (device->online ? QStringLiteral("设备在线") : QStringLiteral("设备离线")) :
+        state.paused && waiting ? QStringLiteral("派发已暂停，恢复后自动匹配") : QStringLiteral("后台按调度策略匹配兼容设备"),12,secondary);
+
+    d.text(1175,391,378,32,QStringLiteral("打印进度"),16,navy,true);
+    d.text(1175,430,264,42,QStringLiteral("%1 / %2 页").arg(order->printed).arg(total),26,navy,true);
+    d.text(1462,432,91,40,QStringLiteral("%1%").arg(qRound(progress*100)),18,secondary,false,false,Qt::AlignRight|Qt::AlignVCenter);
+    d.progress({1175,482,378,10},progress,navy);
+    d.text(1175,504,378,28,printing ? QStringLiteral("设备正在处理这份工单") : completed ? QStringLiteral("打印完成，可查看取件状态") :
+        stopped ? QStringLiteral("此工单已停止") : state.paused ? QStringLiteral("当前暂停派发") : QStringLiteral("尚未开始打印"),14,secondary);
+    d.rule(1175,551,378);
+
+    // Queue details explain the operational stages, never repeat the file preview.
+    const QStringList stages{QStringLiteral("提交入队"),QStringLiteral("设备派发"),QStringLiteral("打印完成")};
+    const QStringList descriptions{
+        QStringLiteral("已接收工单，按当前策略排队"),
+        device ? device->name : state.paused && waiting ? QStringLiteral("等待恢复派发") : stopped ? QStringLiteral("工单已停止") : QStringLiteral("等待兼容设备空闲"),
+        completed ? QStringLiteral("本次打印已完成") : order->estimatedMinutes>=0 ? QStringLiteral("预计 %1 分钟完成").arg(order->estimatedMinutes) : QStringLiteral("完成时间待后台确认")};
+    for (int step=0;step<3;++step) {
+        const qreal y=574+step*62;
+        const bool reached=step==0 || (step==1 && device) || (step==2 && completed);
+        d.p.save();
+        d.p.setPen(QPen(ruleColor,1.4));
+        if (step<2) d.p.drawLine(QPointF(1183,y+18),QPointF(1183,y+62));
+        d.p.setPen(Qt::NoPen); d.p.setBrush(reached ? green : ruleColor);
+        d.p.drawEllipse(QPointF(1183,y+12),4,4); d.p.restore();
+        d.text(1205,y-4,348,28,stages[step],14,navy,true);
+        d.text(1205,y+22,348,27,descriptions[step],12,secondary);
+    }
+    d.rule(1175,754,378);
+    d.detailRow(766,QStringLiteral("打印规格"),QStringLiteral("%1 / %2 / %3").arg(order->a3 ? QStringLiteral("A3") : QStringLiteral("A4"),order->color ? QStringLiteral("彩色") : QStringLiteral("黑白"),order->duplex ? QStringLiteral("双面") : QStringLiteral("单面")));
+    d.detailRow(801,QStringLiteral("页数 / 份数"),QStringLiteral("%1 页 / %2 份").arg(order->pages).arg(order->copies));
+    d.detailRow(836,QStringLiteral("打印服务"),order->service);
+    d.detailRow(871,QStringLiteral("取件时间"),pickup(*order));
 }
 
 void deviceStrip(Painter& d, const Snapshot& state, const Selection& selection)
@@ -202,8 +254,9 @@ void deviceStrip(Painter& d, const Snapshot& state, const Selection& selection)
             for (int c=0;c<3;++c) { d.p.setBrush(colors[c]); d.p.drawEllipse(QPointF(x+37+c*9,821),4.4,4.4); }
             d.p.restore();
         }
-        d.text(x+94,775,191,26,device.name,14,navy,true);
-        d.dot(x+233,789,device.online ? (device.busy ? QStringLiteral("打印中") : QStringLiteral("空闲")) : QStringLiteral("离线"),device.online ? green : slate);
+        const qreal nameWidth=std::min(QFontMetricsF(merchantFont(14,true)).horizontalAdvance(device.name)+2,qreal(191));
+        d.text(x+94,775,nameWidth,26,device.name,14,navy,true);
+        d.dot(x+94+nameWidth+18,789,device.online ? (device.busy ? QStringLiteral("打印中") : QStringLiteral("空闲")) : QStringLiteral("离线"),device.online ? green : slate);
         const double ratio=device.total>0 ? double(device.printed)/device.total : 0;
         d.progress(QRectF(x+94,807,300,8),ratio,QColor("#355784"));
         d.text(x+94,821,310,24,device.busy ? QStringLiteral("%1 · %2 / %3 页").arg(device.jobId).arg(device.printed).arg(device.total) : QStringLiteral("可接收新任务"),12,secondary);
@@ -227,10 +280,7 @@ void workbenchFooter(Painter& d, const Snapshot& state, const Selection& selecti
     const QString forecast=order&&(order->state==QStringLiteral("已完成")||order->state==QStringLiteral("待取件"))?QStringLiteral("打印已完成"):minutes<0?QStringLiteral("暂无法估算完成时间"):QStringLiteral("预计 %1 分钟完成").arg(minutes);
     d.text(534,876,500,30,forecast,21,navy,true);
     d.text(535,907,495,26,!state.showcase?QStringLiteral("由后台自动匹配设备"):device ? QStringLiteral("发送至 %1").arg(device->name) : QStringLiteral("请先分配打印设备"),12,secondary);
-    d.button(QRectF(1078,875,188,54),QStringLiteral("打印取件单"),QStringLiteral("pickup-slip"),QString::number(selection.order));
-    if(order&&order->state==QStringLiteral("待取件"))d.button(QRectF(1286,875,262,54),QStringLiteral("确认取件  →"),QStringLiteral("pickup"),order->id,true);
-    else if(order&&(order->state==QStringLiteral("已完成")||order->state==QStringLiteral("已取消")))d.text(1286,875,262,54,order->state,18,secondary,true,false,Qt::AlignCenter);
-    else d.button(QRectF(1286,875,262,54),QStringLiteral("开始打印  →"),QStringLiteral("start"),QString::number(selection.device),true);
+
 }
 
 void queuedCard(Painter& d, const Snapshot& state, const Selection& selection, int orderIndex, const QRectF& rect, bool thumbnail)
@@ -274,8 +324,9 @@ void queueLane(Painter& d, const Snapshot& state, const Selection& selection, in
         for (int c=0;c<3;++c) { d.p.setBrush(colors[c]); d.p.drawEllipse(QPointF(rect.x()+32+c*9,rect.y()+50),4,4); }
         d.p.restore();
     }
-    d.text(rect.x()+82,rect.y()+16,190,31,device.name,16,navy,true);
-    d.dot(rect.x()+225,rect.y()+32,device.online ? (device.busy ? QStringLiteral("打印中") : QStringLiteral("空闲")) : QStringLiteral("离线"),device.online ? green : slate);
+    const qreal nameWidth=std::min(QFontMetricsF(merchantFont(16,true)).horizontalAdvance(device.name)+2,rect.width()-290);
+    d.text(rect.x()+82,rect.y()+16,nameWidth,31,device.name,16,navy,true);
+    d.dot(rect.x()+82+nameWidth+18,rect.y()+32,device.online ? (device.busy ? QStringLiteral("打印中") : QStringLiteral("空闲")) : QStringLiteral("离线"),device.online ? green : slate);
     d.text(rect.right()-113,rect.y()+17,88,30,QStringLiteral("%1 单等待").arg(device.queued),14,secondary,false,false,Qt::AlignRight|Qt::AlignVCenter);
     d.rule(rect.x(),rect.y()+63,rect.width());
     QVector<int> waiting;
@@ -443,8 +494,5 @@ void paintQueue(Painter& d, const Snapshot& state, const Selection& selection)
     d.icon(QStringLiteral("clock"),477,881,40);
     d.text(535,876,504,30,state.clearMinutes<0?QStringLiteral("暂无法估算清空时间"):QStringLiteral("预计 %1 分钟清空队列").arg(state.clearMinutes),21,navy,true);
     d.text(535,906,504,28,QStringLiteral("按当前设备状态估算"),12,secondary);
-    const bool blackPaused=black>=0 && !state.devices[black].enabled;
-    d.button(QRectF(1078,875,193,54),blackPaused ? QStringLiteral("启动黑白队列") : QStringLiteral("暂停黑白队列"),blackPaused ? QStringLiteral("start") : QStringLiteral("pause"),QString::number(black));
-    d.button(QRectF(1287,875,261,54),QStringLiteral("▷  启动彩色队列  →"),QStringLiteral("start"),QString::number(color),true);
 }
 }

@@ -5,6 +5,7 @@
 #include "print_proof.hpp"
 #include "payment_receipt.hpp"
 #include "office_preview.hpp"
+#include "order_preview_store.hpp"
 #include "coordinator_test_client.hpp"
 #include "native_frame_evidence.hpp"
 #include "windows_test_logs.hpp"
@@ -18,6 +19,7 @@
 #include <QCheckBox>
 #include <QTableWidget>
 #include <QFile>
+#include <QPdfWriter>
 #include <QDir>
 #include <QJsonArray>
 #include <QJsonDocument>
@@ -1299,9 +1301,9 @@ private slots:
         const auto pdfPath = root.path() + QStringLiteral("/实验 报告.pdf");
         const auto textPath = root.path() + QStringLiteral("/笔记.txt");
         {
-            QFile pdf(pdfPath); QVERIFY(pdf.open(QIODevice::WriteOnly));
-            pdf.write("%PDF-1.4\n1 0 obj<</Type/Pages/Count 2/Kids[2 0 R 3 0 R]>>endobj\n"
-                      "2 0 obj<</Type /Page/Parent 1 0 R>>endobj\n3 0 obj<</Type/Page/Parent 1 0 R>>endobj\n");
+            QPdfWriter pdf(pdfPath);pdf.setResolution(72);
+            QPainter pages(&pdf);pages.drawText(QRect(40,60,480,90),QStringLiteral("实验报告 · 文件首页"));
+            QVERIFY(pdf.newPage());pages.drawText(QRect(40,60,480,90),QStringLiteral("实验报告 · 第二页"));pages.end();
             QFile notes(textPath); QVERIFY(notes.open(QIODevice::WriteOnly));
             notes.write(QByteArray("line\n").repeated(120));
         }
@@ -1418,6 +1420,9 @@ private slots:
         QVERIFY(dialog->isVisible());
         QTRY_COMPARE(orders->rowCount(), 1);
         QTRY_VERIFY(feedback->text().contains(QStringLiteral("支付成功")));
+        const QDir covers(QDir(root.path()).filePath("order-previews"));
+        QTRY_COMPARE(covers.entryList({"*.png"},QDir::Files).size(),1);
+        QVERIFY(!QImage(covers.filePath(covers.entryList({"*.png"},QDir::Files).front())).isNull());
         QTRY_VERIFY(!student.findChild<QDialog*>("paymentDialog"));
         QCOMPARE(orders->currentRow(), 0); // the order just paid for is selected
         QCOMPARE(orders->item(0, 2)->text(), QStringLiteral("¥7.65 · 支付宝已支付"));

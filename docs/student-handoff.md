@@ -1,5 +1,4 @@
 # 学生端代理交接与部署
-
 Status: implemented; Windows local validation recorded below; remote CI is authoritative for other platforms.
 
 2026-10-09 增量：完整 Release CTest 14/14、原生 GUI 21 passed（0 failed / 0 skipped）通过，包含六种真实 Office 格式及严格 Windows 阴影像素检查。测试初始化防止报告句柄被后台继承；原生窗口检查用普通系统窗口确认桌面阴影能力，详细边界见 [跨平台验证](ci-validation.md)。
@@ -13,6 +12,8 @@ Scope: Qt Widgets 学生客户端「纸间」，分支 `feat/print-editorial`。
 4. 部署时先验证包，再更新本机启动入口。完成条件：启动到预期版本，数据路径明确，源码和通用发布包包含本文件及依赖许可证。
 
 ## 模块定位
+
+学生下单成功后，已渲染的首页封面保存到同一店铺数据目录的 `order-previews/<订单号>.png`，供店主端预览；只共享有尺寸上限的首页 PNG，原文件与临时 PDF 仍留在学生端，IPC 不增加文档字段。保存失败不撤销已经接受的订单，并明确提示店主可补充封面。该本机共享机制不提供跨机器网络上传。
 
 | 入口 | 责任与修改边界 |
 | --- | --- |

@@ -113,7 +113,9 @@ if(CPS_BUILD_QT_APPS)
         target_link_libraries(campus-print-merchant PRIVATE cps_gui cps_options)
         add_custom_command(TARGET campus-print-merchant POST_BUILD
             COMMAND ${CMAKE_COMMAND} -E copy_if_different "${CMAKE_CURRENT_SOURCE_DIR}/assets/merchant/icons-v3/paperroom-merchant.ico"
-            "$<TARGET_FILE_DIR:campus-print-merchant>/paperroom-merchant-v3.ico")
+            "$<TARGET_FILE_DIR:campus-print-merchant>/paperroom-merchant-v3.ico"
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different "${CMAKE_CURRENT_SOURCE_DIR}/assets/merchant/icons-v3/paperroom-merchant.ico"
+            "$<TARGET_FILE_DIR:campus-print-merchant>/paperroom-merchant-v4.ico")
     endif()
     target_link_libraries(campus-print PRIVATE cps_gui cps_options)
     if(CPS_PDFIUM_LIBRARY)

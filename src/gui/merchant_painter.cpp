@@ -1,5 +1,7 @@
 #include "merchant_painter.hpp"
 #include <QFontMetricsF>
+#include <QFileInfo>
+#include <QImageReader>
 #include <QPainterPath>
 #include <QRandomGenerator>
 #include <algorithm>
@@ -28,6 +30,19 @@ void Painter::text(qreal x,qreal y,qreal w,qreal h,const QString& value,int size
     }
     p.setFont(font); p.setPen(color);
     p.drawText(QRectF(x,y,w,h),align,QFontMetricsF(font).elidedText(value,Qt::ElideRight,w));
+}
+QImage Assets::orderCover(const QString& path) const {
+    const QFileInfo file(path);
+    if(path.isEmpty()||!file.isFile()||file.size()>16*1024*1024)return {};
+    const QString key=path+QString::number(file.lastModified().toMSecsSinceEpoch())+QString::number(file.size());
+    if(auto* cached=coverCache.object(key))return *cached;
+    QImageReader reader(path);
+    const QSize size=reader.size();
+    if(!size.isValid()||size.width()>8192||size.height()>8192)return {};
+    reader.setScaledSize(size.scaled(QSize(720,1000),Qt::KeepAspectRatio));
+    QImage image=reader.read();
+    if(!image.isNull())coverCache.insert(key,new QImage(image),int(image.sizeInBytes()/1024)+1);
+    return image;
 }
 void Painter::navigationText(QRectF rect,const QString& value) {
     QFont font(QStringLiteral("Microsoft YaHei UI"));
@@ -123,6 +138,7 @@ void Painter::icon(const QString& name,qreal x,qreal y,qreal size,QColor color) 
     } else if(name=="clock") {p.drawEllipse(QRectF(2,2,28,28));p.drawLine(16,6,16,16);p.drawLine(16,16,23,20);
     } else if(name=="search") {p.drawEllipse(QRectF(3,3,18,18));p.drawLine(19,19,29,29);
     } else if(name=="arrow") {p.drawLine(3,16,29,16);p.drawLine(21,8,29,16);p.drawLine(21,24,29,16);
+    } else if(name=="chevron-down") {p.drawLine(7,12,16,21);p.drawLine(16,21,25,12);
     } else if(name=="check") {p.drawLine(5,16,13,23);p.drawLine(13,23,27,8);
     } else if(name=="grip") {p.setPen(Qt::NoPen);p.setBrush(color);for(int j=0;j<3;++j)for(int i=0;i<2;++i)p.drawEllipse(QPointF(10+i*8,8+j*8),1.6,1.6);
     } else if(name=="refresh") {p.drawArc(QRectF(4,4,24,24),35*16,295*16);p.drawLine(26,3,26,10);p.drawLine(19,10,26,10);

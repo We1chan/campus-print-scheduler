@@ -3,6 +3,7 @@
 #include "merchant_dispatch_painter.hpp"
 #include "editorial_chrome.hpp"
 #include "document_preview.hpp"
+#include "office_preview.hpp"
 #include <QApplication>
 #include <QDesktopServices>
 #include <QFileDialog>
@@ -204,7 +205,7 @@ private:
         if(page==4)paintDispatch(d,demo,demoSelection);
         else{
             p.drawImage(QRectF(0,56,1134,heroBottom-56),assets_.paperBackground);
-            p.setPen(QPen(ruleColor,1));p.drawLine(QPointF(1145,65),QPointF(1145,852));
+            p.setPen(QPen(ruleColor,1));p.drawLine(QPointF(1145,65),QPointF(1145,page==3 ? 852 : 930));
             if(page==0)paintWorkbench(d,state,selection);else if(page==1)paintQueue(d,state,selection);else if(page==2)paintDevices(d,state,selection);else paintStats(d,state,selection);
         }
         p.fillRect(QRectF(0,0,1586,56),QColor("#FAFAF9"));d.rule(0,55,1586);
@@ -227,12 +228,12 @@ private:
             if(i==page){const qreal lineWidth=i==0?100:88;p.fillRect(QRectF(tab.center().x()-lineWidth/2,52,lineWidth,4),red);}}
         d.icon("shop",1240,18,23);d.text(1275,3,70,50,QStringLiteral("校园一店"),16);d.hit({1230,7,120,42},"shop-menu",{},QStringLiteral("店铺菜单"));
         p.fillRect(QRectF(0,942,1586,50),Qt::white);d.rule(39,942,1507);
-        p.setPen(Qt::NoPen);p.setBrush(state.connected||state.showcase?green:slate);p.drawEllipse(QPointF(44,966),3,3);p.setBrush(Qt::NoBrush);
-        d.text(63,949,185,32,state.connected||state.showcase?QStringLiteral("店铺营业中"):QStringLiteral("连接后台中"),14,navy);
+        p.setPen(Qt::NoPen);p.setBrush(state.connected||state.showcase?green:slate);p.drawEllipse(QPointF(44,967),3,3);p.setBrush(Qt::NoBrush);
+        d.text(63,943,100,48,state.connected||state.showcase?QStringLiteral("店铺营业中"):QStringLiteral("连接后台中"),13,navy);
         const auto online=std::count_if(state.devices.cbegin(),state.devices.cend(),[](const Device& device){return device.online;});
-        d.text(175,949,151,32,"06:00 - 23:00",13,slate);d.text(344,949,196,32,QStringLiteral("%1 台设备在线").arg(online),13,slate);
-        if(state.showcase)d.text(556,949,215,32,QStringLiteral("样例模式 · 独立演示"),13,slate);
-        d.text(1331,949,221,32,state.date+" "+state.clock,13,slate,false,false,Qt::AlignRight|Qt::AlignVCenter);
+        d.text(175,943,151,48,"06:00 - 23:00",13,slate);d.text(344,943,196,48,QStringLiteral("%1 台设备在线").arg(online),13,slate);
+        if(state.showcase)d.text(556,943,215,48,QStringLiteral("样例模式 · 独立演示"),13,slate);
+        d.text(1331,943,221,48,state.date+" "+state.clock,13,slate,false,false,Qt::AlignRight|Qt::AlignVCenter);
         if(!toast.isEmpty()) {d.panel({480,795,625,51},toastProblem?QColor("#FFF2EE"):QColor("#F5F7FA"),toastProblem?red:ruleColor,8);d.text(499,797,590,47,toast,16,toastProblem?red:navy);}
     }
     MerchantData* data_;Assets assets_;QHash<QString,QPushButton*> buttons_;QLineEdit* search_;QVector<EditorialWindowButton*> windowControls_;
@@ -318,9 +319,17 @@ void MerchantWindow::viewFile() {
     const auto& state=model_->snapshot();if(state.orders.isEmpty())return;const auto& order=state.orders[canvas_->selection.order];
     if(!order.path.isEmpty()&&QFileInfo::exists(order.path)){QDesktopServices::openUrl(QUrl::fromLocalFile(order.path));return;}
     auto* dialog=new EditorialDialog(this);dialog->setAttribute(Qt::WA_DeleteOnClose);auto* layout=new QVBoxLayout(dialog);layout->setContentsMargins(0,0,0,0);layout->addWidget(editorialDialogHeader(dialog,QStringLiteral("文件预览"),order.title));
-    auto* note=new QLabel(state.showcase?QStringLiteral("样例封面预览；实际订单文件保留在提交文件的学生端。后台当前共享订单元数据。"):QStringLiteral("该订单未共享源文件路径。请选择本机文件进行核对，订单参数保持原样。"));note->setWordWrap(true);note->setContentsMargins(20,10,20,10);layout->addWidget(note);
-    auto* paper=new QLabel;paper->setAlignment(Qt::AlignCenter);QImage image(420,500,QImage::Format_ARGB32_Premultiplied);image.fill(Qt::white);QPainter p(&image);QVector<Hit> hits;Assets art;Painter d(p,hits,art);d.cover({20,10,380,455});p.end();paper->setPixmap(QPixmap::fromImage(image));layout->addWidget(paper);
-    auto* pick=new QPushButton(QStringLiteral("选择本机文件核对"));connect(pick,&QPushButton::clicked,dialog,[this]{const auto file=QFileDialog::getOpenFileName(this,QStringLiteral("核对本机订单文件"));if(!file.isEmpty())QDesktopServices::openUrl(QUrl::fromLocalFile(file));});layout->addWidget(pick);dialog->resize(550,650);dialog->setWindowModality(Qt::WindowModal);dialog->open();
+    auto* note=new QLabel(QStringLiteral("订单首页封面；可选择本机原件补充预览，打印参数保持不变。"));note->setWordWrap(true);note->setContentsMargins(20,10,20,10);layout->addWidget(note);
+    auto* paper=new QLabel;paper->setAlignment(Qt::AlignCenter);paper->setMinimumSize(420,470);layout->addWidget(paper);
+    Assets art;const QImage cover=art.orderCover(order.coverPath);
+    if(!cover.isNull())paper->setPixmap(QPixmap::fromImage(cover.scaled(420,470,Qt::KeepAspectRatio,Qt::SmoothTransformation)));
+    else paper->setText(QStringLiteral("暂无文件封面"));
+    const QString id=order.id;
+    auto* converter=new OfficePreview(dialog);
+    const auto render=[this,id,paper,note](const QString& path){DocumentPreview preview;if(!preview.load(path)){note->setText(preview.error());return;}const QImage image=preview.page(0);if(!model_->setOrderCover(id,image)){note->setText(QStringLiteral("封面未能保存，请检查店铺目录。"));return;}paper->setPixmap(QPixmap::fromImage(image.scaled(420,470,Qt::KeepAspectRatio,Qt::SmoothTransformation)));note->setText(QStringLiteral("已保存原文件首页封面。"));};
+    connect(converter,&OfficePreview::ready,dialog,render);
+    connect(converter,&OfficePreview::failed,dialog,[note](const QString& error){note->setText(error);});
+    auto* pick=new QPushButton(QStringLiteral("选择本机文件生成封面"));pick->setObjectName("merchantChooseCover");connect(pick,&QPushButton::clicked,dialog,[this,converter,render,note]{const auto file=QFileDialog::getOpenFileName(this,QStringLiteral("选择订单原文件"),{},QStringLiteral("文档 (*.pdf *.png *.jpg *.jpeg *.txt *.doc *.docx *.ppt *.pptx *.xls *.xlsx)"));if(file.isEmpty())return;if(OfficePreview::supports(file)){note->setText(QStringLiteral("正在生成文件首页预览…"));converter->start(file);}else{converter->cancel();render(file);}});layout->addWidget(pick);dialog->resize(550,650);dialog->setWindowModality(Qt::WindowModal);dialog->open();
 }
 void MerchantWindow::action(const QString& name,const QString& value) {
     if(name=="dispatch-open"){openDispatchWorkspace();return;}
