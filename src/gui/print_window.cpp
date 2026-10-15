@@ -250,19 +250,6 @@ PrintWindow::PrintWindow(WindowOptions options, QWidget* parent) : QMainWindow(p
     header->addStretch();
     auto* command = new QPushButton(QStringLiteral("命令  Ctrl+K")); command->setObjectName("commandPalette"); command->setProperty("role", "quiet");
     command->setToolTip(QStringLiteral("搜索并执行常用操作")); header->addWidget(command);
-    QPushButton* student = nullptr;
-    if (shopMode) {
-        // The student client is a separate process talking to the same coordinator.
-        student = new QPushButton(QStringLiteral("打开学生端")); student->setObjectName("openStudent"); student->setProperty("role", "quiet");
-        student->setToolTip(QStringLiteral("启动学生自助下单界面，连接同一个后台。"));
-        header->addWidget(student);
-        connect(student, &QPushButton::clicked, this, [this, options] {
-            QStringList arguments{"--role", "student", "--data-dir", options.stateDirectory, "--page-ms", QString::number(options.pageMs)};
-            if (options.demoMode) arguments << "--demo-mode";
-            if (QProcess::startDetached(cps::siblingExecutable("campus-print"), arguments)) ui::say(feedback_, QStringLiteral("已启动学生端，它与这里共用同一个后台。"));
-            else ui::say(feedback_, QStringLiteral("无法启动学生端。"), "error");
-        });
-    }
     if (options.demoMode) {
         auto* demo = new QPushButton(QStringLiteral("演示任务")); demo->setObjectName("demoWorkload"); demo->setProperty("role", "quiet");
         demo->setToolTip(QStringLiteral("一次加入一批混合规格的演示订单。"));
@@ -715,7 +702,6 @@ PrintWindow::PrintWindow(WindowOptions options, QWidget* parent) : QMainWindow(p
         commands.emplaceBack(QStringLiteral("导出队列报表"), [=] { report->click(); });
         commands.emplaceBack(QStringLiteral("搜索任务记录"), focusSearch);
         for (int i = 0; i < names.size(); ++i) commands.emplaceBack(QStringLiteral("前往 · ") + names[i], [=] { stack->setCurrentIndex(i); });
-        if (student) commands.emplaceBack(QStringLiteral("打开学生端"), [=] { student->click(); });
         commands.emplaceBack(QStringLiteral("切换全屏"), toggleFullscreen);
         for(int i=0;i<commands.size();++i){auto* item=new QListWidgetItem(commands[i].first,choices);item->setData(Qt::UserRole,i);}
         choices->setCurrentRow(0);

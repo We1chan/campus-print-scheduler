@@ -38,6 +38,9 @@ void quote(Job& j) {
     j.baseCents = Money(j.sheets()) * (j.color ? 150 : 20) * (j.paper == PaperSize::A3 ? 2 : 1);
     const int discount = j.service == ServiceTier::Express ? 100 : j.service == ServiceTier::Standard ? 95 : 85;
     j.quotedCents = (j.baseCents * discount + 50) / 100;
+    // Duplex halves the paper the shop buys, so the saving is passed on as a
+    // 95% multiplier stacked after the service tier discount.
+    if (j.duplex) j.quotedCents = (j.quotedCents * 95 + 50) / 100;
     j.deadlineMs = j.submittedMs + serviceWindowMs(j.service);
 }
 TimeMs processingMs(const Job& j, const Printer& p) {

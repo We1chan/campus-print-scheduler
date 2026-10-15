@@ -1,5 +1,7 @@
 # 纸间第二版：俯视印刷编辑台
 
+> 历史记录：原学生 Qt/Windows 界面及专属代码已移除，下列旧启动命令、截图和验收只描述历史版本。当前学生网页见 [student-handoff.md](student-handoff.md) 与 [classroom-demo.md](classroom-demo.md)。
+
 ## 分支提交前复核（2026-10-09）
 
 本分支 `feat/print-editorial` 的 README 开头新增三页功能表、学生启动方式，以及摘要文字适配和 Windows 外框阴影的修复说明；明确本地原件、模拟支付与共享后台的数据目录边界。

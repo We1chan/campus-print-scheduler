@@ -48,7 +48,7 @@ using namespace cps::gui;
 using namespace cps::gui::merchant;
 
 // The static cps_gui library does not automatically retain its resource object.
-static void initializeMerchantTestResources() { Q_INIT_RESOURCE(editorial_assets); }
+static void initializeMerchantTestResources() { Q_INIT_RESOURCE(merchant_assets); }
 
 class MerchantTests : public QObject {
     Q_OBJECT
@@ -137,6 +137,17 @@ private slots:
         QCOMPARE(cover.pixelColor(cover.rect().center()),QColor("#D63D29"));
         QCOMPARE(assets.orderCover(path),cover);
         QVERIFY(assets.orderCover(directory.path()+"/missing.png").isNull());
+        const QString textPath=orderCoverPath(directory.path(),QStringLiteral("text-1"));
+        QFile text(textPath.left(textPath.size()-4)+".txt");QVERIFY(text.open(QIODevice::WriteOnly));
+        text.write(QStringLiteral("网页订单的真实文本首页").toUtf8());text.close();
+        const auto textCover=assets.orderCover(textPath);QVERIFY(!textCover.isNull());
+        QCOMPARE(textCover.pixelColor(0,0),QColor(Qt::white));
+        bool hasInk=false;for(int y=40;y<100;++y)for(int x=40;x<500;++x)
+            if(textCover.pixelColor(x,y).lightness()<150)hasInk=true;
+        QVERIFY(hasInk);
+        const QString jpegPath=orderCoverPath(directory.path(),QStringLiteral("image-1"));
+        QVERIFY(page.save(jpegPath.left(jpegPath.size()-4)+".jpg","JPEG"));
+        QVERIFY(!assets.orderCover(jpegPath).isNull());
         MerchantWindow window({},true);window.show();QTRY_VERIFY(window.isVisible());
         for(const auto* control:window.findChildren<QPushButton*>()) {
             QVERIFY(!control->objectName().startsWith("merchant_start_"));
@@ -186,7 +197,10 @@ private slots:
         state.revenueCents=99999999999LL;
         const auto expanded=statsMetricLayout(state);
         QVERIFY(expanded.dividers[0]>compact.dividers[0]);
-        QCOMPARE(expanded.valueSize,32);
+        // Offscreen/platform fonts can require a smaller uniform type size.
+        // The requirement is a complete value inside its adaptive column.
+        QVERIFY(QFontMetricsF(merchantFont(expanded.valueSize,true)).horizontalAdvance(money(state.revenueCents))
+                <=expanded.columns[0].width()+.01);
         state.todayOrders=10000;
         state.printedPages=100000000;
         state.averageMinutes=99999.9;
@@ -611,7 +625,7 @@ private slots:
         QVERIFY(QTest::qWaitForWindowExposed(&window));
         QVERIFY(!window.windowIcon().isNull());
         QVERIFY(!window.windowIcon().pixmap(32,32).isNull());
-        QVERIFY(window.windowIcon().pixmap(32,32).toImage()!=editorialBrandIcon().pixmap(32,32).toImage());
+        QCOMPARE(window.windowIcon().pixmap(32,32).toImage(), merchantBrandIcon().pixmap(32,32).toImage());
 #ifdef Q_OS_WIN
         if(QGuiApplication::platformName()==QStringLiteral("windows")) {
             IPropertyStore* store=nullptr;

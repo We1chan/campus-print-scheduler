@@ -1,5 +1,7 @@
 # 纸间：印前桌面
 
+> 历史记录：原学生 Qt/Windows 界面及专属代码已移除，下列旧启动命令、截图和验收只描述历史版本。当前学生网页见 [student-handoff.md](student-handoff.md) 与 [classroom-demo.md](classroom-demo.md)。
+
 `feat/print-studio` 基于 `9d99635`，以生成的整体构图为视觉参考，实现 Qt 6 原生前端。学生端围绕中央纸叠组织文件信息、报价和打印设置；店主端延用工作台、记录、设备和经营流程，并统一导航与配色。
 
 ## 构图与实现

@@ -43,6 +43,7 @@ MAX_FILE = 10 * 1024 * 1024
 MAX_STORAGE = 300 * 1024 * 1024
 MAX_CONVERTED = 64 * 1024 * 1024
 MAX_PAGES = 1000
+MAX_DOCS = 10
 ID = re.compile(r"^[a-f0-9]{32}$")
 IMAGES = {".png", ".jpg", ".jpeg"}
 TEXTS = {".txt", ".md"}
@@ -158,27 +159,28 @@ class PdfEngine:
 
 
 def office_executable():
-    # Same discovery as OfficePreview::executable(), plus the private copy that
-    # tools/setup_office_preview.py installs. An explicit override is authoritative.
+    # Prefer the bundled engine, then the private development installation.
+    # An explicit override is authoritative.
     explicit = os.environ.get("CPS_OFFICE_EXECUTABLE")
     if explicit is not None:
         path = Path(explicit)
         return path if path.is_absolute() and path.is_file() else None
     candidates = []
     if sys.platform == "win32":
-        roots = [ROOT / ".tools" / "libreoffice"] + [Path(os.environ[name]) / "LibreOffice" for name in
+        roots = [ROOT / "office", ROOT / ".tools" / "libreoffice"] + [Path(os.environ[name]) / "LibreOffice" for name in
                                                      ("ProgramW6432", "ProgramFiles", "ProgramFiles(x86)") if os.environ.get(name)]
         candidates += [root / "program" / name for root in roots for name in ("soffice.com", "soffice.exe")]
         candidates += [shutil.which("soffice.com"), shutil.which("soffice.exe")]
     elif sys.platform == "darwin":
-        candidates += [ROOT / ".tools/libreoffice/LibreOffice.app/Contents/MacOS/soffice",
+        candidates += [ROOT / "office/LibreOffice.app/Contents/MacOS/soffice",
+                       ROOT / ".tools/libreoffice/LibreOffice.app/Contents/MacOS/soffice",
                        Path("/Applications/LibreOffice.app/Contents/MacOS/soffice")]
     candidates += [shutil.which("libreoffice"), shutil.which("soffice")]
     return next((Path(item) for item in candidates if item and Path(item).is_file()), None)
 
 
 class OfficeConverter:
-    """One background LibreOffice conversion at a time, isolated like the Qt preview."""
+    """One background LibreOffice conversion at a time, with a private profile."""
     TIMEOUT = 90
     CAPACITY = 30
 
@@ -484,11 +486,50 @@ class Application:
         save_bytes(cache, image)
         return image
 
+    def resolve_documents(self, documents, session, preview):
+        # A merged multi-file order carries one entry per uploaded file; the first
+        # file anchors the job id, ownership and title, so the coordinator schema and
+        # the single-file path stay untouched.
+        if len(documents) > MAX_DOCS:
+            raise Problem(422, f"一次最多合并 {MAX_DOCS} 个文件。")
+        records, seen, total = [], set(), 0
+        for item in documents:
+            identifier = item.get("upload_id") if isinstance(item, dict) else None
+            pages = item.get("pages") if isinstance(item, dict) else None
+            if not isinstance(identifier, str) or not ID.fullmatch(identifier):
+                raise Problem(404, "文件不存在。")
+            if identifier in seen:
+                raise Problem(422, "同一文件不能重复提交。")
+            if type(pages) is not int or not 1 <= pages <= MAX_PAGES:
+                raise Problem(422, "每个文件的页数须为 1–1000 的整数。")
+            seen.add(identifier)
+            record = self.metadata(identifier, session)
+            if not preview and record.get("status") == "converting":
+                raise Problem(409, "文档仍在转换，完成后会自动显示页数。")
+            if record.get("pages_locked") and pages != record["pages"]:
+                raise Problem(422, "页数已按文档自动识别，不能修改。")
+            records.append(record)
+            total += pages
+        if not 1 <= total <= MAX_PAGES:
+            raise Problem(422, "合计页数须为 1–1000。")
+        return records, total
+
     def order(self, body, session, preview=False):
-        # A quote may come before any file is chosen, as in the Qt student client.
-        record = None if preview and body.get("upload_id") is None else self.metadata(body.get("upload_id"), session)
-        if not preview and record.get("status") == "converting":
-            raise Problem(409, "文档仍在转换，完成后会自动显示页数。")
+        documents = body.get("documents")
+        record = None
+        if isinstance(documents, list) and documents:
+            records, total = self.resolve_documents(documents, session, preview)
+            suffix = f" 等{len(records)}份" if len(records) > 1 else ""
+            title = (records[0]["name"] + suffix)[:200]
+            anchor = records[0]["upload_id"]
+            body = {**body, "pages": total}
+        else:
+            # A quote may come before any file is chosen, as in the Qt student client.
+            record = None if preview and body.get("upload_id") is None else self.metadata(body.get("upload_id"), session)
+            if not preview and record.get("status") == "converting":
+                raise Problem(409, "文档仍在转换，完成后会自动显示页数。")
+            title = record["name"] if record else "报价预览"
+            anchor = record["upload_id"] if record else None
         for field, minimum, maximum in (("pages", 1, MAX_PAGES), ("copies", 1, 100)):
             if type(body.get(field)) is not int or not minimum <= body[field] <= maximum:
                 raise Problem(422, "页数须为 1–1000，份数须为 1–100 的整数。")
@@ -507,8 +548,8 @@ class Application:
         if not isinstance(student, str) or len(student.strip()) > 32 or any(ord(c) < 32 for c in student):
             raise Problem(422, "学号或昵称不能超过 32 个字符。")
         # Price, priority, ownership and job id can never be supplied by a phone.
-        return dict(job_id=job_id(record["upload_id"]) if record else "quote-preview",
-                    title=record["name"] if record else "报价预览",
+        return dict(job_id=job_id(anchor) if anchor else "quote-preview",
+                    title=title,
                     customer=student.strip() or "访客 " + session[:4].upper(),
                     **{key: body[key] for key in ("pages", "copies", "paper", "color", "duplex", "service", "payment")})
 
@@ -523,7 +564,9 @@ class Application:
 
     def submit(self, body, session):
         job = self.order(body, session)
-        legacy = "web-" + body["upload_id"]
+        documents = body.get("documents")
+        anchor = documents[0]["upload_id"] if isinstance(documents, list) and documents else body["upload_id"]
+        legacy = "web-" + anchor
         # Stable per-upload id makes a lost HTTP reply safe to reconcile, including
         # after a gateway restart. Never retry a timed-out mutation internally.
         with self.backend.mutation:
@@ -535,7 +578,35 @@ class Application:
             else:
                 self.backend.request("submit", job=job)
             self.backend.invalidate()
+        # The accepted order remains successful if optional cover persistence fails.
+        # These local files are not exposed by HTTP and never enter coordinator IPC.
+        try:
+            self.save_order_cover(anchor, job["job_id"], session)
+        except Exception:
+            print("Order accepted; optional merchant cover could not be saved.", file=sys.stderr)
         return dict(job_id=job["job_id"], pickup_code=pickup_code(job["job_id"]), message="订单已进入队列，支付为模拟。")
+
+    def save_order_cover(self, identifier, order_id, session):
+        record = self.metadata(identifier, session)
+        directory = self.state / "order-previews"
+        if any((directory / (order_id + suffix)).is_file() for suffix in (".png", ".jpg", ".txt")):
+            return
+        if record.get("preview") == "pdf":
+            image = self.preview(identifier, 1, 960, session)
+            suffix, data = ".png", image
+        elif record.get("kind") == "image":
+            suffix = ".png" if record["name"].lower().endswith(".png") else ".jpg"
+            data = (self.uploads / (identifier + ".bin")).read_bytes()
+        elif record.get("kind") == "text":
+            # Keep a bounded first-page text excerpt; the Qt owner renders it with
+            # its installed CJK fonts, without adding a second Office/PDF engine.
+            with (self.uploads / (identifier + ".bin")).open("rb") as source:
+                text = source.read(64 * 1024).decode("utf-8", errors="replace")
+            suffix, data = ".txt", "\n".join(text.splitlines()[:50])[:4096].encode("utf-8")
+        else:
+            return
+        directory.mkdir(exist_ok=True)
+        save_bytes(directory / (order_id + suffix), data)
 
     def cancel(self, body, session):
         identifier = body.get("job_id")
@@ -745,6 +816,16 @@ class Handler(BaseHTTPRequestHandler):
             image = app.preview(match[1], int(match[2]), width, session)
             # Pages of an upload never change; let the phone cache them.
             self.reply(200, image, "image/png", {"Cache-Control": "private, max-age=86400, immutable"})
+            return
+        match = re.fullmatch(r"/api/document/([a-f0-9]{32})", path)
+        if method == "GET" and match:
+            record = app.metadata(match[1], session)
+            if record.get("kind") not in {"image", "text"}:
+                raise Problem(404, "该文件没有可直接预览的内容。")
+            data = (app.uploads / (match[1] + ".bin")).read_bytes()
+            mime = ("image/png" if record["name"].lower().endswith(".png") else "image/jpeg") \
+                if record["kind"] == "image" else "text/plain; charset=utf-8"
+            self.reply(200, data, mime, {"Cache-Control": "private, max-age=86400, immutable"})
             return
         match = re.fullmatch(r"/payment-code/(wechat|alipay)", path)
         if method == "GET" and match:

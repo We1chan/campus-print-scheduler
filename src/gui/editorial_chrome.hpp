@@ -16,13 +16,6 @@
 #include <QWindow>
 
 namespace cps::gui {
-inline QIcon editorialBrandIcon() {
-    QIcon icon;
-    for (int size : {16, 24, 32, 48, 64, 128, 256})
-        icon.addFile(QStringLiteral(":/editorial/brand-%1.png").arg(size), QSize(size, size));
-    return icon;
-}
-
 inline QString editorialDialogStyle() {
     return QStringLiteral(R"(
 QDialog { background:#FAFAF9; color:#14213E; }
@@ -55,7 +48,7 @@ QToolTip { color:white; background:#14213E; border:none; padding:6px 9px; }
 )");
 }
 
-// One set of hit areas for the navigation bar and both document dialogs.
+// Shared owner window and dialog controls.
 // Widgets keep native focus/accessibility; the system handles drag and resize.
 class EditorialChrome : public QObject, public QAbstractNativeEventFilter {
   public:
@@ -164,7 +157,7 @@ inline QFrame *editorialDialogHeader(QDialog *dialog, const QString &title, cons
     row->setContentsMargins(24, 0, 4, 0);
     row->setSpacing(12);
     auto *mark = new QLabel;
-    mark->setPixmap(editorialBrandIcon().pixmap(32, 32));
+    mark->setPixmap(dialog->windowIcon().pixmap(32, 32));
     row->addWidget(mark);
     auto *caption = new QLabel(title);
     caption->setStyleSheet("color:#14213E;font-size:17px;font-weight:600;");

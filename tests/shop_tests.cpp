@@ -16,7 +16,7 @@ int main() {
         auto j = order("duplex", 3); j.copies = 2; j.duplex = true; j.service = cps::ServiceTier::Flexible;
         cps::quote(j);
         check(j.sheets() == 6 && j.paperSheets() == 4, "odd duplex copies use separate sheets");
-        check(j.baseCents == 120 && j.quotedCents == 102, "quote uses integer cents and locked tier");
+        check(j.baseCents == 120 && j.quotedCents == 97, "quote stacks the duplex discount on the locked tier");
         auto fleet = cps::defaultFleet(100);
         j.color = true; j.paper = cps::PaperSize::A3;
         check(!cps::compatible(j, fleet[0]) && cps::compatible(j, fleet[5]), "capability matching");

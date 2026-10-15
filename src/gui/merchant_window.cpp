@@ -2,8 +2,6 @@
 #include "merchant_shell.hpp"
 #include "merchant_dispatch_painter.hpp"
 #include "editorial_chrome.hpp"
-#include "document_preview.hpp"
-#include "office_preview.hpp"
 #include <QApplication>
 #include <QDesktopServices>
 #include <QFileDialog>
@@ -209,7 +207,7 @@ private:
             if(page==0)paintWorkbench(d,state,selection);else if(page==1)paintQueue(d,state,selection);else if(page==2)paintDevices(d,state,selection);else paintStats(d,state,selection);
         }
         p.fillRect(QRectF(0,0,1586,56),QColor("#FAFAF9"));d.rule(0,55,1586);
-        p.drawImage(QRectF(39,10,41,35),QImage(":/editorial/brand-128.png"));
+        p.drawImage(QRectF(39,10,41,35),QImage(":/merchant/icons-v3/brand-128.png"));
         d.text(92,8,63,38,QStringLiteral("纸间"),24,navy,true);p.setPen(ruleColor);p.drawLine(163,16,163,40);d.text(181,8,92,38,QStringLiteral("店主端"),16,slate);
         if(page==4){
             d.text(690,5,205,45,QStringLiteral("调度工作台"),18,navy,true,false,Qt::AlignCenter);p.fillRect(QRectF(735,52,115,4),red);
@@ -319,17 +317,13 @@ void MerchantWindow::viewFile() {
     const auto& state=model_->snapshot();if(state.orders.isEmpty())return;const auto& order=state.orders[canvas_->selection.order];
     if(!order.path.isEmpty()&&QFileInfo::exists(order.path)){QDesktopServices::openUrl(QUrl::fromLocalFile(order.path));return;}
     auto* dialog=new EditorialDialog(this);dialog->setAttribute(Qt::WA_DeleteOnClose);auto* layout=new QVBoxLayout(dialog);layout->setContentsMargins(0,0,0,0);layout->addWidget(editorialDialogHeader(dialog,QStringLiteral("文件预览"),order.title));
-    auto* note=new QLabel(QStringLiteral("订单首页封面；可选择本机原件补充预览，打印参数保持不变。"));note->setWordWrap(true);note->setContentsMargins(20,10,20,10);layout->addWidget(note);
+    auto* note=new QLabel(QStringLiteral("订单首页由学生网页上传后共享；历史订单可选择封面图片补充，打印参数保持不变。"));note->setWordWrap(true);note->setContentsMargins(20,10,20,10);layout->addWidget(note);
     auto* paper=new QLabel;paper->setAlignment(Qt::AlignCenter);paper->setMinimumSize(420,470);layout->addWidget(paper);
     Assets art;const QImage cover=art.orderCover(order.coverPath);
     if(!cover.isNull())paper->setPixmap(QPixmap::fromImage(cover.scaled(420,470,Qt::KeepAspectRatio,Qt::SmoothTransformation)));
     else paper->setText(QStringLiteral("暂无文件封面"));
     const QString id=order.id;
-    auto* converter=new OfficePreview(dialog);
-    const auto render=[this,id,paper,note](const QString& path){DocumentPreview preview;if(!preview.load(path)){note->setText(preview.error());return;}const QImage image=preview.page(0);if(!model_->setOrderCover(id,image)){note->setText(QStringLiteral("封面未能保存，请检查店铺目录。"));return;}paper->setPixmap(QPixmap::fromImage(image.scaled(420,470,Qt::KeepAspectRatio,Qt::SmoothTransformation)));note->setText(QStringLiteral("已保存原文件首页封面。"));};
-    connect(converter,&OfficePreview::ready,dialog,render);
-    connect(converter,&OfficePreview::failed,dialog,[note](const QString& error){note->setText(error);});
-    auto* pick=new QPushButton(QStringLiteral("选择本机文件生成封面"));pick->setObjectName("merchantChooseCover");connect(pick,&QPushButton::clicked,dialog,[this,converter,render,note]{const auto file=QFileDialog::getOpenFileName(this,QStringLiteral("选择订单原文件"),{},QStringLiteral("文档 (*.pdf *.png *.jpg *.jpeg *.txt *.doc *.docx *.ppt *.pptx *.xls *.xlsx)"));if(file.isEmpty())return;if(OfficePreview::supports(file)){note->setText(QStringLiteral("正在生成文件首页预览…"));converter->start(file);}else{converter->cancel();render(file);}});layout->addWidget(pick);dialog->resize(550,650);dialog->setWindowModality(Qt::WindowModal);dialog->open();
+    auto* pick=new QPushButton(QStringLiteral("选择本机封面图片"));pick->setObjectName("merchantChooseCover");connect(pick,&QPushButton::clicked,dialog,[this,id,paper,note]{const auto file=QFileDialog::getOpenFileName(this,QStringLiteral("选择订单封面图片"),{},QStringLiteral("图片 (*.png *.jpg *.jpeg)"));if(file.isEmpty())return;Assets art;const QImage image=art.orderCover(file);if(image.isNull()){note->setText(QStringLiteral("图片无法读取或尺寸超过限制。"));return;}if(!model_->setOrderCover(id,image)){note->setText(QStringLiteral("封面未能保存，请检查店铺目录。"));return;}paper->setPixmap(QPixmap::fromImage(image.scaled(420,470,Qt::KeepAspectRatio,Qt::SmoothTransformation)));note->setText(QStringLiteral("已保存封面图片。"));});layout->addWidget(pick);dialog->resize(550,650);dialog->setWindowModality(Qt::WindowModal);dialog->open();
 }
 void MerchantWindow::action(const QString& name,const QString& value) {
     if(name=="dispatch-open"){openDispatchWorkspace();return;}

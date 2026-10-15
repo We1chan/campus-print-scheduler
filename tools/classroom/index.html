@@ -57,12 +57,13 @@
         <svg class="file-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 2h8l5 5v15H6z" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M14 2v5h5M9 13h7M9 17h7" fill="none" stroke="currentColor" stroke-width="1.6"/></svg>
         <div class="file-text">
           <strong id="file-name">选择要打印的文件</strong>
-          <span id="file-info">PDF / Word / PPT / Excel / 图片 / 文本 · 最大 10 MiB</span>
+          <span id="file-info">PDF / Word / PPT / Excel / 图片 / 文本 · 单个最大 10 MiB · 一次最多 10 个</span>
         </div>
-        <label class="choose" id="choose-label">选择文件<input id="file" type="file" accept=".pdf,.txt,.md,.png,.jpg,.jpeg,.doc,.docx,.ppt,.pptx,.xls,.xlsx,application/pdf,image/png,image/jpeg"></label>
-        <button type="button" id="remove-file" class="link" hidden>移除</button>
+        <label class="choose" id="choose-label">选择文件<input id="file" type="file" multiple accept=".pdf,.txt,.md,.png,.jpg,.jpeg,.doc,.docx,.ppt,.pptx,.xls,.xlsx,application/pdf,image/png,image/jpeg"></label>
+        <button type="button" id="remove-file" class="link" hidden>移除全部</button>
         <progress id="upload-progress" max="100" value="0" hidden></progress>
       </div>
+      <ul id="file-list" class="file-list" hidden></ul>
       <p id="page-note" class="note">页数按文档自动识别；无法识别时请手动填写。</p>
 
       <div class="option-row">

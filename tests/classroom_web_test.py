@@ -14,6 +14,7 @@ import tempfile
 import threading
 import time
 import unittest
+from unittest.mock import patch
 from urllib.error import HTTPError
 from urllib.parse import quote
 from urllib.request import build_opener, HTTPCookieProcessor, HTTPRedirectHandler, ProxyHandler, Request
@@ -223,12 +224,12 @@ class ClassroomTests(unittest.TestCase):
         order.update(quoted_cents=1, customer="another-student", priority=100, job_id="forged")
         status, result = self.client.json("/api/quote", order)
         self.assertEqual(status, 200)
-        self.assertEqual(result["quoted_cents"], 1530)
+        self.assertEqual(result["quoted_cents"], 1454)
         self.assertEqual(result["paper_sheets"], 4)
         self.assertIn("estimated_finish_ms", result)
         # Every tier is priced by the backend; slower tiers are cheaper.
         tiers = result["tiers"]
-        self.assertEqual(tiers["flexible"], 1530)
+        self.assertEqual(tiers["flexible"], 1454)
         self.assertGreater(tiers["express"], tiers["standard"])
         self.assertGreater(tiers["standard"], tiers["flexible"])
         before = len(self.app.backend.snapshot(fresh=True)["jobs"])
@@ -236,6 +237,8 @@ class ClassroomTests(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertEqual(submitted["job_id"], web.job_id(uploaded["upload_id"]))
         self.assertEqual(submitted["pickup_code"], uploaded["upload_id"][:6].upper())
+        cover = self.state / "order-previews" / (submitted["job_id"] + ".txt")
+        self.assertEqual(cover.read_text(encoding="utf-8").splitlines(), ["hello"] * 50)
         # Same stable id after a lost reply cannot enqueue a second job.
         self.assertEqual(self.client.json("/api/submit", order)[0], 200)
         snapshot = self.app.backend.snapshot(fresh=True)
@@ -244,7 +247,7 @@ class ClassroomTests(unittest.TestCase):
         self.assertNotEqual(row["customer"], "another-student")
         self.assertTrue(row["customer"].startswith("访客 "))
         self.assertEqual(row["priority"], 0)
-        self.assertEqual(row["quoted_cents"], 1530)
+        self.assertEqual(row["quoted_cents"], 1454)
         order["pages"] = 4
         self.assertEqual(self.client.json("/api/submit", order)[0], 409)
         # Persisted HMAC key and upload record survive gateway restart.
@@ -257,6 +260,49 @@ class ClassroomTests(unittest.TestCase):
         self.assertEqual([job["job_id"] for job in mine], [submitted["job_id"]])
         self.assertEqual(mine[0]["pickup_code"], submitted["pickup_code"])
         self.assertEqual(mine[0]["sheets"], 6)
+
+    def test_multi_file_merged_order(self):
+        _, first = self.client.upload("封面.pdf", make_pdf([(595, 842), (595, 842)]))
+        _, second = self.client.upload("正文.pdf", make_pdf([(595, 842), (595, 842), (595, 842)]))
+        self.assertTrue(first["pages_locked"] and second["pages_locked"])
+        batch = [{"upload_id": first["upload_id"], "pages": 2}, {"upload_id": second["upload_id"], "pages": 3}]
+        base = dict(documents=batch, copies=1, paper="a4", color=False, duplex=False, service="standard", payment="wechat")
+        self.assertEqual(self.client.json("/api/quote", dict(base))[0], 200)
+        status, submitted = self.client.json("/api/submit", dict(base))
+        self.assertEqual(status, 200)
+        self.assertEqual(submitted["job_id"], web.job_id(first["upload_id"]))
+        self.assertEqual(submitted["pickup_code"], first["upload_id"][:6].upper())
+        cover = self.state / "order-previews" / (submitted["job_id"] + ".png")
+        self.assertEqual(cover.read_bytes(), self.app.preview(first["upload_id"], 1, 960,
+                         self.app.session("; ".join(f"{item.name}={item.value}" for item in self.client.jar))))
+        row = next(row for row in self.app.backend.snapshot(fresh=True)["jobs"] if row["job_id"] == submitted["job_id"])
+        self.assertEqual(row["pages"], 5)
+        self.assertEqual(row["title"], "封面.pdf 等2份")
+        # A locked file's page count cannot be padded in the merged total.
+        self.assertEqual(self.client.json("/api/submit", {**base, "documents": [
+            {"upload_id": first["upload_id"], "pages": 2}, {"upload_id": second["upload_id"], "pages": 4}]})[0], 422)
+        # Duplicate files in one batch are rejected.
+        self.assertEqual(self.client.json("/api/submit", {**base, "documents": [
+            {"upload_id": first["upload_id"], "pages": 2}, {"upload_id": first["upload_id"], "pages": 2}]})[0], 422)
+        # A file the session does not own is invisible to the batch.
+        outsider = Client(self.base)
+        self.assertEqual(outsider.json("/api/submit", {**base, "documents": [
+            {"upload_id": first["upload_id"], "pages": 2}, {"upload_id": "f" * 32, "pages": 1}]})[0], 404)
+        # Resubmitting the identical batch reconciles instead of double-ordering.
+        self.assertEqual(self.client.json("/api/submit", dict(base))[0], 200)
+
+    def test_image_cover_and_cover_failure_preserve_accepted_order(self):
+        image = web.encode_png(2, 2, 6, b"\xff\x00\x00" * 4, 3)
+        _, uploaded = self.client.upload("封面.png", image)
+        status, submitted = self.client.json("/api/submit", self.client.order(uploaded))
+        self.assertEqual(status, 200)
+        self.assertEqual((self.state / "order-previews" / (submitted["job_id"] + ".png")).read_bytes(), image)
+        _, other = self.client.upload("失败时仍保留下单.txt", b"actual text")
+        with patch.object(self.app, "save_order_cover", side_effect=OSError("read-only")):
+            status, accepted = self.client.json("/api/submit", self.client.order(other))
+        self.assertEqual(status, 200)
+        self.assertTrue(any(row["job_id"] == accepted["job_id"]
+                            for row in self.app.backend.snapshot(fresh=True)["jobs"]))
 
     def test_display_name_and_quote_before_upload(self):
         status, quoted = self.client.json("/api/quote", dict(pages=8, copies=1, paper="a4", color=True, duplex=True,
@@ -350,6 +396,22 @@ class ClassroomTests(unittest.TestCase):
         status, problem = self.client.upload("损坏.pdf", b"%PDF-1.4 not really")
         self.assertEqual(status, 422)
         self.assertIn("PDF", problem["error"])
+
+    def test_document_endpoint_previews_images_and_text(self):
+        png = b"\x89PNG\r\n\x1a\n" + b"0" * 64
+        _, image = self.client.upload("照片.png", png)
+        status, body = self.client.raw(f"/api/document/{image['upload_id']}")
+        self.assertEqual((status, body), (200, png))
+        _, note = self.client.upload("笔记.txt", b"first\nsecond\n")
+        status, body = self.client.raw(f"/api/document/{note['upload_id']}")
+        self.assertEqual((status, body), (200, b"first\nsecond\n"))
+        # Only the owning session may read the stored document.
+        outsider = Client(self.base)
+        self.assertEqual(outsider.raw(f"/api/document/{image['upload_id']}")[0], 404)
+        # PDFs preview through rendered pages, never through the raw endpoint.
+        _, pdf = self.client.upload("讲义.pdf", make_pdf([(595, 842)]))
+        self.assertEqual(self.client.raw(f"/api/document/{pdf['upload_id']}")[0], 404)
+        self.assertEqual(self.client.raw("/api/document/" + "f" * 32)[0], 404)
 
     def test_office_conversion(self):
         if not self.app.office.available:

@@ -1,82 +1,51 @@
-# Office 本地预览：实现、部署与验收
+# 学生网页的 Office 预览
 
-Status: implemented; read the validation section for verified platforms.
-Scope: korwave/campus-print-scheduler, feat/print-editorial, issue #1.
+学生端已统一为网页，Office 预览由 `tools/classroom_web.py` 的 `OfficeConverter` 和 `PdfEngine` 实现；原 Qt 学生预览代码与 `--check-preview` 诊断入口已移除。
 
-## 执行链路与边界
+## 链路与边界
 
-`StudentWindow::setDocument` → `OfficePreview::start` → 独立 LibreOffice headless 进程 → 临时 PDF → `PrintProof::loadDocument` → `DocumentPreview` / PDFium。支持 `.doc/.docx/.ppt/.pptx/.xls/.xlsx`，PDF、图片、UTF-8 文本沿用原路径。转换器是运行依赖，不是 Python 文档库；Python 库只生成测试输入。
+浏览器上传 `.doc/.docx/.ppt/.pptx/.xls/.xlsx` → 网关保存私有原件 → 后台 LibreOffice 转换为 PDF → Python PDFium 读取页数、渲染 PNG → 浏览器展示。PDF、图片和文本沿用网关各自的预览路径。
 
-Office 原件不修改。复制到系统临时目录 `paperroom-office-*` 后转换；配置、输出及副本只属于当前会话。每次会话使用独立 `UserInstallation`，不接管已打开的 Office/LibreOffice，不复用个人宏配置。宏安全级别设为 3。Windows 使用私有 Job Object 管理转换进程及子进程；Qt >=6.7 的 POSIX 版本使用新 session/process group。超时 90 秒；替换、移除或窗口销毁取消当前任务并删除临时目录。异步错误回调携带 generation，旧文件的回调不得覆盖新文件。
+一次只转换一份 Office 文档，排队容量 30，单次超时 90 秒。转换前复制到独立临时目录，并建立私有 `UserInstallation`，宏安全级别为 3；不修改原文件、不复用个人 Office 配置。超时时 Windows 停止转换进程树，POSIX 停止进程组。macOS 子进程设置 `PYTHONDONTWRITEBYTECODE=1`，避免改写上游已签名缓存。
 
-GUI 不等待转换进程完成。转换期间保留导航、打印规格和移除入口；显示正在准备预览，禁止下单及手动填写猜测的页数。成功后以 PDFium 页数自动填写，Office 页数控件只读。失败时显示安装缺失、启动失败、文件不符/损坏、密码保护或超时提示；不以文件名/文本抽取冒充真实预览。输入与转换 PDF 各不超过 64 MiB，PDF 1–1000 页。
+Word 保留文档分页；PPT 保留幻灯片尺寸；Excel 使用 `calc_pdf_Export`，保留打印区域、分页和纸张缩放，不启用 `SinglePageSheets`。转换效果依赖 LibreOffice 导入和本机字体。
 
-Word 保留分页；PPT 保留幻灯片尺寸；Excel 使用 `calc_pdf_Export`，保留打印区域、分页及纸张缩放，不开启 `SinglePageSheets`，不将表格强行压成一页。结果依赖 LibreOffice 导入及机器字体，不能承诺与 Microsoft Office 在所有字体/复杂对象上像素一致。
+上传上限 10 MiB，转换 PDF 上限 64 MiB，PDF 上限 1000 页。转换成功后以真实 PDF 页数下单；未安装引擎时按网页现有提示允许手动填写页数。转换后的文件和原件只留在网关数据目录，不传入 coordinator；后台打印仍输出模拟文本。
 
-文档字节及临时 PDF 路径均不进入 IPC。提交给后台的仍是原文件名、实际页数、份数及现有打印规格。此变更不提供网络文件上传、真实打印或到账确认。
+## 依赖发现与部署
 
-## 横向页面与旋转
+发现顺序：`CPS_OFFICE_EXECUTABLE` 显式绝对路径 → 发布目录 `office/` → 项目私有 `.tools/libreoffice` → 系统安装或 PATH。显式配置无效时不会静默改用其他引擎。
 
-- 页面尺寸按每页读取并缓存，仅在文档/页码/方向变化时更新纸张几何；动画不逐帧查询 PDFium。
-- 横向 PPT 自动以横向纸张展示，内容保持原比例。混合方向 PDF 按当前页切换。纸张使用统一缩放，窗口宽高变化不会拉伸内容；阅读器的“适合窗口”同时约束宽高。
-- 工具栏第四个按钮 `rotateProof` 为“旋转预览”，顺时针 90°，四次恢复。桌面纸张与阅读器采用同一旋转方向，替换/移除文档复位。它不改变原文件、页数或打印规格；真实打印方向设置属于后续打印管线。
-
-## 运行依赖与打包
-
-发现顺序：`CPS_OFFICE_EXECUTABLE` 显式绝对路径（错误时不静默回退）→ 完整发布目录的 `office/` → 系统常见 LibreOffice 安装路径 → PATH。Windows 包内为 `office/program/soffice.com`；macOS 为 `office/LibreOffice.app/Contents/MacOS/soffice`，与 `CampusPrint.app` 同处发布目录，GUI 从自身可执行目录向上三级定位。不要只复制 soffice 单个文件。
-
-Windows 私有部署，Python >=3.11：
+Windows 发布路径为 `office/program/soffice.com`；macOS 为发布根目录的 `office/LibreOffice.app/Contents/MacOS/soffice`，与 `CampusPrint.app` 分开。完整引擎和全部许可证必须一起分发，不能只复制 soffice。
 
 ```powershell
+python tools/setup_pdfium.py
 python tools/setup_office_preview.py
 $env:CPS_OFFICE_EXECUTABLE = (Resolve-Path '.tools/libreoffice/program/soffice.com').Path
 ```
 
-脚本使用 LibreOffice 26.8.0 的 x64 MSI，SHA-256 固定为 `4aa6c6e1895f4055104effcb556bd3362d20c6ad707c149543304f395ef9db95`，匹配上游 winget 26.8.0.3 manifest。先校验后执行 `msiexec /a /qn TARGETDIR=...`，生成私有行政镜像，不执行 `/i` 系统安装。输出目录必须不存在；保留旧镜像。可传入 `--installer <已下载MSI>`。不跳过校验，不全局禁用 Office 安全设置。
+安装脚本沿用固定 LibreOffice 版本及 SHA-256 校验。Windows 生成私有行政镜像；macOS 复制私有 app，不覆盖系统安装。Linux 使用发行版 LibreOffice。
 
-Windows 转换器还依赖 Microsoft Visual C++ x64 运行库；MSVC 的 Qt 分发会携带匹配的运行库，MinGW 的 Qt 分发不能代替此依赖。部署到新机器时检查 VC++ 运行库及实际导入结果。macOS 同样运行 `python tools/setup_office_preview.py`，按 CPU 架构下载固定 26.8.0 DMG，校验后只读挂载、复制完整 app 并卸载卷，不修改 `/Applications`。输出为 `.tools/libreoffice/LibreOffice.app`；ARM SHA-256 `8858d8058da4f862f47559486814e65efc27294da67c5e4bb56b006b1ee59f89`，Intel `2dcbce4894e01bc1ecd594658e2cbda70ff7bfcd0b310f35d38887797172d09e`，匹配 [Homebrew cask](https://github.com/Homebrew/homebrew-cask/blob/master/Casks/l/libreoffice.rb)。下载每个来源最多四分钟、单次读等待 30 秒，失败尝试固定校验和的备用镜像。Linux 安装发行版的 LibreOffice（CI `apt-get install libreoffice`），使用 `/usr/bin/libreoffice`。字体由对应机器提供。
-
-完整分发包显式带转换器及其全部许可证；Windows 示例：
+Windows 完整包示例：
 
 ```powershell
-python tools/package_app.py --bin-dir build/ci/bin --qt-bin C:/Qt/6.10.1/mingw_64/bin --output-dir dist/editorial-v11 --office-dir .tools/libreoffice --preview-fixtures runtime/office-fixtures
-python tests/office_package_smoke.py --package-dir dist/editorial-v11
+python tools/package_app.py --bin-dir build/ci/bin --qt-bin "<Qt目录>/bin" --output-dir dist/web-student --office-dir .tools/libreoffice --preview-fixtures runtime/office-fixtures
+python tests/package_smoke.py --package-dir dist/web-student
+python tests/office_web_preview.py --package-dir dist/web-student
 ```
 
-macOS `--office-dir .tools/libreoffice/LibreOffice.app`，开发时显式设置 `CPS_OFFICE_EXECUTABLE` 为该 app 内 `Contents/MacOS/soffice` 的绝对路径。带引擎的包显著大于 PDF-only 包；`release-manifest.json` 记录 `office_preview_bundled`。默认不联网获取转换器，不将用户文件发送至在线转换服务。未带引擎的轻量包需依赖系统安装，不得称为零依赖的 Office 预览包。
+macOS `--office-dir .tools/libreoffice/LibreOffice.app`；分发整个目录。打包用 `ditto` 保留转换器框架元数据、资源叉和符号链接，部署前后检查上游签名；Qt 只部署主 app，不接管转换器。网页 PDFium Python 模块及许可证保存在包内 `.tools/pdfium/`，网页运行仍需要 Python >= 3.10。
 
-macOS 必须分发整个发布目录（主应用 + `office/` + 配套材料）。转换器保留独立的上游签名，不放入 Qt app 内部；使用原生 `ditto` 复制 framework 元数据、资源叉和符号链接，避免 Qt 部署工具重写内部框架或通用复制丢失原生元数据。复制前后校验转换器，并对主应用执行 `codesign --verify --deep --strict`，再在独立 runner 真实转换，不能跳过签名校验或全局关闭系统安全机制。
+## 验收
 
-macOS 签名回归的已确认原因：重定位后首次运行会重新生成 LibreOfficePython.framework 内已签名的 `*.pyc`，实际日志列出 `encodings`、`collections`、`re` 等缓存内容被改写。应用的转换子进程与测试输入生成均设置 `PYTHONDONTWRITEBYTECODE=1`，不修改全局环境。安装后、复制前后及独立包六格式导入后都校验上游签名；不得通过删除缓存或重新签署厂商 app 掩盖该问题。
-
-## 可复现验收
-
-测试依赖：`python-docx==1.2.0 python-pptx==1.0.2 openpyxl==3.1.5`。生成 Word 两页、16:9 PPT 两张、Excel 指定打印区域及分页两页，并导出三个旧二进制格式。中文、空格路径作为测试输入。
+生成六种真实输入后，使用当前网页预览引擎检查两页、首末页渲染、PPT 横向和原件哈希。HTTP、转换排队与错误处理由 `classroom_web_test.py` 覆盖。
 
 ```powershell
+python -m pip install python-docx==1.2.0 python-pptx==1.0.2 openpyxl==3.1.5
 python tools/generate_office_fixtures.py --office "$env:CPS_OFFICE_EXECUTABLE" --output-dir runtime/office-fixtures
 $env:CPS_OFFICE_FIXTURES = (Resolve-Path 'runtime/office-fixtures').Path
-$env:QT_QPA_PLATFORM = 'windows'
-$env:CPS_GUI_EVIDENCE_DIR = (Join-Path (Get-Location) 'runtime/office-evidence')
-& build/ci/bin/gui_tests.exe officeConversionLifecycle officeDocumentsRealPreview officeStudentPreviewAndReplacement previewPreservesMixedPageDirections editorialDocumentPreview -o runtime/office-tests.txt,txt
+python tests/office_web_preview.py --source-root .
+ctest --preset ci --output-on-failure
 ```
 
-`officeConversionLifecycle` 使用未分发的进程测试替身，覆盖响应性、缺失组件、取消、替换、清理及失败；这不能替代真实导入。`officeDocumentsRealPreview` 对六种真实格式逐个检查两页、首末页真实渲染、方向及原件不变。`officeStudentPreviewAndReplacement` 检查 GUI 页数、阅读器、手动旋转、移除与快速替换。混合 PDF 用例不依赖 Office。
-
-CI 安装真实 LibreOffice、生成六格式输入，在 Windows/macOS/Linux 执行真实导入；Windows/macOS 另外保存原生窗口截图，打包完整引擎。在第二台 runner 解压、校验 manifest，使用包内引擎和渲染器测试六格式；SDK 路径及外部转换器配置均被移除。
-
-部署诊断命令不会启动后台或显示窗口：`campus-print --check-preview <文件> --preview-report <JSON路径>`；成功返回 0，报告含实际页数、页面尺寸、首末页渲染结果及转换器路径 `converter`。失败返回 65（报告写入失败为 74）。独立包验证不设置转换器覆盖，必须自动发现包内引擎、成功渲染真实页，不能只检查 exe 存在或转换 PDF 存在，也不能让系统安装掩盖部署缺失。
-
-## 验证记录
-
-2026-10-03：Windows 11 / Qt 6.10.1 / MinGW 13.1 / 私有 LibreOffice 26.8.0：最终原生窗口测试 13/13 通过，0 失败、0 跳过，耗时 159.439 秒。覆盖进程生命周期、六格式真实导入、学生端替换/移除、16:9 横向 PPT、四次旋转恢复、混合方向 PDF、既有 PDF/图片/文本预览和悬停展开回收。证据位于被忽略的 `runtime/office-final-tests.txt` 与 `runtime/office-final-evidence/`；PPT 桌面及阅读器截图已检查。远端和独立发布包结果以当前提交的 Actions job 为准，未执行的 macOS 验收不得写成已通过。
-
-接口静态复核：同日通过 GitHub API 读取共同仓库 main `b55acd8` 与前端 `64df221`，未拉取共同主分支、未运行其后台。请求名称、支付字段及 schema 保持兼容；主分支新增可选 `forecast_at_ms` 及等待预测修复，合并时保留该提交及其 GUI 适配。此静态结论不是双端运行验收。
-
-发布前增量回归：生命周期、混合方向 PDF 与默认收款资源/本地覆盖用例 5/5 通过。两张用户授权公开的原图已编入资源，文件哈希与现有本地配置一致；真实转账和到账确认没有测试。
-
-动画增量检查：静态标题随桌面层缓存，减少逐帧文字与背景填充。在同机原生测量中，新版纸张绘制 p95 6.40 ms，旧提交 `64df221` 为 9.01 ms；完整窗口的 27 ms 门槛在两版本均出现波动（约 26.3–27.8 ms），未放宽断言，不能记录为本轮完整帧预算验收通过。日志位于 `runtime/office-caption-tests.txt` 与 `runtime/animation-baseline-tests.txt`。
-
-首轮远端 `5e136eb`：Linux 完整套件通过；Windows 六格式预览等新增用例通过，完整 GUI 套件的既有 `persistentPoliciesAndReport` 在启动时发送暂停过早而失败。该测试改为等待 `backendReady` 和持久暂停快照后提交任务；没有修改后台业务语义。最终 CI 结果仍以交付提交为准。
-
-参考：[LibreOffice 参数文档](https://help.libreoffice.org/latest/en-US/text/shared/guide/start_parameters.html)、[issue #1](https://github.com/korwave/campus-print-scheduler/issues/1)。
+未配置 `CPS_OFFICE_FIXTURES` 时，CTest 的 `office_web` 明确标为跳过；不能将替身测试或跳过用例写成六格式真实导入通过。CI 配置真实引擎与六格式输入，独立发布验收必须自动找到包内引擎并实际渲染，不能让系统安装掩盖部署缺失。macOS 六格式转换后再次检查上游签名。

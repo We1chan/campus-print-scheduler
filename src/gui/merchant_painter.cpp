@@ -1,6 +1,7 @@
 #include "merchant_painter.hpp"
 #include <QFontMetricsF>
 #include <QFileInfo>
+#include <QFile>
 #include <QImageReader>
 #include <QPainterPath>
 #include <QRandomGenerator>
@@ -32,11 +33,23 @@ void Painter::text(qreal x,qreal y,qreal w,qreal h,const QString& value,int size
     p.drawText(QRectF(x,y,w,h),align,QFontMetricsF(font).elidedText(value,Qt::ElideRight,w));
 }
 QImage Assets::orderCover(const QString& path) const {
-    const QFileInfo file(path);
+    QFileInfo file(path);
+    if(!path.isEmpty()&&!file.isFile())for(const QString& suffix:{QStringLiteral(".jpg"),QStringLiteral(".txt")}) {
+        const QFileInfo candidate(path.left(path.size()-4)+suffix);
+        if(candidate.isFile()){file=candidate;break;}
+    }
     if(path.isEmpty()||!file.isFile()||file.size()>16*1024*1024)return {};
-    const QString key=path+QString::number(file.lastModified().toMSecsSinceEpoch())+QString::number(file.size());
+    const QString key=file.absoluteFilePath()+QString::number(file.lastModified().toMSecsSinceEpoch())+QString::number(file.size());
     if(auto* cached=coverCache.object(key))return *cached;
-    QImageReader reader(path);
+    if(file.suffix()==QStringLiteral("txt")) {
+        if(file.size()>32*1024)return {};
+        QFile source(file.absoluteFilePath());if(!source.open(QIODevice::ReadOnly))return {};
+        QImage image(720,1000,QImage::Format_RGB32);image.fill(Qt::white);
+        QPainter page(&image);page.setPen(navy);page.setFont(merchantFont(16));
+        page.drawText(QRectF(44,44,632,912),Qt::AlignTop|Qt::TextWordWrap,QString::fromUtf8(source.readAll()));page.end();
+        coverCache.insert(key,new QImage(image),int(image.sizeInBytes()/1024)+1);return image;
+    }
+    QImageReader reader(file.absoluteFilePath());
     const QSize size=reader.size();
     if(!size.isValid()||size.width()>8192||size.height()>8192)return {};
     reader.setScaledSize(size.scaled(QSize(720,1000),Qt::KeepAspectRatio));
@@ -55,7 +68,7 @@ void Painter::headline(qreal x,qreal y,qreal h,const QString& prefix,const QStri
     const QFontMetricsF metrics(font);
     const qreal prefixWidth=metrics.horizontalAdvance(prefix);
     const qreal accentWidth=metrics.horizontalAdvance(accent);
-    // The accent follows the same measured baseline as print_proof.hpp.
+    // Place the accent at the measured text baseline.
     p.setFont(font);p.setPen(navy);
     p.drawText(QRectF(x,y,prefixWidth+2,h),Qt::AlignLeft|Qt::AlignVCenter,prefix);
     p.setPen(red);

@@ -21,22 +21,39 @@ QString isolateTestReportHandles() {
     } restore;
 #endif
     const auto arguments = QCoreApplication::arguments();
+    const auto finalPath = [](HANDLE handle) {
+        wchar_t path[32768];
+        const auto length = GetFinalPathNameByHandleW(handle, path, 32768, FILE_NAME_NORMALIZED);
+        if (!length || length >= 32768) return QString();
+        auto filename = QDir::fromNativeSeparators(QString::fromWCharArray(path, int(length)));
+        if (filename.startsWith("//?/")) filename.remove(0, 4);
+        return filename;
+    };
     QStringList reports;
     for (int i = 1; i + 1 < arguments.size(); ++i) {
         if (arguments[i] != "-o") continue;
         const auto filename = arguments[++i].section(',', 0, -2);
-        if (!filename.isEmpty() && filename != "-")
-            reports.append(QDir::cleanPath(QFileInfo(filename).absoluteFilePath()));
+        if (!filename.isEmpty() && filename != "-") {
+            const QFileInfo report(filename);
+            // QFileInfo's canonical path retains SUBST drive aliases. Resolve
+            // both sides through kernel handles, including mapped/junction paths.
+            const auto path = QDir::toNativeSeparators(report.absoluteFilePath());
+            const HANDLE handle = CreateFileW(reinterpret_cast<LPCWSTR>(path.utf16()),
+                FILE_READ_ATTRIBUTES, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+            if (handle == INVALID_HANDLE_VALUE) return "Cannot resolve QtTest report path";
+            const QString canonical = finalPath(handle);
+            CloseHandle(handle);
+            if (canonical.isEmpty()) return "Cannot resolve QtTest report final path";
+            reports.append(canonical);
+        }
     }
     for (int fd = 3; fd < _getmaxstdio(); ++fd) {
         const auto raw = _get_osfhandle(fd);
         if (raw < 0) continue;
         const auto handle = reinterpret_cast<HANDLE>(raw);
-        wchar_t path[32768];
-        const auto length = GetFinalPathNameByHandleW(handle, path, 32768, FILE_NAME_NORMALIZED);
-        if (!length || length >= 32768) continue;
-        auto filename = QDir::fromNativeSeparators(QString::fromWCharArray(path, int(length)));
-        if (filename.startsWith("//?/")) filename.remove(0, 4);
+        const QString filename = finalPath(handle);
+        if (filename.isEmpty()) continue;
         for (int index = 0; index < reports.size(); ++index) {
             if (filename.compare(reports[index], Qt::CaseInsensitive) != 0) continue;
             DWORD flags = 0;

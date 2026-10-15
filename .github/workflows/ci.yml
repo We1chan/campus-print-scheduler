@@ -75,7 +75,7 @@ jobs:
       - name: Build
         run: cmake --build --preset ci --parallel 2
       - name: Test
-        run: ctest --preset ci
+        run: ctest --preset ci -V
         env:
           QT_QPA_PLATFORM: offscreen
       - name: Capture native desktop control scenarios

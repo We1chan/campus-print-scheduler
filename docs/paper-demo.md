@@ -4,9 +4,7 @@
 
 ## 本机体验
 
-在工作树根目录双击 `start-paper-demo.cmd`。脚本依次查找便携包 `dist/paper-demo`、本机历史演示包
-`dist/paper-demo-20260923` 和源码构建 `build/dev/bin`；使用源码构建时会通过 `qtpaths6` 查找 Qt 运行库。
-运行数据写入 `runtime/paper-demo`。脚本同时打开老板后台和学生端两个窗口；老板后台启动后自动提交一批演示订单，顶部“演示任务”可以再次加载。
+在工作树根目录双击 `start-paper-demo.cmd`，转到当前课堂网页入口：同时打开老板窗口与学生扫码网页，运行数据写入 `runtime/paper-demo`。源码构建优先 `build/ci/bin`，其次 `build/dev/bin`。原 Qt 学生窗口已移除。
 
 发布目录不提交 Git，因此新克隆需要先完成源码构建。Windows 示例：
 
@@ -21,7 +19,7 @@ cmake --build --preset dev --parallel 2
 
 ```sh
 campus-print --data-dir runtime/paper-demo --demo-mode --demo-workload --page-ms 650
-campus-print --role student --data-dir runtime/paper-demo --demo-mode --page-ms 650
+python tools/classroom_web.py --coordinator build/dev/bin/print-coordinator --state-dir runtime/paper-demo --open-browser
 ```
 
 仅演示模式允许使用 --demo-workload；普通启动不会自动创建任何任务。

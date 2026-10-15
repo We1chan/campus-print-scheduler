@@ -263,4 +263,6 @@ shop_metrics 增加 `prepaid_cents` 与 `paid_cents`（对象，键为四种支�
 
 ### 客户端
 
-`campus-print --role boss`（默认）打开老板后台，`--role student [--student <学号>]` 打开学生端；`--role student` 与 `--legacy-mode`、`--demo-workload` 组合，或未知角色，返回 64。两个客户端都只持有快照并发送命令，任一方都可以在后台不存在时启动它。学生端按 `customer` 等于当前学号筛选“我的订单”，排队页不显示其他订单的标题；这是界面层的隐私处理，本地 IPC 没有身份认证，任何本机客户端仍能读取完整快照。学生端的“上传”只读取文件名、大小和页数，不保存也不传输文件内容。
+`campus-print --role boss`（默认）只打开老板后台；未知角色和旧 `--role student` 返回 64。学生客户端由 `tools/classroom_web.py` 提供，浏览器经 HTTP 访问。老板端 `--data-dir` 与网关 `--state-dir` 使用相同绝对目录时共享 coordinator。
+
+老板端持有后台快照并发送 IPC 命令，可在后台不存在时启动 coordinator；网关连接已启动的经营模式后台，仅暴露学生操作。网页上传原件保存在网关数据目录，后台仍只接收订单元数据。订单归属由网关签名 Cookie 与上传记录判断，学号/名称只作展示；本地 IPC 保持原有未认证协议。持久 schema、支付字段和订单 ID 兼容性不变。

@@ -1,9 +1,6 @@
 #include "print_window.hpp"
-#include "student_window.hpp"
 #include "merchant_window.hpp"
 #include "merchant_shell.hpp"
-#include "preview_check.hpp"
-#include "editorial_chrome.hpp"
 #include "cps/runtime/job_io.hpp"
 #include <QApplication>
 #include <QCommandLineParser>
@@ -12,22 +9,15 @@
 #include <cstdio>
 #include <memory>
 
-static void initializeBrandResources() { Q_INIT_RESOURCE(editorial_assets); }
-
 int main(int argc, char* argv[]) {
     QApplication app(argc, argv);
-    initializeBrandResources();
-    QApplication::setWindowIcon(cps::gui::editorialBrandIcon());
+    cps::gui::configureMerchantProcess();
     QApplication::setOrganizationName("CampusPrint");
     QApplication::setApplicationName("CampusPrintScheduler");
     QCommandLineParser parser;
     parser.addHelpOption();
     parser.addOptions({{"data-dir", "Store all job/output files under this directory", "directory"},
-        {"role", "Interface to open: boss (owner console) or student (self-service client)", "role", "boss"},
-        {"student", "Student ID used by the self-service client", "id"},
-        {"document", "Open a local document in the student interface", "path"},
-        {"check-preview", "Render a local document for deployment diagnostics without starting the backend", "path"},
-        {"preview-report", "JSON result file for --check-preview", "path"},
+        {"role", "Interface to open: boss (students use the web client)", "role", "boss"},
         {"page-ms", "Simulation delay per page (10..10000)", "ms", "150"},
         {"legacy-mode", "Use the original homogeneous queue for compatibility"},
         {"demo-mode", "Show availability of demonstration controls"},
@@ -37,18 +27,9 @@ int main(int argc, char* argv[]) {
         {"merchant-capture", "Save all four rendered owner screens for visual review", "directory"},
         {"smoke-test", "Start UI and exit without submitting jobs"}});
     parser.process(app);
-    if (parser.isSet("check-preview")) {
-        if (!parser.isSet("preview-report")) return 64;
-        return cps::gui::checkDocumentPreview(parser.value("check-preview"), parser.value("preview-report"));
-    }
     const auto role = parser.value("role");
-    const bool student = role == "student";
-    if (!student && role != "boss") {
-        std::fprintf(stderr, "--role must be boss or student\n");
-        return 64;
-    }
-    if (student && (parser.isSet("legacy-mode") || parser.isSet("demo-workload"))) {
-        std::fprintf(stderr, "--role student needs the shop mode and cannot load the demo workload\n");
+    if (role != "boss") {
+        std::fprintf(stderr, "--role must be boss; students use tools/classroom_web.py\n");
         return 64;
     }
     if (parser.isSet("demo-workload") && !parser.isSet("demo-mode")) {
@@ -63,17 +44,9 @@ int main(int argc, char* argv[]) {
     }
     const auto directory = parser.isSet("data-dir") ? QDir(parser.value("data-dir")).absolutePath() : QDir(cps::defaultStateDirectory()).filePath(parser.isSet("legacy-mode") ? "queue" : "shop");
     const cps::gui::WindowOptions options{directory, pageMs, parser.isSet("demo-mode"), !parser.isSet("legacy-mode")};
-    // Both interfaces are clients of the same coordinator; either one may start it.
+    // The owner console and web gateway share the coordinator's state directory.
     std::unique_ptr<QMainWindow> window;
-    if (student) {
-        auto* client = new cps::gui::StudentWindow(options, parser.value("student"));
-        window.reset(client);
-        if (parser.isSet("document"))
-            client->setDocument(parser.value("document"));
-        if (parser.isSet("smoke-test"))
-            QObject::connect(client, &cps::gui::StudentWindow::backendReady, client, &QWidget::close, Qt::QueuedConnection);
-    } else if (!parser.isSet("classic-owner") && !parser.isSet("legacy-mode") && !parser.isSet("demo-workload")) {
-        cps::gui::configureMerchantProcess();
+    if (!parser.isSet("classic-owner") && !parser.isSet("legacy-mode") && !parser.isSet("demo-workload")) {
         auto* console = new cps::gui::MerchantWindow(options, parser.isSet("merchant-showcase"));
         window.reset(console);
         if (parser.isSet("merchant-capture")) {

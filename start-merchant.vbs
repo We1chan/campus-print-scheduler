@@ -1,4 +1,4 @@
-' Silent merchant launcher. Student launchers and existing shop data stay intact.
+' Silent merchant launcher. Students use start-classroom-demo.ps1 and a browser.
 Option Explicit
 Dim fs, shell, root, executable, candidate, version, dataDirectory, command, argument
 Set fs = CreateObject("Scripting.FileSystemObject")

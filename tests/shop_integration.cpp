@@ -33,7 +33,7 @@ int main(int argc, char** argv) {
             {"paper", "a3"}, {"color", true}, {"duplex", true}, {"service", "flexible"}, {"quoted_cents", 1},
             {"payment", "wechat"}, {"customer", QStringLiteral("2024000001")}};
         const auto quote = client.request("quote", {{"job", order}});
-        require(quote.value("quoted_cents").toInt() == 1530 && quote.value("paper_sheets").toInt() == 4, "server quote");
+        require(quote.value("quoted_cents").toInt() == 1454 && quote.value("paper_sheets").toInt() == 4, "server quote");
         // 6 colour A3 sides on the 40 ms device: 6 * 40 * 2. Paused dispatch is forecast as if resumed now.
         require(quote.value("estimate_blocked").toString().isEmpty() && quote.value("jobs_ahead").toInt() == 0 &&
                 quote.value("estimated_wait_ms").toDouble() == 0 && quote.value("paused").toBool() &&
@@ -48,7 +48,7 @@ int main(int argc, char** argv) {
                 row.value("estimate_blocked").toString().isEmpty() && row.value("jobs_ahead").toInt() == 0 &&
                 row.value("estimated_finish_ms").toDouble() - row.value("estimated_start_ms").toDouble() == 480 &&
                 snap.value("queue_clear_ms").toDouble() == row.value("estimated_finish_ms").toDouble(), "snapshot carries the forecast and payment");
-        require(snap.value("shop_metrics").toObject().value("prepaid_cents").toInt() == 1530, "online payment is held as prepayment");
+        require(snap.value("shop_metrics").toObject().value("prepaid_cents").toInt() == 1454, "online payment is held as prepayment");
         auto unpaid = order; unpaid.insert("job_id", "bad-payment"); unpaid.insert("payment", "bitcoin");
         require(client.request("submit", {{"job", unpaid}}).value("type").toString() == "error", "unknown payment method rejected");
         unpaid.insert("payment", "alipay"); unpaid.insert("customer", QString(65, 'x'));
@@ -73,23 +73,23 @@ int main(int argc, char** argv) {
         }
         const auto job = snap.value("jobs").toArray()[0].toObject();
         require(job.value("state") == "completed" && job.value("assigned_printer").toInt() == 5, "compatible device executes");
-        require(job.value("quoted_cents").toInt() == 1530, "client cannot override price");
+        require(job.value("quoted_cents").toInt() == 1454, "client cannot override price");
         require(snap.value("stock_a3").toInt() == 2996, "duplex paper consumption");
         require(snap.value("shop_metrics").toObject().value("cost_cents").toInt() == 564, "paper and toner cost");
         require(snap.value("shop_metrics").toObject().value("prepaid_cents").toInt() == 0 &&
-                snap.value("shop_metrics").toObject().value("paid_cents").toObject().value("wechat").toInt() == 1530 &&
+                snap.value("shop_metrics").toObject().value("paid_cents").toObject().value("wechat").toInt() == 1454 &&
                 !job.contains("estimate_blocked"), "completed order settles into its payment channel");
         QFile output(QDir(root.path()).filePath("output/color-a3.txt")); require(output.open(QIODevice::ReadOnly), "output exists");
         const auto text = output.readAll(); require(text.contains("paper=a3") && text.contains("physical_sheets=4"), "output specification");
-        accepted(client.request("refund", {{"job_id", "color-a3"}, {"cumulative_cents", 1530}}), "refund order");
-        accepted(client.request("refund", {{"job_id", "color-a3"}, {"cumulative_cents", 1530}}), "repeat refund");
+        accepted(client.request("refund", {{"job_id", "color-a3"}, {"cumulative_cents", 1454}}), "refund order");
+        accepted(client.request("refund", {{"job_id", "color-a3"}, {"cumulative_cents", 1454}}), "repeat refund");
         accepted(client.request("restock", {{"paper", "a3"}, {"quantity", 100}}), "restock A3");
         snap = client.request("snapshot");
         require(snap.value("stock_a3").toInt() == 3096 && snap.value("shop_metrics").toObject().value("revenue_cents").toInt() == 0, "restock and idempotent refund");
         accepted(client.request("shutdown"), "close original shop"); require(process.waitForFinished(5000), "clean shutdown"); client.disconnect();
         cps::PersistentState state; QString error;
         require(cps::readPersistentState(QDir(root.path()).filePath("state.json"), state, error), "read shop snapshot");
-        require(state.fleet.size() == 6 && state.jobs[0].refundCents == 1530, "commercial persistence");
+        require(state.fleet.size() == 6 && state.jobs[0].refundCents == 1454, "commercial persistence");
         require(state.jobs[0].payment == cps::PaymentMethod::Wechat && state.jobs[0].customer == "2024000001", "payment persistence");
         QFile original(QDir(root.path()).filePath("state.json")); require(original.open(QIODevice::ReadOnly), "read saved JSON");
         auto damaged = QJsonDocument::fromJson(original.readAll()).object(); auto rows = damaged.value("jobs").toArray();
