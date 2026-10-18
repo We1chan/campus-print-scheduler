@@ -102,7 +102,7 @@ function locate(page) {
   return {doc: docs.length ? docs[docs.length - 1] : null, local: 1};
 }
 let quote = null, quoteState = "pending", quoteError = "", quoteSequence = 0, quoteTimer = 0, quoteRefresh = 0, queueSignature = "";
-let sheetIndex = 1, showingBack = false, rotation = 0, highlight = "", cancelTarget = null, readerPage = 1;
+let bookTurn = 0, bookTarget = 0, bookMotion = null, rotation = 0, highlight = "", cancelTarget = null, readerPage = 1;
 const aspects = new Map();
 
 // ---------- connection and state ----------
@@ -467,7 +467,7 @@ function applyUpload(record, fresh) {
   const existing = docs.find(doc => doc.record && doc.record.upload_id === record.upload_id);
   if (existing) { existing.record = record; if (record.status !== "converting") existing.pages = record.pages; }
   else docs.push({record, url: null, lines: null, pages: record.pages});
-  if (fresh) { aspects.clear(); sheetIndex = 1; showingBack = false; rotation = 0; }
+  if (fresh) { aspects.clear(); resetBook(); rotation = 0; }
   persistDocs();
   $("file-card").classList.add("has-file");
   $("remove-file").hidden = false;
@@ -488,8 +488,7 @@ function removeDoc(index) {
   persistDocs();
   if (!docs.length) { clearDocument(false); return; }
   aspects.clear();
-  sheetIndex = 1;
-  showingBack = false;
+  resetBook();
   renderFileList();
   syncPages();
   renderProof();
@@ -539,8 +538,7 @@ function clearDocument(keepMessage) {
   lockPages(false);
   $("pages").value = 8;
   aspects.clear();
-  sheetIndex = 1;
-  showingBack = false;
+  resetBook();
   rotation = 0;
   if (!keepMessage) say("已移除文件。重新选择后即可下单。");
   renderProof();
@@ -628,55 +626,161 @@ function faceFor(page, pixels) {
   return placeholderFace(page, message);
 }
 
-function renderProof() {
-  if (docs.length) recalcPages();
+// A turn is one physical leaf crossing the spine. Zero is the centered cover;
+// count is the centered back cover. Missing printed backs remain real blanks.
+function spreadAt(turn) {
   const count = sheetCount();
-  sheetIndex = Math.min(Math.max(sheetIndex, 1), count);
-  const duplex = options().duplex;
-  if (!duplex) showingBack = false;
-  const sheet = $("sheet"), pixels = (sheet.clientWidth || 360) * (window.devicePixelRatio || 1);
-  $("face-front").replaceChildren(faceFor(pageOn(sheetIndex, false), pixels));
-  $("face-back").replaceChildren(duplex ? faceFor(pageOn(sheetIndex, true), pixels) : node("div", "blank", "单面打印"));
-  sheet.classList.toggle("flipped", showingBack);
-  sheet.classList.toggle("mono", !options().color);
-  $("under-1").hidden = count < 2;
-  $("under-2").hidden = count < 3;
-  $("proof-index").textContent = `${sheetIndex} / ${count}`;
-  $("proof-prev").disabled = sheetIndex <= 1;
-  $("proof-next").disabled = sheetIndex >= count;
-  $("proof-flip").disabled = !duplex;
-  $("proof-flip").textContent = showingBack ? "正面" : "翻面";
+  return {
+    left: turn > 0 ? pageOn(turn, true) : null,
+    right: turn < count ? pageOn(turn + 1, false) : null,
+    state: turn === 0 ? "cover" : turn === count ? "back-cover" : "open",
+  };
+}
+function reducedBookMotion() {
+  return document.body.classList.contains("reduce-motion") || matchMedia("(prefers-reduced-motion: reduce)").matches;
+}
+function stopBookMotion() {
+  if (!bookMotion) return;
+  const animation = bookMotion.animation;
+  bookMotion = null;
+  animation.cancel();
+  $("sheet").hidden = true;
+  $("book").dataset.turning = "false";
+}
+function resetBook() {
+  stopBookMotion();
+  bookTurn = bookTarget = 0;
+}
+function bookPixels() {
+  return Math.max(240, $("book").clientWidth / 2) * (window.devicePixelRatio || 1);
+}
+function fillPaper(id, page) {
+  const paper = $(id);
+  paper.hidden = page === null;
+  paper.dataset.page = page === null ? "" : String(page);
+  if (page !== null) paper.replaceChildren(faceFor(page, bookPixels()));
+}
+function paintBook() {
+  const spread = spreadAt(bookTurn);
+  fillPaper("book-left", spread.left);
+  fillPaper("book-right", spread.right);
+  $("sheet").hidden = true;
+  $("book").dataset.turn = String(bookTurn);
+  $("book").dataset.turning = "false";
+}
+function updateBookControls() {
+  const count = sheetCount(), spread = spreadAt(bookTurn);
+  const visible = [spread.left, spread.right].filter(page => page !== null && page !== 0);
+  const label = spread.state === "cover" ? "封面" : spread.state === "back-cover" ? "封底" : visible.map(page => `第 ${page} 页`).join(" / ");
+  $("proof-index").textContent = spread.state === "open" ? `${visible.join("–")} / ${printedPages()}` : label;
+  $("proof-index").setAttribute("aria-label", `${label}，共 ${printedPages()} 页`);
+  $("proof-prev").disabled = bookTarget <= 0;
+  $("proof-next").disabled = bookTarget >= count;
+  $("proof-flip").disabled = bookTarget === 0;
   $("proof-rotate").disabled = !hasDocs();
-  const side = duplex ? (showingBack ? " · 背面" : " · 正面") : "";
-  $("proof-caption").textContent = hasDocs() || uploadCount ? `第 ${sheetIndex} 张纸${side} · 共 ${count} 张` : "示例文档 · 选择你的文件开始预览";
-  // Warm the next sheet so swiping does not wait for the gateway.
-  const next = sheetIndex < count ? pageOn(sheetIndex + 1, false) : 0;
-  if (next && pdfReadyAt(next)) new Image().src = previewUrl(next, previewWidth(pixels));
+  $("proof-caption").textContent = hasDocs() || uploadCount
+    ? `${label}${spread.left === 0 ? " · 背面留白" : ""} · 共 ${printedPages()} 页 / ${count} 张纸`
+    : "示例文档 · 左右滑动翻开，双击页面放大";
+}
+function renderProof() {
+  // Settings, removal and conversion completion invalidate an in-flight leaf.
+  // Commit the latest intent and discard its callback before rebuilding faces.
+  stopBookMotion();
+  if (docs.length) recalcPages();
+  bookTurn = bookTarget = Math.min(Math.max(bookTarget, 0), sheetCount());
+  $("book").classList.toggle("mono", !options().color);
+  paintBook();
+  updateBookControls();
   updateSummary();
   layoutSheet();
+  const next = pageOn(Math.min(bookTurn + 2, sheetCount()), false);
+  if (next && pdfReadyAt(next)) new Image().src = previewUrl(next, previewWidth(bookPixels()));
 }
-
 function layoutSheet() {
   const stage = $("stage"), width = stage.clientWidth, height = stage.clientHeight;
   if (!width || !height) return;
-  const aspect = aspects.get(pageOn(sheetIndex, false) || 1) || PORTRAIT;
-  const turned = rotation % 180 !== 0, visual = turned ? 1 / aspect : aspect;
-  const visibleWidth = Math.min(width * .84, height * .88 / visual), visibleHeight = visibleWidth * visual;
-  const [sheetWidth, sheetHeight] = turned ? [visibleHeight, visibleWidth] : [visibleWidth, visibleHeight];
-  for (const item of [$("sheet"), $("under-1"), $("under-2")]) {
-    item.style.width = `${sheetWidth}px`;
-    item.style.height = `${sheetHeight}px`;
-    item.style.setProperty("--u", `${sheetWidth / 100}px`);
-    item.style.setProperty("--rot", `${rotation}deg`);
-  }
+  const pose = bookMotion ? bookMotion.destination : bookTurn;
+  const spread = spreadAt(pose);
+  // Keep one physical book size while turning mixed portrait/landscape pages.
+  // Each page's object-fit contains its original orientation within that size.
+  const aspect = aspects.get(1) || PORTRAIT;
+  const turned = rotation % 180 !== 0;
+  const visual = turned ? 1 / aspect : aspect;
+  const visibleWidth = Math.min(width * .78, height * .82 / visual);
+  const [paperWidth, paperHeight] = turned ? [visibleWidth * visual, visibleWidth] : [visibleWidth, visibleWidth * visual];
+  const book = $("book");
+  book.style.width = `${paperWidth * 2}px`;
+  book.style.height = `${paperHeight}px`;
+  book.style.setProperty("--u", `${paperWidth / 100}px`);
+  const spreadWidth = turned ? paperHeight : paperWidth * 2;
+  const spreadHeight = turned ? paperWidth * 2 : paperHeight;
+  const scale = spread.state === "open" ? Math.min(1, width * .9 / spreadWidth, height * .86 / spreadHeight) : 1;
+  const offset = spread.state === "cover" ? -25 : spread.state === "back-cover" ? 25 : 0;
+  book.dataset.state = spread.state;
+  book.style.transform = `translate(-50%, -50%) scale(${scale}) rotate(${rotation}deg) translateX(${offset}%)`;
 }
-
-function step(delta) {
-  const next = Math.min(Math.max(sheetIndex + delta, 1), sheetCount());
-  if (next === sheetIndex) return;
-  sheetIndex = next;
-  showingBack = false;
-  renderProof();
+function animateBook() {
+  if (bookMotion || bookTarget === bookTurn) return;
+  const from = bookTurn, to = from + Math.sign(bookTarget - from), forward = to > from;
+  const leaf = forward ? from + 1 : from;
+  const before = spreadAt(from), after = spreadAt(to);
+  // The turning leaf sits over the two exposed stationary pages. Its back is
+  // the same physical sheet, never a mirrored copy of its printed front.
+  fillPaper("book-left", forward ? before.left : after.left);
+  fillPaper("book-right", forward ? after.right : before.right);
+  fillPaper("face-front", pageOn(leaf, false));
+  fillPaper("face-back", pageOn(leaf, true));
+  const sheet = $("sheet");
+  sheet.hidden = false;
+  const motion = {from, to, destination: to, animation: null};
+  bookMotion = motion;
+  $("book").dataset.turning = "true";
+  layoutSheet();
+  const duration = parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--book-duration")) || 280;
+  const easing = getComputedStyle(document.documentElement).getPropertyValue("--ease-book").trim();
+  motion.animation = sheet.animate([
+    {transform: `rotateY(${forward ? 0 : -180}deg)`},
+    {transform: `rotateY(${forward ? -180 : 0}deg)`},
+  ], {duration, easing, fill: "both"});
+  motion.animation.onfinish = () => {
+    if (bookMotion !== motion) return;
+    bookTurn = motion.destination;
+    stopBookMotion();
+    paintBook();
+    updateBookControls();
+    layoutSheet();
+    animateBook();
+  };
+}
+function step(delta, immediate = false) {
+  const next = Math.min(Math.max(bookTarget + delta, 0), sheetCount());
+  if (next === bookTarget) return;
+  bookTarget = next;
+  if (immediate || reducedBookMotion()) {
+    const book = $("book");
+    if (immediate) book.classList.add("silent");
+    renderProof();
+    if (immediate) {
+      book.getBoundingClientRect(); // Commit the keyboard pose without a CSS transition.
+      requestAnimationFrame(() => book.classList.remove("silent"));
+    }
+    return;
+  }
+  if (bookMotion) {
+    const motion = bookMotion;
+    const returns = (bookTarget - motion.from) * (motion.to - motion.from) <= 0;
+    const destination = returns ? motion.from : motion.to;
+    if (destination !== motion.destination) {
+      motion.destination = destination;
+      motion.animation.reverse();
+      layoutSheet();
+    }
+  } else animateBook();
+  updateBookControls();
+}
+function focusedBookPage() {
+  const spread = spreadAt(bookTurn);
+  return spread.right || spread.left || printedPages();
 }
 
 function openReader(page) {
@@ -869,6 +973,7 @@ function setMotion(reduced) {
   document.body.classList.toggle("reduce-motion", reduced);
   $("motion").setAttribute("aria-pressed", String(reduced));
   $("motion").textContent = reduced ? "恢复动效" : "减少动效";
+  if (reduced && bookMotion) renderProof();
 }
 
 function wire() {
@@ -899,23 +1004,29 @@ function wire() {
   });
   $("proof-prev").addEventListener("click", () => step(-1));
   $("proof-next").addEventListener("click", () => step(1));
-  $("proof-flip").addEventListener("click", () => { showingBack = !showingBack; renderProof(); });
+  $("proof-flip").addEventListener("click", () => step(-bookTarget));
   $("proof-rotate").addEventListener("click", () => { rotation = (rotation + 90) % 360; layoutSheet(); });
-  $("proof-zoom").addEventListener("click", () => openReader(pageOn(sheetIndex, showingBack) || pageOn(sheetIndex, false)));
+  $("proof-zoom").addEventListener("click", () => openReader(focusedBookPage()));
   const stage = $("stage");
   let start = null;
-  stage.addEventListener("pointerdown", event => { start = {x: event.clientX, y: event.clientY}; });
+  stage.addEventListener("pointerdown", event => {
+    if (event.isPrimary && event.button === 0) start = {x: event.clientX, y: event.clientY};
+  });
+  stage.addEventListener("pointercancel", () => { start = null; });
   stage.addEventListener("pointerup", event => {
     if (!start) return;
     const dx = event.clientX - start.x, dy = event.clientY - start.y;
     start = null;
     if (Math.abs(dx) > 45 && Math.abs(dx) > Math.abs(dy) * 1.4) step(dx < 0 ? 1 : -1);
   });
-  stage.addEventListener("dblclick", () => $("proof-zoom").click());
+  stage.addEventListener("dblclick", event => {
+    const paper = event.target.closest(".book-paper");
+    openReader(paper && Number(paper.dataset.page) || focusedBookPage());
+  });
   stage.addEventListener("keydown", event => {
-    if (event.key === "ArrowLeft") step(-1);
-    else if (event.key === "ArrowRight") step(1);
-    else if (event.key === "Enter") $("proof-zoom").click();
+    if (event.key === "ArrowLeft" || event.key === "PageUp") { event.preventDefault(); step(-1, true); }
+    else if (event.key === "ArrowRight" || event.key === "PageDown") { event.preventDefault(); step(1, true); }
+    else if (event.key === "Enter") { event.preventDefault(); $("proof-zoom").click(); }
   });
   $("reader-prev").addEventListener("click", () => { readerPage -= 1; renderReader(); });
   $("reader-next").addEventListener("click", () => { readerPage += 1; renderReader(); });
@@ -926,6 +1037,9 @@ function wire() {
     // Tapping the dimmed backdrop closes sheets, like native bottom sheets.
     dialog.addEventListener("click", event => { if (event.target === dialog && !$("pay-confirm").disabled) dialog.close(); });
   }
+  matchMedia("(prefers-reduced-motion: reduce)").addEventListener("change", event => {
+    if (event.matches && bookMotion) renderProof();
+  });
   const stored = storage.get("localStorage", "paperroom.motion");
   setMotion(stored === null ? matchMedia("(prefers-reduced-motion: reduce)").matches : stored === "1");
   $("motion").addEventListener("click", () => {

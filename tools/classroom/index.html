@@ -25,12 +25,15 @@
         <p class="lede">选择文件，在纸上确认你的打印方式。</p>
       </div>
       <figure class="desk" id="desk">
-        <div class="stage" id="stage" tabindex="0" aria-label="打印预览，左右滑动翻页">
-          <div class="under under-2" id="under-2"></div>
-          <div class="under under-1" id="under-1"></div>
-          <div class="sheet" id="sheet">
-            <div class="face front" id="face-front"></div>
-            <div class="face back" id="face-back"></div>
+        <div class="stage" id="stage" tabindex="0" aria-label="书本打印预览，左右滑动或按方向键翻页，双击页面放大">
+          <div class="book" id="book" data-state="cover">
+            <div class="book-paper book-left" id="book-left"></div>
+            <div class="book-paper book-right" id="book-right"></div>
+            <div class="book-spine" aria-hidden="true"></div>
+            <div class="sheet" id="sheet" hidden aria-hidden="true">
+              <div class="face front" id="face-front"></div>
+              <div class="face back" id="face-back"></div>
+            </div>
           </div>
         </div>
         <div class="color-switch" role="radiogroup" aria-label="颜色">
@@ -40,10 +43,10 @@
         <figcaption>
           <span id="proof-caption">示例文档 · 选择你的文件开始预览</span>
           <span class="proof-tools">
-            <button type="button" id="proof-prev" aria-label="上一张纸">‹</button>
-            <span id="proof-index" class="proof-index">1 / 4</span>
-            <button type="button" id="proof-next" aria-label="下一张纸">›</button>
-            <button type="button" id="proof-flip">翻面</button>
+            <button type="button" id="proof-prev" aria-label="向前翻页">‹</button>
+            <span id="proof-index" class="proof-index" role="status" aria-live="polite">封面</span>
+            <button type="button" id="proof-next" aria-label="向后翻页">›</button>
+            <button type="button" id="proof-flip">回到封面</button>
             <button type="button" id="proof-rotate" aria-label="旋转预览">旋转</button>
             <button type="button" id="proof-zoom">放大</button>
           </span>
