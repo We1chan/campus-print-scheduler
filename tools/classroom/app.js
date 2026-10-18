@@ -363,6 +363,9 @@ async function chooseFiles(fileList) {
       doc.record = record;
       doc.pages = record.pages;
       docs.push(doc);
+      aspects.clear();
+      resetBook();
+      rotation = 0;
       persistDocs();
       index += 1;
       renderFileList();
@@ -643,9 +646,11 @@ function stopBookMotion() {
   if (!bookMotion) return;
   const animation = bookMotion.animation;
   bookMotion = null;
-  animation.cancel();
+  if (animation) animation.cancel();
   $("sheet").hidden = true;
   $("book").dataset.turning = "false";
+  $("book").dataset.loading = "false";
+  $("stage").setAttribute("aria-busy", "false");
 }
 function resetBook() {
   stopBookMotion();
@@ -654,16 +659,22 @@ function resetBook() {
 function bookPixels() {
   return Math.max(240, $("book").clientWidth / 2) * (window.devicePixelRatio || 1);
 }
-function fillPaper(id, page) {
+function prepareBookPaper(page) {
+  if (page === null) return {page, content: null};
+  const content = node("div", "book-content");
+  content.append(faceFor(page, bookPixels()));
+  return {page, content};
+}
+function fillPaper(id, page, content) {
   const paper = $(id);
   paper.hidden = page === null;
   paper.dataset.page = page === null ? "" : String(page);
-  if (page !== null) paper.replaceChildren(faceFor(page, bookPixels()));
+  if (page !== null) paper.replaceChildren(content || faceFor(page, bookPixels()));
 }
-function paintBook() {
+function paintBook(prepared) {
   const spread = spreadAt(bookTurn);
-  fillPaper("book-left", spread.left);
-  fillPaper("book-right", spread.right);
+  fillPaper("book-left", spread.left, prepared && prepared.left.content);
+  fillPaper("book-right", spread.right, prepared && prepared.right.content);
   $("sheet").hidden = true;
   $("book").dataset.turn = String(bookTurn);
   $("book").dataset.turning = "false";
@@ -681,6 +692,15 @@ function updateBookControls() {
   $("proof-caption").textContent = hasDocs() || uploadCount
     ? `${label}${spread.left === 0 ? " · 背面留白" : ""} · 共 ${printedPages()} 页 / ${count} 张纸`
     : "示例文档 · 左右滑动翻开，双击页面放大";
+  if (bookMotion && !bookMotion.animation) $("proof-caption").textContent += " · 正在准备页面…";
+}
+function warmBookPages() {
+  for (let leaf = bookTurn + 1; leaf <= Math.min(bookTurn + 2, sheetCount()); leaf += 1) {
+    for (const back of [false, true]) {
+      const page = pageOn(leaf, back);
+      if (page && pdfReadyAt(page)) new Image().src = previewUrl(page, previewWidth(bookPixels()));
+    }
+  }
 }
 function renderProof() {
   // Settings, removal and conversion completion invalidate an in-flight leaf.
@@ -693,13 +713,12 @@ function renderProof() {
   updateBookControls();
   updateSummary();
   layoutSheet();
-  const next = pageOn(Math.min(bookTurn + 2, sheetCount()), false);
-  if (next && pdfReadyAt(next)) new Image().src = previewUrl(next, previewWidth(bookPixels()));
+  warmBookPages();
 }
 function layoutSheet() {
   const stage = $("stage"), width = stage.clientWidth, height = stage.clientHeight;
   if (!width || !height) return;
-  const pose = bookMotion ? bookMotion.destination : bookTurn;
+  const pose = bookMotion && bookMotion.started ? bookMotion.destination : bookTurn;
   const spread = spreadAt(pose);
   // Keep one physical book size while turning mixed portrait/landscape pages.
   // Each page's object-fit contains its original orientation within that size.
@@ -724,17 +743,46 @@ function animateBook() {
   const from = bookTurn, to = from + Math.sign(bookTarget - from), forward = to > from;
   const leaf = forward ? from + 1 : from;
   const before = spreadAt(from), after = spreadAt(to);
+  const prepared = {
+    left: prepareBookPaper(forward ? before.left : after.left),
+    right: prepareBookPaper(forward ? after.right : before.right),
+    front: prepareBookPaper(pageOn(leaf, false)),
+    back: prepareBookPaper(pageOn(leaf, true)),
+  };
+  const motion = {from, to, destination: to, animation: null, started: false};
+  bookMotion = motion;
+  const begin = () => {
+    if (bookMotion !== motion) return;
+    // A second gesture can cancel or change direction while a PNG is loading.
+    if ((bookTarget - from) * (to - from) <= 0) {
+      stopBookMotion();
+      updateBookControls();
+      animateBook();
+      return;
+    }
+    startBookTurn(motion, prepared, forward);
+  };
+  const images = Object.values(prepared).flatMap(paper => paper.content ? [...paper.content.querySelectorAll("img")] : []);
+  if (!images.length) begin();
+  else {
+    $("book").dataset.loading = "true";
+    $("stage").setAttribute("aria-busy", "true");
+    // Keep the current spread visible until both sides and the exposed pages
+    // are decoded. Failed images still use faceFor's existing error message.
+    Promise.all(images.map(image => image.decode().catch(() => {}))).then(begin);
+  }
+}
+function startBookTurn(motion, prepared, forward) {
   // The turning leaf sits over the two exposed stationary pages. Its back is
   // the same physical sheet, never a mirrored copy of its printed front.
-  fillPaper("book-left", forward ? before.left : after.left);
-  fillPaper("book-right", forward ? after.right : before.right);
-  fillPaper("face-front", pageOn(leaf, false));
-  fillPaper("face-back", pageOn(leaf, true));
+  for (const [id, paper] of [["book-left", prepared.left], ["book-right", prepared.right],
+    ["face-front", prepared.front], ["face-back", prepared.back]]) fillPaper(id, paper.page, paper.content);
   const sheet = $("sheet");
   sheet.hidden = false;
-  const motion = {from, to, destination: to, animation: null};
-  bookMotion = motion;
+  $("book").dataset.loading = "false";
+  $("stage").setAttribute("aria-busy", "false");
   $("book").dataset.turning = "true";
+  motion.started = true;
   layoutSheet();
   const duration = parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--book-duration")) || 280;
   const easing = getComputedStyle(document.documentElement).getPropertyValue("--ease-book").trim();
@@ -746,10 +794,12 @@ function animateBook() {
     if (bookMotion !== motion) return;
     bookTurn = motion.destination;
     stopBookMotion();
-    paintBook();
+    const endedForward = (bookTurn === motion.to) === forward;
+    paintBook({left: endedForward ? prepared.back : prepared.left, right: endedForward ? prepared.right : prepared.front});
     updateBookControls();
     layoutSheet();
     animateBook();
+    warmBookPages();
   };
 }
 function step(delta, immediate = false) {
@@ -766,7 +816,10 @@ function step(delta, immediate = false) {
     }
     return;
   }
-  if (bookMotion) {
+  if (bookMotion && !bookMotion.animation && (bookTarget - bookMotion.from) * (bookMotion.to - bookMotion.from) <= 0) {
+    stopBookMotion();
+    animateBook();
+  } else if (bookMotion && bookMotion.animation) {
     const motion = bookMotion;
     const returns = (bookTarget - motion.from) * (motion.to - motion.from) <= 0;
     const destination = returns ? motion.from : motion.to;
@@ -775,7 +828,7 @@ function step(delta, immediate = false) {
       motion.animation.reverse();
       layoutSheet();
     }
-  } else animateBook();
+  } else if (!bookMotion) animateBook();
   updateBookControls();
 }
 function focusedBookPage() {

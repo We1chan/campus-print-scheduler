@@ -75,6 +75,7 @@ main { padding: 0 16px; }
 .face { position: absolute; inset: 0; overflow: hidden; background: #fff; border-radius: 2px;
   -webkit-backface-visibility: hidden; backface-visibility: hidden; box-shadow: 0 2px 9px rgba(45, 36, 25, .15); }
 .face.back { transform: rotateY(180deg); }
+.book-content { height: 100%; }
 .book.mono .book-paper > *, .book.mono .face > *, .reader-paper.mono > * { filter: grayscale(1); }
 .book[data-turning="true"] .sheet { will-change: transform; }
 .book.silent { transition: none; }

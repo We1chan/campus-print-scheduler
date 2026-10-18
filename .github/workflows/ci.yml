@@ -23,6 +23,19 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  student-web:
+    name: Student web preview
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Check preview syntax and navigation regressions
+        run: |
+          node --check tools/classroom/app.js
+          node --test tests/student_book_navigation_test.cjs
+
   build-and-test:
     if: ${{ !inputs.reuse_windows_run }}
     name: ${{ matrix.os }} / Qt 6.10.2
