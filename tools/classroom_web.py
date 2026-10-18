@@ -578,7 +578,35 @@ class Application:
             else:
                 self.backend.request("submit", job=job)
             self.backend.invalidate()
+        # The accepted order remains successful if optional cover persistence fails.
+        # These local files are not exposed by HTTP and never enter coordinator IPC.
+        try:
+            self.save_order_cover(anchor, job["job_id"], session)
+        except Exception:
+            print("Order accepted; optional merchant cover could not be saved.", file=sys.stderr)
         return dict(job_id=job["job_id"], pickup_code=pickup_code(job["job_id"]), message="订单已进入队列，支付为模拟。")
+
+    def save_order_cover(self, identifier, order_id, session):
+        record = self.metadata(identifier, session)
+        directory = self.state / "order-previews"
+        if any((directory / (order_id + suffix)).is_file() for suffix in (".png", ".jpg", ".txt")):
+            return
+        if record.get("preview") == "pdf":
+            image = self.preview(identifier, 1, 960, session)
+            suffix, data = ".png", image
+        elif record.get("kind") == "image":
+            suffix = ".png" if record["name"].lower().endswith(".png") else ".jpg"
+            data = (self.uploads / (identifier + ".bin")).read_bytes()
+        elif record.get("kind") == "text":
+            # Keep a bounded first-page text excerpt; the Qt owner renders it with
+            # its installed CJK fonts, without adding a second Office/PDF engine.
+            with (self.uploads / (identifier + ".bin")).open("rb") as source:
+                text = source.read(64 * 1024).decode("utf-8", errors="replace")
+            suffix, data = ".txt", "\n".join(text.splitlines()[:50])[:4096].encode("utf-8")
+        else:
+            return
+        directory.mkdir(exist_ok=True)
+        save_bytes(directory / (order_id + suffix), data)
 
     def cancel(self, body, session):
         identifier = body.get("job_id")

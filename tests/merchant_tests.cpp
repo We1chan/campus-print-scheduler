@@ -1,4 +1,6 @@
 #include "merchant_window.hpp"
+#include "merchant_painter.hpp"
+#include "order_preview_store.hpp"
 #include "coordinator_test_client.hpp"
 #include "native_frame_evidence.hpp"
 #include "windows_test_logs.hpp"
@@ -14,6 +16,7 @@
 #include <QFocusEvent>
 #include <QEnterEvent>
 #include <QImage>
+#include <QFontMetricsF>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QLabel>
@@ -94,6 +97,135 @@ private slots:
         initializeMerchantTestResources();
         const auto error = isolateTestReportHandles();
         QVERIFY2(error.isEmpty(), qPrintable(error));
+    }
+
+    void orderStatusRemainsVisibleBesideFileName() {
+        Snapshot state;
+        state.connected = true;
+        Order order;
+        order.id = QStringLiteral("demo-bf34e16cc9ab");
+        order.title = QStringLiteral("虚拟订单 · 操作系统实验报告.pdf");
+        state.orders.append(order);
+        Assets assets;
+        QVector<Hit> hits;
+        QImage image(1586, 992, QImage::Format_RGB32);
+        image.fill(Qt::white);
+        QPainter painter(&image);
+        Painter drawing(painter, hits, assets, false);
+        paintWorkbench(drawing, state, {});
+        painter.end();
+        // The state badge shares the filename row and stays clear of the cover.
+        const QRect badge(1450, 577, 103, 30);
+        QImage expected(1586, 992, QImage::Format_RGB32);
+        expected.fill(Qt::white);
+        QPainter reference(&expected);
+        QVector<Hit> unused;
+        Painter referenceDrawing(reference, unused, assets, false);
+        referenceDrawing.badge(badge, order.state);
+        reference.end();
+        QCOMPARE(image.copy(badge), expected.copy(badge));
+    }
+
+    void localOrderCoverIsPersistentAndBounded() {
+        QTemporaryDir directory;QVERIFY(directory.isValid());
+        QImage page(1000,1400,QImage::Format_RGB32);page.fill(QColor("#D63D29"));
+        QVERIFY(saveOrderCover(directory.path(),QStringLiteral("cover-1"),page));
+        QVERIFY(!saveOrderCover(directory.path(),QStringLiteral("../escape"),page));
+        Assets assets;const auto path=orderCoverPath(directory.path(),QStringLiteral("cover-1"));
+        const auto cover=assets.orderCover(path);QVERIFY(!cover.isNull());
+        QVERIFY(cover.width()<=720&&cover.height()<=1000);
+        QCOMPARE(cover.pixelColor(cover.rect().center()),QColor("#D63D29"));
+        QCOMPARE(assets.orderCover(path),cover);
+        QVERIFY(assets.orderCover(directory.path()+"/missing.png").isNull());
+        const QString textPath=orderCoverPath(directory.path(),QStringLiteral("text-1"));
+        QFile text(textPath.left(textPath.size()-4)+".txt");QVERIFY(text.open(QIODevice::WriteOnly));
+        text.write(QStringLiteral("网页订单的真实文本首页").toUtf8());text.close();
+        const auto textCover=assets.orderCover(textPath);QVERIFY(!textCover.isNull());
+        QCOMPARE(textCover.pixelColor(0,0),QColor(Qt::white));
+        bool hasInk=false;for(int y=40;y<100;++y)for(int x=40;x<500;++x)
+            if(textCover.pixelColor(x,y).lightness()<150)hasInk=true;
+        QVERIFY(hasInk);
+        const QString jpegPath=orderCoverPath(directory.path(),QStringLiteral("image-1"));
+        QVERIFY(page.save(jpegPath.left(jpegPath.size()-4)+".jpg","JPEG"));
+        QVERIFY(!assets.orderCover(jpegPath).isNull());
+        MerchantWindow window({},true);window.show();QTRY_VERIFY(window.isVisible());
+        for(const auto* control:window.findChildren<QPushButton*>()) {
+            QVERIFY(!control->objectName().startsWith("merchant_start_"));
+            QVERIFY(!control->objectName().startsWith("merchant_pickup-slip_"));
+        }
+    }
+
+    void queueDetailsDescribeDispatchWithoutFooterControls() {
+        MerchantWindow window({}, true);
+        window.setPage(1);
+        window.show();
+        QTRY_VERIFY(window.isVisible());
+        const auto controls = window.findChildren<QPushButton*>();
+        for (const auto* control : controls) {
+            if (!control->isVisible()) continue;
+            const QString name = control->objectName();
+            QVERIFY2(!name.startsWith("merchant_start_") && !name.startsWith("merchant_pause_"),
+                     "The queue footer must not offer start/pause controls");
+        }
+        QVERIFY(saveEvidence(window, QStringLiteral("queue-dispatch-sidebar.png")));
+    }
+
+    void deviceActionsStayInsideDetailsSidebar() {
+        MerchantWindow window({}, true);
+        window.setPage(2);
+        window.show();
+        QTRY_VERIFY(window.isVisible());
+        auto* canvas = window.findChild<QWidget*>("merchantCanvas");
+        QVERIFY(canvas);
+        for (const QSize size : {QSize(950,594), QSize(1269,794), QSize(1586,992)}) {
+            window.resize(size);
+            QApplication::processEvents();
+            for (const QString& action : {QStringLiteral("device-settings"), QStringLiteral("test-page")}) {
+                auto* button = window.findChild<QPushButton*>("merchant_" + action + "_0");
+                QVERIFY(button && button->isVisible());
+                QVERIFY2(button->geometry().left() >= qRound(1145 * canvas->width() / 1586.),
+                         "Device actions must fit wholly inside the details sidebar");
+                QVERIFY(canvas->rect().contains(button->geometry()));
+            }
+        }
+        QVERIFY(saveEvidence(window, QStringLiteral("expanded-device-cards.png")));
+    }
+
+    void statisticsDividersFollowLongValues() {
+        Snapshot state;
+        const auto compact=statsMetricLayout(state);
+        state.revenueCents=99999999999LL;
+        const auto expanded=statsMetricLayout(state);
+        QVERIFY(expanded.dividers[0]>compact.dividers[0]);
+        // Offscreen/platform fonts can require a smaller uniform type size.
+        // The requirement is a complete value inside its adaptive column.
+        QVERIFY(QFontMetricsF(merchantFont(expanded.valueSize,true)).horizontalAdvance(money(state.revenueCents))
+                <=expanded.columns[0].width()+.01);
+        state.todayOrders=10000;
+        state.printedPages=100000000;
+        state.averageMinutes=99999.9;
+        const auto layout=statsMetricLayout(state);
+        const QStringList values{money(state.revenueCents),QString::number(state.todayOrders),QString::number(state.printedPages),QString::number(state.averageMinutes,'f',1)};
+        const QFontMetricsF font(merchantFont(layout.valueSize,true));
+        const qreal unitWidth=QFontMetricsF(merchantFont(14,true)).horizontalAdvance(QStringLiteral("分钟"))+8;
+        for (int i=0;i<4;++i) {
+            const auto column=layout.columns[static_cast<std::size_t>(i)];
+            QVERIFY(font.horizontalAdvance(values[i])+(i==3?unitWidth:0)<=column.width()+.01);
+            if (i<3) {
+                QVERIFY(column.right()<layout.dividers[static_cast<std::size_t>(i)]);
+                QVERIFY(layout.dividers[static_cast<std::size_t>(i)]<layout.columns[static_cast<std::size_t>(i+1)].left());
+            }
+            QVERIFY(column.right()<=805.01);
+        }
+        Assets assets; QVector<Hit> hits;
+        QImage image(1586,992,QImage::Format_RGB32);image.fill(Qt::white);
+        QPainter painter(&image);Painter drawing(painter,hits,assets,false);
+        paintStats(drawing,state,{});painter.end();
+        const auto evidence=qEnvironmentVariable("CPS_MERCHANT_EVIDENCE_DIR");
+        if (!evidence.isEmpty()) {
+            QVERIFY(QDir().mkpath(evidence));
+            QVERIFY(image.save(QDir(evidence).filePath(QStringLiteral("statistics-long-values.png"))));
+        }
     }
 
     void nativeDispatchWorkspaceIsInteractiveAndIsolated() {
@@ -462,7 +594,7 @@ private slots:
         QVERIFY(dialog && dialog->isVisible());
         bool explainsMetadata = false;
         for (const auto* label : dialog->findChildren<QLabel*>())
-            explainsMetadata |= label->text().contains(QStringLiteral("元数据"));
+            explainsMetadata |= label->text().contains(QStringLiteral("封面"));
         QVERIFY(explainsMetadata);
         QVERIFY(saveEvidence(*dialog, QStringLiteral("native-file-dialog.png")));
         auto* close = dialog->findChild<QPushButton*>("dialogClose");
@@ -479,9 +611,8 @@ private slots:
         auto* pending = window.findChild<QPushButton*>(QStringLiteral("merchant_select-order_%1").arg(pendingIndex));
         QVERIFY(pending && pending->isVisible());
         QTest::mouseClick(pending, Qt::LeftButton);
-        auto* start = window.findChild<QPushButton*>("merchant_start_1");
-        QVERIFY(start && start->isVisible());
-        QTest::mouseClick(start, Qt::LeftButton);
+        QVERIFY(!window.findChild<QPushButton*>("merchant_start_1"));
+        window.model()->execute(QStringLiteral("start"),QStringLiteral("1"));
         QTRY_VERIFY_WITH_TIMEOUT(window.model()->snapshot().devices[1].printed > 0, 2000);
         window.model()->execute(QStringLiteral("pause"), QStringLiteral("1"));
         window.close();
@@ -870,6 +1001,17 @@ private slots:
         QCOMPARE(raw[0].toObject().value("base_cents").toInt(), 900);
         QCOMPARE(raw[0].toObject().value("quoted_cents").toInt(), 855);
 
+        if (!qEnvironmentVariable("CPS_MERCHANT_EVIDENCE_DIR").isEmpty())
+            QTRY_VERIFY_WITH_TIMEOUT(canvas->accessibleDescription().isEmpty(), 6000);
+        QCOMPARE(merchant.model()->snapshot().business.pendingCents,qint64(855));
+        QCOMPARE(merchant.model()->snapshot().business.costCents,qint64(0));
+        for (int page : {0,1,2,3}) {
+            merchant.setPage(page);
+            QApplication::processEvents();
+            QVERIFY(saveEvidence(merchant,QStringLiteral("live-order-page-%1.png").arg(page)));
+        }
+        merchant.setPage(0);
+
         merchant.model()->execute(QStringLiteral("resume-all"));
         QTRY_COMPARE_WITH_TIMEOUT(merchant.model()->snapshot().orders[0].state, QStringLiteral("已完成"), 10000);
         QCOMPARE(merchant.model()->snapshot().orders[0].estimatedMinutes, 0);
@@ -877,10 +1019,22 @@ private slots:
         QCOMPARE(merchant.model()->snapshot().completed, 1);
         QCOMPARE(merchant.model()->snapshot().colorPages, 6);
         QCOMPARE(merchant.model()->snapshot().revenueCents, qint64(855));
+        QCOMPARE(merchant.model()->snapshot().business.costCents,qint64(288));
+        QCOMPARE(merchant.model()->snapshot().business.contributionCents,qint64(567));
+        QCOMPARE(merchant.model()->snapshot().business.completed,1);
+        QCOMPARE(merchant.model()->snapshot().business.onTime,1);
+        QCOMPARE(merchant.model()->snapshot().business.pendingCents,qint64(0));
         const int printer = merchant.model()->snapshot().orders[0].printer;
         QVERIFY(printer >= 0 && printer < 6);
         QVERIFY(merchant.model()->snapshot().devices[printer].color);
         QVERIFY(QFileInfo::exists(QDir(directory.path()).filePath("output/" + id + ".txt")));
+        QCOMPARE(audit.request(QStringLiteral("refund"),{{"job_id",id},{"cumulative_cents",100}}).value("type").toString(),QStringLiteral("accepted"));
+        QTRY_COMPARE(merchant.model()->snapshot().business.refundCents,qint64(100));
+        QCOMPARE(merchant.model()->snapshot().business.contributionCents,qint64(467));
+        merchant.model()->setRange(QDate::currentDate().addDays(-1).toString(Qt::ISODate));
+        QCOMPARE(merchant.model()->snapshot().business.completed,0);
+        QCOMPARE(merchant.model()->snapshot().business.costCents,qint64(0));
+        QCOMPARE(merchant.model()->snapshot().business.refundCents,qint64(0));
         student.requestClose();
         merchant.close();
         QVERIFY(!merchant.isVisible());

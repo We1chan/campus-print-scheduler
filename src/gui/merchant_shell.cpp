@@ -5,6 +5,7 @@
 #include <QDir>
 #include <QFileInfo>
 #include <QDebug>
+#include <utility>
 #ifdef Q_OS_WIN
 #ifndef NOMINMAX
 #define NOMINMAX
@@ -64,8 +65,16 @@ void configureMerchantTaskbar(QWidget* window) {
     set(PKEY_AppUserModel_ID,QStringLiteral("Paperroom.Merchant"));
     set(PKEY_AppUserModel_RelaunchCommand,arguments.join(' '));
     set(PKEY_AppUserModel_RelaunchDisplayNameResource,QStringLiteral("纸间 · 店主工作台"));
-    const auto icon=QDir(QCoreApplication::applicationDirPath()).filePath("paperroom-merchant-v3.ico");
-    if(QFileInfo::exists(icon))set(PKEY_AppUserModel_RelaunchIconResource,QDir::toNativeSeparators(icon)+",0");
+    const QDir app(QCoreApplication::applicationDirPath());
+    const QString icon=QFileInfo::exists(app.filePath("paperroom-merchant-v4.ico"))?app.filePath("paperroom-merchant-v4.ico"):app.filePath("paperroom-merchant-v3.ico");
+    set(PKEY_AppUserModel_RelaunchIconResource,QDir::toNativeSeparators(QFileInfo::exists(icon)?icon:QCoreApplication::applicationFilePath())+",0");
+    if(QFileInfo::exists(icon)) {
+        const auto hwnd=reinterpret_cast<HWND>(window->winId());
+        for(const auto& size:{std::pair<int,int>{ICON_BIG,32},std::pair<int,int>{ICON_SMALL,16}}) {
+            const auto handle=static_cast<HICON>(LoadImageW(nullptr,reinterpret_cast<LPCWSTR>(QDir::toNativeSeparators(icon).utf16()),IMAGE_ICON,size.second,size.second,LR_LOADFROMFILE));
+            if(handle){SendMessageW(hwnd,WM_SETICON,size.first,reinterpret_cast<LPARAM>(handle));QObject::connect(window,&QObject::destroyed,[handle]{DestroyIcon(handle);});}
+        }
+    }
     if(FAILED(store->Commit()))qWarning("Could not commit merchant taskbar properties");
     store->Release();
 #else

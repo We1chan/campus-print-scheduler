@@ -95,6 +95,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: campus-print-${{ runner.os }}
+          retention-days: 1
           # Archives are already compressed; avoid compressing hundreds of MB again.
           compression-level: 0
           path: |
@@ -105,6 +106,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: test-evidence-${{ runner.os }}
+          retention-days: 1
           path: |
             build/ci/Testing/Temporary/
             build/ci/gui-results.xml

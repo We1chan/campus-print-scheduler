@@ -1,4 +1,5 @@
 #include "merchant_data.hpp"
+#include "order_preview_store.hpp"
 #include "cps/runtime/state_store.hpp"
 
 #include <QJsonArray>
@@ -199,6 +200,9 @@ void MerchantData::apply(const ViewState& state) {
     for (const auto& job : state.jobs) {
         const auto object = raw.value(job.id);
         Order order; order.id = job.id; order.title = job.title; order.student = job.customer;
+        order.coverPath = orderCoverPath(options_.stateDirectory,job.id);
+        order.costCents = qRound64(object.value(QStringLiteral("cost_cents")).toDouble());
+        order.refundCents = job.refundCents;
         order.pages = object.value(QStringLiteral("pages")).toInt(job.sheets);
         order.copies = object.value(QStringLiteral("copies")).toInt(1); order.printed = job.printed;
         // Waiting order is global: assigned_printer on a retry is an audit field,
@@ -259,7 +263,33 @@ void MerchantData::recount() {
     QHash<QString, qint64> refunds;
     if (!snapshot_.showcase) for (const auto& job : lastState_.jobs) refunds.insert(job.id, job.refundCents);
     double turnaroundMs = 0; int turnaroundCount = 0;
+    std::vector<cps::Job> financialJobs;
+    financialJobs.reserve(static_cast<std::size_t>(snapshot_.orders.size()));
     for (const auto& order : snapshot_.orders) {
+        // Use the same completed-order and outstanding-balance definitions as
+        // the backend, including the selected reporting range and refunds.
+        cps::Job financial;
+        financial.submittedMs = order.submittedMs;
+        if (order.finishedMs > 0) financial.finishedMs = order.finishedMs;
+        financial.deadlineMs = order.deadlineMs;
+        financial.quotedCents = order.amountCents;
+        financial.refundCents = order.refundCents;
+        financial.costCents = order.costCents;
+        financial.state = printedState(order) ? JobState::Completed :
+            order.state == QStringLiteral("打印中") ? JobState::Running :
+            order.state == QStringLiteral("取消中") ? JobState::Cancelling :
+            order.state == QStringLiteral("已取消") ? JobState::Cancelled :
+            order.state == QStringLiteral("失败") ? JobState::Failed : JobState::Queued;
+        if (snapshot_.showcase) {
+            financial.pages = order.pages; financial.copies = order.copies;
+            financial.paper = order.a3 ? PaperSize::A3 : PaperSize::A4;
+            financial.color = order.color; financial.duplex = order.duplex;
+            cps::Printer printer;
+            printer.color = order.printer >= 0 && order.printer < snapshot_.devices.size()
+                ? snapshot_.devices[order.printer].color : order.color;
+            financial.costCents = cps::directCost(financial, printer);
+        }
+        financialJobs.push_back(financial);
         if (order.state == QStringLiteral("待打印")) ++snapshot_.waiting;
         if (order.state == QStringLiteral("打印中") || order.state == QStringLiteral("取消中")) ++snapshot_.printing;
         if (order.state == QStringLiteral("待取件")) ++snapshot_.ready;
@@ -291,12 +321,19 @@ void MerchantData::recount() {
         }
     }
     if (turnaroundCount > 0) snapshot_.averageMinutes = turnaroundMs / (60000.0 * turnaroundCount);
+    snapshot_.business = cps::shopMetrics(financialJobs, begin, end);
     if (snapshot_.showcase) {
         int remaining = 0;
         for(const auto& order:snapshot_.orders)
             if(order.state==QStringLiteral("待打印")||order.state==QStringLiteral("打印中"))remaining+=std::max(0,faces(order)-order.printed);
         snapshot_.clearMinutes = (remaining + 8) / 9; // Sample aggregate throughput: nine faces/minute.
     }
+}
+
+bool MerchantData::setOrderCover(const QString& id,const QImage& image) {
+    if(!saveOrderCover(options_.stateDirectory,id,image))return false;
+    for(auto& order:snapshot_.orders)if(order.id==id)order.coverPath=orderCoverPath(options_.stateDirectory,id);
+    emit changed();return true;
 }
 
 void MerchantData::execute(const QString& action, const QString& value) {

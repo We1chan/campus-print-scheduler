@@ -135,6 +135,7 @@ shell.Run Chr(34) & fs.BuildPath(root, "campus-print-merchant.exe") & Chr(34) & 
 ''', encoding="ascii")
         shutil.copy2(root / "assets" / "merchant" / "paperroom-merchant.ico", output / "paperroom-merchant.ico")
         shutil.copy2(root / "assets" / "merchant" / "icons-v3" / "paperroom-merchant.ico", output / "paperroom-merchant-v3.ico")
+        shutil.copy2(root / "assets" / "merchant" / "icons-v3" / "paperroom-merchant.ico", output / "paperroom-merchant-v4.ico")
     shutil.copy2(root / "docs" / "clean-up.md", output / "clean-up.md")
     shutil.copytree(root / "examples", output / "examples")
     if args.preview_fixtures:

@@ -14,6 +14,7 @@ import tempfile
 import threading
 import time
 import unittest
+from unittest.mock import patch
 from urllib.error import HTTPError
 from urllib.parse import quote
 from urllib.request import build_opener, HTTPCookieProcessor, HTTPRedirectHandler, ProxyHandler, Request
@@ -236,6 +237,8 @@ class ClassroomTests(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertEqual(submitted["job_id"], web.job_id(uploaded["upload_id"]))
         self.assertEqual(submitted["pickup_code"], uploaded["upload_id"][:6].upper())
+        cover = self.state / "order-previews" / (submitted["job_id"] + ".txt")
+        self.assertEqual(cover.read_text(encoding="utf-8").splitlines(), ["hello"] * 50)
         # Same stable id after a lost reply cannot enqueue a second job.
         self.assertEqual(self.client.json("/api/submit", order)[0], 200)
         snapshot = self.app.backend.snapshot(fresh=True)
@@ -269,6 +272,9 @@ class ClassroomTests(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertEqual(submitted["job_id"], web.job_id(first["upload_id"]))
         self.assertEqual(submitted["pickup_code"], first["upload_id"][:6].upper())
+        cover = self.state / "order-previews" / (submitted["job_id"] + ".png")
+        self.assertEqual(cover.read_bytes(), self.app.preview(first["upload_id"], 1, 960,
+                         self.app.session("; ".join(f"{item.name}={item.value}" for item in self.client.jar))))
         row = next(row for row in self.app.backend.snapshot(fresh=True)["jobs"] if row["job_id"] == submitted["job_id"])
         self.assertEqual(row["pages"], 5)
         self.assertEqual(row["title"], "封面.pdf 等2份")
@@ -284,6 +290,19 @@ class ClassroomTests(unittest.TestCase):
             {"upload_id": first["upload_id"], "pages": 2}, {"upload_id": "f" * 32, "pages": 1}]})[0], 404)
         # Resubmitting the identical batch reconciles instead of double-ordering.
         self.assertEqual(self.client.json("/api/submit", dict(base))[0], 200)
+
+    def test_image_cover_and_cover_failure_preserve_accepted_order(self):
+        image = web.encode_png(2, 2, 6, b"\xff\x00\x00" * 4, 3)
+        _, uploaded = self.client.upload("封面.png", image)
+        status, submitted = self.client.json("/api/submit", self.client.order(uploaded))
+        self.assertEqual(status, 200)
+        self.assertEqual((self.state / "order-previews" / (submitted["job_id"] + ".png")).read_bytes(), image)
+        _, other = self.client.upload("失败时仍保留下单.txt", b"actual text")
+        with patch.object(self.app, "save_order_cover", side_effect=OSError("read-only")):
+            status, accepted = self.client.json("/api/submit", self.client.order(other))
+        self.assertEqual(status, 200)
+        self.assertTrue(any(row["job_id"] == accepted["job_id"]
+                            for row in self.app.backend.snapshot(fresh=True)["jobs"]))
 
     def test_display_name_and_quote_before_upload(self):
         status, quoted = self.client.json("/api/quote", dict(pages=8, copies=1, paper="a4", color=True, duplex=True,
