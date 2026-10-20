@@ -15,6 +15,7 @@
 #include <QDir>
 #include <QMenu>
 #include <QJsonDocument>
+#include <QJsonArray>
 #include <QSaveFile>
 #include <QScrollArea>
 #include <QLabel>
@@ -36,6 +37,8 @@
 #include <QStyleFactory>
 #include <functional>
 #include <algorithm>
+#include <future>
+#include <chrono>
 static void initializeMerchantBrand() { Q_INIT_RESOURCE(merchant_assets); }
 namespace cps::gui {
 using namespace merchant;
@@ -110,16 +113,37 @@ public:
         search_->setAccessibleName(QStringLiteral("搜索订单、文件名或学号"));
         search_->setStyleSheet("QLineEdit{border:none;background:transparent;color:#14213E;font-family:'Microsoft YaHei UI';font-size:14px;selection-background-color:#F4D9D1;selection-color:#14213E;}QLineEdit:focus{border-bottom:1px solid #D6402C;}");
         QObject::connect(search_,&QLineEdit::textChanged,this,[this](const QString& value){selection.search=value;selection.offset=0;refresh();});
-        QObject::connect(data_,&MerchantData::changed,this,[this]{refresh();});
+        QObject::connect(data_,&MerchantData::changed,this,[this]{updateClassroom();refresh();});
         demo=makeDispatchDemo(0);
         const QString comboStyle="QComboBox{background:white;border:1px solid #DADDE2;border-radius:6px;color:#14213E;padding:7px 14px;font-family:'Microsoft YaHei UI';}QComboBox:hover,QComboBox:focus{border:1px solid #D63D29;}QComboBox::drop-down{border:none;width:30px;}QComboBox QAbstractItemView{background:#FAFAF9;color:#14213E;selection-background-color:#FFF6F2;selection-color:#D63D29;border:1px solid #DADDE2;padding:6px;}";
         scenario_=new MerchantComboBox(this);scenario_->setObjectName("merchantDispatchScenario");scenario_->setAccessibleName(QStringLiteral("调度演示场景"));scenario_->setStyleSheet(comboStyle);scenario_->addItems(dispatchScenarioNames());
+        if(!data_->snapshot().showcase)scenario_->addItem(QStringLiteral("现场订单 · 实时"));
         speed_=new MerchantComboBox(this);speed_->setObjectName("merchantDispatchSpeed");speed_->setAccessibleName(QStringLiteral("演示播放速度"));speed_->setStyleSheet(comboStyle);speed_->addItems({"1×","2×","4×"});
-        QObject::connect(scenario_,&QComboBox::currentIndexChanged,this,[this](int index){demo=makeDispatchDemo(index);demoSelection.nowMs=0;demoSelection.order.clear();pauseDispatch();refresh();});
+        QObject::connect(scenario_,&QComboBox::currentIndexChanged,this,[this](int index){
+            pauseDispatch();demoSelection={};liveInputHash_.clear();
+            if(index==7){emptyClassroom();demoSelection.following=true;updateClassroom();}
+            else demo=makeDispatchDemo(index);
+            demoSelection.policy=demo.business?2:1;refresh();
+        });
+        liveTimer_.setParent(this);liveTimer_.setInterval(200);
+        QObject::connect(&liveTimer_,&QTimer::timeout,this,[this]{
+            if(liveFuture_.valid()&&liveFuture_.wait_for(std::chrono::milliseconds(0))==std::future_status::ready){
+                try{
+                    auto result=liveFuture_.get();
+                    if(scenario_->currentIndex()==7&&demoSelection.following&&requestedHash_==classroomDispatchFingerprint(data_->dispatchSource())){
+                        demo=std::move(result);liveInputHash_=requestedHash_;
+                        if(!findDispatchOrder(demo,demoSelection.order.toStdString()))demoSelection.order.clear();
+                        demoSelection.orderOffset=std::min(demoSelection.orderOffset,std::max(0,((int(demo.orders.size())-1)/6)*6));
+                    }
+                }catch(const std::exception& error){if(scenario_->currentIndex()==7&&demoSelection.following&&requestedHash_==classroomDispatchFingerprint(data_->dispatchSource())){emptyClassroom();liveInputHash_=requestedHash_;liveError_=QString::fromUtf8(error.what());}}
+            }
+            if(page==4&&scenario_->currentIndex()==7){updateClassroom();refresh();}
+        });
+        if(!data_->snapshot().showcase)liveTimer_.start();
         demoTimer_.setParent(this);demoTimer_.setInterval(50);
         QObject::connect(&demoTimer_,&QTimer::timeout,this,[this]{
             const auto elapsed=static_cast<cps::TimeMs>(demoClock_.restart());
-            demoSelection.nowMs=std::min(demo.horizonMs,demoSelection.nowMs+elapsed*20*(cps::TimeMs{1}<<speed_->currentIndex()));
+            demoSelection.nowMs=std::min(demo.horizonMs,demoSelection.nowMs+elapsed*(demo.business?240:20)*(cps::TimeMs{1}<<speed_->currentIndex()));
             if(demoSelection.nowMs>=demo.horizonMs)pauseDispatch();
             refresh();
         });
@@ -129,10 +153,59 @@ public:
     }
     int page=0;Selection selection;
     DispatchDemo demo;DispatchDemoSelection demoSelection;
+    void chooseDispatchScenario(int index){scenario_->setCurrentIndex(index);}
+    void emptyClassroom(){
+        demo={};demo.business=true;demo.classroom=true;demo.horizonMs=8*3600000;demo.scenarioName=QStringLiteral("现场订单 · 同批实时对比");
+        demo.runs[0].label=QStringLiteral("FCFS · 先来先服务");demo.runs[1].label=QStringLiteral("SJF · 短任务优先");demo.runs[2].label=QStringLiteral("综合调度");
+    }
+    void updateClassroom(){
+        if(!scenario_||scenario_->currentIndex()!=7)return;
+        const auto source=data_->dispatchSource();
+        if(source.isEmpty()){demoSelection.sourceStatus=QStringLiteral("后台未连接 · 等待同步");return;}
+        const auto jobs=source.value("jobs").toArray();int queued=0,running=0,completed=0;
+        for(const auto& value:jobs){const auto state=value.toObject().value("state").toString();if(state=="queued")++queued;else if(state=="running")++running;else if(state=="completed")++completed;}
+        demoSelection.sourceStatus=QStringLiteral("%1 · 实际排队 %2 / 打印 %3 / 完成 %4%5")
+            .arg(demoSelection.following?QStringLiteral("实时同步"):QStringLiteral("本轮已固定")).arg(queued).arg(running).arg(completed)
+            .arg(source.value("paused").toBool()?QStringLiteral(" · 后台暂停派发"):QString());
+        if(!demoSelection.following)return;
+        const auto hash=classroomDispatchFingerprint(source);
+        if(hash!=liveInputHash_&&!liveFuture_.valid()){
+            requestedHash_=hash;liveError_.clear();
+            liveFuture_=std::async(std::launch::async,[source]{return makeClassroomDispatchDemo(source);});
+        }
+        if(!liveError_.isEmpty())demoSelection.sourceStatus=liveError_;
+        if(liveFuture_.valid())demoSelection.sourceStatus+=QStringLiteral(" · 正在更新对比");
+        if(!demo.sourceSnapshot.isEmpty())demoSelection.nowMs=std::clamp<cps::TimeMs>(static_cast<cps::TimeMs>(source.value("now_ms").toDouble())-demo.originMs,0,demo.horizonMs);
+    }
     void pauseDispatch(){demoTimer_.stop();demoSelection.playing=false;}
     void dispatchAction(const QString& action,const QString& value){
-        if(action=="dispatch-policy"){demoSelection.policy=std::clamp(value.toInt(),0,2);}
-        else if(action=="dispatch-order"){demoSelection.order=demoSelection.order==value?QString():value;}
+        if(demo.classroom&&(action=="dispatch-play"||action=="dispatch-step"||action=="dispatch-reset"||action=="dispatch-focus-order"))demoSelection.following=false;
+        if(action=="dispatch-follow"){
+            pauseDispatch();demoSelection.following=!demoSelection.following;
+            if(demoSelection.following){liveInputHash_.clear();updateClassroom();}
+        }
+        else if(action=="dispatch-policy"){demoSelection.policy=std::clamp(value.toInt(),0,2);}
+        else if(action=="dispatch-order"||action=="dispatch-focus-order"){
+            demoSelection.order=action=="dispatch-focus-order"?value:(demoSelection.order==value?QString():value);
+            if(demo.business&&!demoSelection.order.isEmpty())for(int i=0;i<demo.orders.size();++i)if(demo.orders[i].id==value){demoSelection.orderOffset=(i/6)*6;break;}
+            if(demo.business&&action=="dispatch-focus-order"&&!demoSelection.order.isEmpty()){
+                pauseDispatch();
+                const auto& run=demo.runs[static_cast<std::size_t>(demoSelection.policy)];
+                const auto found=std::find_if(run.result.dispatches.begin(),run.result.dispatches.end(),[&](const auto& item){return QString::fromStdString(item.jobId)==value;});
+                if(found!=run.result.dispatches.end())demoSelection.nowMs=found->startedMs;
+            }
+        }
+        else if(action=="dispatch-prev"){demoSelection.orderOffset=std::max(0,demoSelection.orderOffset-6);}
+        else if(action=="dispatch-next"){demoSelection.orderOffset=std::min(((int(demo.orders.size())-1)/6)*6,demoSelection.orderOffset+6);}
+        else if(action=="dispatch-export"&&demo.business){
+            pauseDispatch();
+            const auto path=QFileDialog::getSaveFileName(this,QStringLiteral("导出完整仿真输入与结果"),QDir::current().filePath(QStringLiteral("runtime/campus-simulation-%1.json").arg(demo.orders.size())),QStringLiteral("JSON 报告 (*.json)"));
+            if(!path.isEmpty()){
+                const auto bytes=QJsonDocument(dispatchDemoReport(demo)).toJson(QJsonDocument::Indented);QSaveFile file(path);
+                if(!file.open(QIODevice::WriteOnly)||file.write(bytes)!=bytes.size()||!file.commit())QMessageBox::warning(this,QStringLiteral("导出失败"),file.errorString());
+                else QMessageBox::information(this,QStringLiteral("仿真已导出"),QStringLiteral("已保存完整订单、设备、三策略派发记录、指标与输入哈希：\n%1").arg(path));
+            }
+        }
         else if(action=="dispatch-reset"){pauseDispatch();demoSelection.nowMs=0;demoSelection.order.clear();}
         else if(action=="dispatch-play"){
             if(demoSelection.playing)pauseDispatch();
@@ -181,6 +254,8 @@ public:
         const auto comboFont=merchantFont(std::max(10,qRound(16*std::min(sx,sy))));scenario_->setFont(comboFont);speed_->setFont(comboFont);
         scenario_->setVisible(page==4);speed_->setVisible(page==4);scenario_->raise();speed_->raise();
         setProperty("dispatchTimeMs",QVariant::fromValue<qlonglong>(demoSelection.nowMs));setProperty("dispatchPolicy",demoSelection.policy);setProperty("dispatchPlaying",demoSelection.playing);
+        setProperty("dispatchOrderOffset",demoSelection.orderOffset);setProperty("dispatchOrder",demoSelection.order);
+        setProperty("dispatchOrderCount",demo.orders.size());setProperty("dispatchFollowing",demoSelection.following);
         for(int i=0;i<windowControls_.size();++i){windowControls_[i]->setGeometry(qRound((1447+i*46)*sx),qRound(3*sy),qRound(43*sx),qRound(49*sy));windowControls_[i]->show();windowControls_[i]->raise();}update();
     }
     void focusSearch() {pauseDispatch();page=0;refresh();search_->setFocus();}
@@ -192,7 +267,7 @@ protected:
         const auto source=QString::fromUtf8(event->mimeData()->data("application/x-paperroom-order"));
         for(auto* button:buttons_){const auto target=button->property("dropOrderId").toString();if(!target.isEmpty()&&button->geometry().contains(event->position().toPoint())){data_->execute("move-before",source+":"+target);event->acceptProposedAction();return;}}
     }
-    void wheelEvent(QWheelEvent* event) override {if(page==0){int maximum=std::max(0,int(visibleOrders(data_->snapshot(),selection).size())-5);selection.offset=std::clamp(selection.offset+(event->angleDelta().y()<0?1:-1),0,maximum);}else if(page==1){selection.queueOffset=std::max(0,selection.queueOffset+(event->angleDelta().y()<0?1:-1));}refresh();event->accept();}
+    void wheelEvent(QWheelEvent* event) override {if(page==0){int maximum=std::max(0,int(visibleOrders(data_->snapshot(),selection).size())-5);selection.offset=std::clamp(selection.offset+(event->angleDelta().y()<0?1:-1),0,maximum);}else if(page==1){selection.queueOffset=std::max(0,selection.queueOffset+(event->angleDelta().y()<0?1:-1));}else if(page==4&&demo.business){demoSelection.orderOffset=std::clamp(demoSelection.orderOffset+(event->angleDelta().y()<0?6:-6),0,((int(demo.orders.size())-1)/6)*6);}refresh();event->accept();}
     void resizeEvent(QResizeEvent* event) override {QWidget::resizeEvent(event);refresh();}
     void paintEvent(QPaintEvent*) override {QPainter painter(this);painter.setRenderHint(QPainter::Antialiasing);painter.setRenderHint(QPainter::SmoothPixmapTransform);painter.scale(width()/1586.,height()/992.);QVector<Hit> controls;paintScene(painter,controls);}
 private:
@@ -213,8 +288,8 @@ private:
             d.text(690,5,205,45,QStringLiteral("调度工作台"),18,navy,true,false,Qt::AlignCenter);p.fillRect(QRectF(735,52,115,4),red);
             d.button({1187,10,168,39},QStringLiteral("‹  返回打印队列"),"dispatch-back");
             p.fillRect(QRectF(0,942,1586,50),Qt::white);d.rule(0,941,1586);p.setPen(Qt::NoPen);p.setBrush(green);p.drawEllipse(QPointF(42,965),4,4);p.setBrush(Qt::NoBrush);
-            d.text(70,947,395,35,QStringLiteral("独立演示 · 不影响真实队列"),13);
-            d.text(1060,947,495,35,QStringLiteral("本地仿真 · 教学时钟 3 页/分 · 整批结果"),13,slate,false,false,Qt::AlignRight|Qt::AlignVCenter);
+            d.text(70,947,870,35,demo.classroom?demoSelection.sourceStatus:QStringLiteral("独立演示 · 不影响真实队列"),13);
+            d.text(990,947,565,35,demo.classroom?QStringLiteral("同批订单独立重放 · 非手机实际进度或队列预测"):demo.business?QStringLiteral("模拟订单 · 原始业务时钟 · 闭店统计 · 固定种子可复核"):QStringLiteral("本地仿真 · 教学时钟 3 页/分 · 整批结果"),13,slate,false,false,Qt::AlignRight|Qt::AlignVCenter);
             return;
         }
         const QStringList nav{QStringLiteral("订单工作台"),QStringLiteral("打印队列"),QStringLiteral("设备管理"),QStringLiteral("营业统计")};
@@ -235,7 +310,8 @@ private:
         if(!toast.isEmpty()) {d.panel({480,795,625,51},toastProblem?QColor("#FFF2EE"):QColor("#F5F7FA"),toastProblem?red:ruleColor,8);d.text(499,797,590,47,toast,16,toastProblem?red:navy);}
     }
     MerchantData* data_;Assets assets_;QHash<QString,QPushButton*> buttons_;QLineEdit* search_;QVector<EditorialWindowButton*> windowControls_;
-    QComboBox* scenario_;QComboBox* speed_;QTimer demoTimer_;QElapsedTimer demoClock_;
+    QComboBox* scenario_=nullptr;QComboBox* speed_=nullptr;QTimer demoTimer_;QElapsedTimer demoClock_;
+    QTimer liveTimer_;std::future<DispatchDemo> liveFuture_;QByteArray liveInputHash_,requestedHash_;QString liveError_;
 };
 class MerchantMenu : public QMenu {
 public:
@@ -306,12 +382,14 @@ void MerchantWindow::setPage(int index) {
     canvas_->pauseDispatch();
     canvas_->page=std::clamp(index,0,3);canvas_->selection.device=deviceSelections_[canvas_->page];canvas_->refresh();
 }
-void MerchantWindow::openDispatchWorkspace(){if(canvas_->page<4)deviceSelections_[canvas_->page]=canvas_->selection.device;canvas_->page=4;canvas_->refresh();}
+void MerchantWindow::openDispatchWorkspace(int scenario){if(canvas_->page<4)deviceSelections_[canvas_->page]=canvas_->selection.device;canvas_->page=4;if(scenario<0&&!model_->snapshot().showcase)scenario=7;if(scenario>=0&&scenario<(model_->snapshot().showcase?7:8))canvas_->chooseDispatchScenario(scenario);canvas_->refresh();}
 void MerchantWindow::notify(const QString& value,bool problem) {canvas_->toast=value;canvas_->toastProblem=problem;canvas_->setAccessibleDescription(value);canvas_->update();QTimer::singleShot(4800,canvas_,[this,value]{if(canvas_->toast==value){canvas_->toast.clear();canvas_->setAccessibleDescription({});canvas_->update();}});}
 void MerchantWindow::captureAll(const QString& directory) {
     QDir().mkpath(directory);resize(qRound(1586/devicePixelRatioF()),qRound(992/devicePixelRatioF()));const QStringList names{"workbench","queue","devices","stats"};
     for(int i=0;i<4;++i){setPage(i);QApplication::processEvents();if(auto* focus=QApplication::focusWidget())focus->clearFocus();canvas_->grab().toImage().scaled(1586,992,Qt::IgnoreAspectRatio,Qt::SmoothTransformation).save(QDir(directory).filePath(names[i]+".png"));}
-    openDispatchWorkspace();QApplication::processEvents();canvas_->grab().toImage().scaled(1586,992,Qt::IgnoreAspectRatio,Qt::SmoothTransformation).save(QDir(directory).filePath("dispatch.png"));setPage(0);
+    openDispatchWorkspace(0);QApplication::processEvents();canvas_->grab().toImage().scaled(1586,992,Qt::IgnoreAspectRatio,Qt::SmoothTransformation).save(QDir(directory).filePath("dispatch.png"));
+    for(int scenario=4;scenario<7;++scenario){openDispatchWorkspace(scenario);QApplication::processEvents();canvas_->grab().toImage().scaled(1586,992,Qt::IgnoreAspectRatio,Qt::SmoothTransformation).save(QDir(directory).filePath(QStringLiteral("dispatch-business-%1.png").arg(canvas_->demo.orders.size())));}
+    setPage(0);
 }
 void MerchantWindow::viewFile() {
     const auto& state=model_->snapshot();if(state.orders.isEmpty())return;const auto& order=state.orders[canvas_->selection.order];

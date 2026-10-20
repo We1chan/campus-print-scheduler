@@ -24,9 +24,17 @@ int main(int argc, char* argv[]) {
         {"demo-workload", "Submit mixed demonstration orders on startup (requires --demo-mode)"},
         {"classic-owner", "Open the previous owner console"},
         {"merchant-showcase", "Open interactive owner sample data, without a real backend"},
-        {"merchant-capture", "Save all four rendered owner screens for visual review", "directory"},
+        {"merchant-capture", "Save owner and scheduling screens for visual review", "directory"},
+        {"dispatch-scenario", "Open scheduling workspace scenario (0..7, 7 is live classroom)", "index"},
         {"smoke-test", "Start UI and exit without submitting jobs"}});
     parser.process(app);
+    bool validScenario = true;
+    const int dispatchScenario = parser.isSet("dispatch-scenario") ? parser.value("dispatch-scenario").toInt(&validScenario) : -1;
+    if (!validScenario || dispatchScenario < -1 || dispatchScenario > 7 || (dispatchScenario == 7 && parser.isSet("merchant-showcase")) ||
+        (parser.isSet("dispatch-scenario") && (dispatchScenario < 0 || parser.isSet("classic-owner") || parser.isSet("legacy-mode") || parser.isSet("demo-workload")))) {
+        std::fprintf(stderr, "--dispatch-scenario requires merchant mode and an index from 0 to 7; live scenario 7 requires a real backend\n");
+        return 64;
+    }
     const auto role = parser.value("role");
     if (role != "boss") {
         std::fprintf(stderr, "--role must be boss; students use tools/classroom_web.py\n");
@@ -49,6 +57,7 @@ int main(int argc, char* argv[]) {
     if (!parser.isSet("classic-owner") && !parser.isSet("legacy-mode") && !parser.isSet("demo-workload")) {
         auto* console = new cps::gui::MerchantWindow(options, parser.isSet("merchant-showcase"));
         window.reset(console);
+        if (dispatchScenario >= 0) console->openDispatchWorkspace(dispatchScenario);
         if (parser.isSet("merchant-capture")) {
             QObject::connect(console, &cps::gui::MerchantWindow::backendReady, console, [console, &app, &parser] {
                 QTimer::singleShot(350, console, [console, &app, &parser] {console->captureAll(parser.value("merchant-capture")); app.quit();});

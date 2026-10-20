@@ -10,6 +10,9 @@ struct DispatchDemoSelection {
     QString order;
     cps::TimeMs nowMs = 0;
     bool playing = false;
+    int orderOffset = 0;
+    bool following = false;
+    QString sourceStatus;
 };
 
 // Paints the body only. The window owns navigation, footer, combo boxes and clock.

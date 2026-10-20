@@ -48,4 +48,6 @@ Office 转换按 [office-preview.md](office-preview.md) 安装。Qt 构建不再
 
 关闭网页网关和老板窗口后，coordinator 仍可能运行。清理前按 [clean-up.md](clean-up.md) 停止对应数据目录的后台；旧发布包、用户文件和运行数据不随源码移除而删除。
 
+现场联通入口为 `start-classroom-demo.ps1 -LiveWorkspace`，默认新课堂目录，真实店主端打开「现场订单 · 实时」。手机的提交确认、订单状态和进度继续由现有 HTTP/IPC 提供；三算法对照只在店主端后台线程计算，不增加学生权限或公开原始队列。演示与模拟文件提交方法见 [classroom-demo.md](classroom-demo.md) 的“现场实时调度工作台”。
+
 旧桌面设计和测量仅作历史记录，保存在 [editorial-frontend.md](editorial-frontend.md)，不作为当前网页的启动或验收说明。

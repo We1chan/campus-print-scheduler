@@ -984,7 +984,7 @@ async function confirmPayment() {
     $("pay-dialog").close();
     highlight = result.job_id;
     clearDocument(true);
-    const message = `支付成功（模拟），订单已进入队列。取件码 ${result.pickup_code}`;
+    const message = `订单已接收（模拟支付）。取件码 ${result.pickup_code}，排队、预计取件和打印进度将在本页自动更新。`;
     say(message, "ready");
     toast(message);
     location.hash = "#mine";

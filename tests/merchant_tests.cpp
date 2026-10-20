@@ -1,5 +1,6 @@
 #include "merchant_window.hpp"
 #include "merchant_painter.hpp"
+#include "merchant_dispatch_model.hpp"
 #include "order_preview_store.hpp"
 #include "coordinator_test_client.hpp"
 #include "native_frame_evidence.hpp"
@@ -13,6 +14,7 @@
 #include <QDragEnterEvent>
 #include <QDropEvent>
 #include <QFile>
+#include <QSaveFile>
 #include <QFocusEvent>
 #include <QEnterEvent>
 #include <QImage>
@@ -93,6 +95,47 @@ class MerchantTests : public QObject {
     }
 
 private slots:
+    void classroomWorkspaceOffersLiveSource() {
+        BackendDirectory directory;
+        MerchantWindow window({directory.path(),1250,true,true},false);window.show();
+        QTRY_VERIFY_WITH_TIMEOUT(window.model()->snapshot().connected,15000);
+        auto* scenario=window.findChild<QComboBox*>("merchantDispatchScenario");QVERIFY(scenario);
+        QCOMPARE(scenario->count(),8);
+        CoordinatorClient backend(directory.path());
+        QCOMPARE(backend.request("set_paused",{{"paused",true}}).value("type").toString(),QStringLiteral("accepted"));
+        const auto submit=[&](const QString& id){return backend.request("submit",{{"job",QJsonObject{{"job_id",id},{"title",id+".pdf"},{"pages",24},{"copies",2},{"paper","a4"},{"color",false},{"duplex",true},{"service","express"}}}});};
+        QCOMPARE(submit("live-order-1").value("type").toString(),QStringLiteral("accepted"));
+        window.openDispatchWorkspace();
+        auto* canvas=window.findChild<QWidget*>("merchantCanvas");QVERIFY(canvas);
+        QTRY_COMPARE_WITH_TIMEOUT(canvas->property("dispatchOrderCount").toInt(),1,10000);
+        QVERIFY(canvas->property("dispatchFollowing").toBool());
+        QCOMPARE(submit("live-order-2").value("type").toString(),QStringLiteral("accepted"));
+        QTRY_COMPARE_WITH_TIMEOUT(canvas->property("dispatchOrderCount").toInt(),2,10000);
+        auto* follow=window.findChild<QPushButton*>("merchant_dispatch-follow_");QVERIFY(follow);follow->click();
+        QVERIFY(!canvas->property("dispatchFollowing").toBool());
+        QCOMPARE(submit("live-order-3").value("type").toString(),QStringLiteral("accepted"));
+        QTRY_COMPARE_WITH_TIMEOUT(window.model()->snapshot().orders.size(),3,10000);
+        QCOMPARE(canvas->property("dispatchOrderCount").toInt(),2);
+        follow=window.findChild<QPushButton*>("merchant_dispatch-follow_");QVERIFY(follow);follow->click();
+        QTRY_COMPARE_WITH_TIMEOUT(canvas->property("dispatchOrderCount").toInt(),3,10000);
+        const auto source=window.model()->dispatchSource();
+        const auto fingerprint=classroomDispatchFingerprint(source);
+        auto progressOnly=source;progressOnly.insert("now_ms",source.value("now_ms").toDouble()+1000);
+        QCOMPARE(classroomDispatchFingerprint(progressOnly),fingerprint);
+        const auto actual=backend.request("snapshot");QVERIFY(actual.value("paused").toBool());QCOMPARE(actual.value("policy").toString(),QStringLiteral("fcfs"));
+        const auto rehearsal=qEnvironmentVariable("CPS_CLASSROOM_LIVE_STATE");
+        if(!rehearsal.isEmpty()){
+            MerchantWindow live({rehearsal,1000,true,true},false);live.show();live.openDispatchWorkspace(7);
+            auto* liveCanvas=live.findChild<QWidget*>("merchantCanvas");QVERIFY(liveCanvas);
+            QTRY_VERIFY_WITH_TIMEOUT(liveCanvas->property("dispatchOrderCount").toInt()>=12,10000);
+            live.resize(1586,992);QApplication::processEvents();
+            QVERIFY(saveEvidence(live,QStringLiteral("classroom-live-rehearsal.png")));
+            const auto report=dispatchDemoReport(makeClassroomDispatchDemo(live.model()->dispatchSource()));
+            QSaveFile file(QDir(qEnvironmentVariable("CPS_MERCHANT_EVIDENCE_DIR")).filePath("classroom-replay.json"));
+            const auto bytes=QJsonDocument(report).toJson();QVERIFY(file.open(QIODevice::WriteOnly));QCOMPARE(file.write(bytes),bytes.size());QVERIFY(file.commit());
+        }
+    }
+
     void initTestCase() {
         initializeMerchantTestResources();
         const auto error = isolateTestReportHandles();
@@ -238,7 +281,7 @@ private slots:
         auto* canvas=window.findChild<QWidget*>("merchantCanvas");QVERIFY(canvas);
         auto* scenario=window.findChild<QComboBox*>("merchantDispatchScenario");
         auto* speed=window.findChild<QComboBox*>("merchantDispatchSpeed");QVERIFY(scenario&&speed&&scenario->isVisible()&&speed->isVisible());
-        QCOMPARE(scenario->count(),4);QCOMPARE(speed->count(),3);
+        QCOMPARE(scenario->count(),7);QCOMPARE(speed->count(),3);
         const auto press=[&](const QString& name){auto* control=window.findChild<QPushButton*>("merchant_"+name);if(!control||!control->isVisible())return false;control->click();return true;};
         for(const QSize size:{QSize(950,594),QSize(1269,794),QSize(1586,992)}){
             window.resize(size);QApplication::processEvents();
@@ -251,14 +294,38 @@ private slots:
         QVERIFY(press("dispatch-order_A"));
         QVERIFY(press("dispatch-reset_"));
         for(int index=0;index<scenario->count();++index){scenario->setCurrentIndex(index);QCOMPARE(canvas->property("dispatchTimeMs").toLongLong(),qlonglong(0));}
+        for(const QSize size:{QSize(950,594),QSize(1269,794),QSize(1586,992)}){
+            window.resize(size);QApplication::processEvents();
+            for(const auto* control:window.findChildren<QPushButton*>())if(control->isVisible()&&control->objectName().startsWith("merchant_dispatch-"))QVERIFY(canvas->rect().contains(control->geometry()));
+            QVERIFY(saveEvidence(window,QStringLiteral("business-layout-%1.png").arg(size.width())));
+        }
+        int visibleBusinessOrders=0;
+        for(const auto* control:window.findChildren<QPushButton*>())if(control->isVisible()&&control->objectName().startsWith("merchant_dispatch-order_"))++visibleBusinessOrders;
+        QVERIFY2(visibleBusinessOrders<=54,"business view should show at most three orders per device per strategy");
+        auto* previous=window.findChild<QPushButton*>("merchant_dispatch-prev_");QVERIFY(previous&&!previous->isEnabled());
+        QVERIFY(press("dispatch-next_"));
+        QCOMPARE(canvas->property("dispatchOrderOffset").toInt(),6);
+        previous=window.findChild<QPushButton*>("merchant_dispatch-prev_");QVERIFY(previous&&previous->isEnabled());
+        QVERIFY(press("dispatch-prev_"));
+        QCOMPARE(canvas->property("dispatchOrderOffset").toInt(),0);
+        QVERIFY(window.findChild<QPushButton*>("merchant_dispatch-export_"));
+        const auto first=makeDispatchDemo(6).orders.front().id;
+        QVERIFY(press("dispatch-focus-order_"+first));QCOMPARE(canvas->property("dispatchOrder").toString(),first);
+        QVERIFY(!canvas->property("dispatchPlaying").toBool());
+        QVERIFY(canvas->property("dispatchTimeMs").toLongLong()>0);
+        QVERIFY(saveEvidence(window,QStringLiteral("business-selected-order.png")));
         speed->setCurrentIndex(2);
-        QVERIFY(press("dispatch-play_"));QTRY_VERIFY_WITH_TIMEOUT(canvas->property("dispatchTimeMs").toLongLong()>0,1000);
+        const auto beforePlayback=canvas->property("dispatchTimeMs").toLongLong();
+        QVERIFY(press("dispatch-play_"));QTRY_VERIFY_WITH_TIMEOUT(canvas->property("dispatchTimeMs").toLongLong()>beforePlayback,1000);
         QVERIFY(press("dispatch-play_"));QVERIFY(!canvas->property("dispatchPlaying").toBool());
         const auto paused=canvas->property("dispatchTimeMs").toLongLong();QTest::qWait(120);QCOMPARE(canvas->property("dispatchTimeMs").toLongLong(),paused);
         QVERIFY(press("dispatch-reset_"));QCOMPARE(canvas->property("dispatchTimeMs").toLongLong(),qlonglong(0));
         QVERIFY(saveEvidence(window,QStringLiteral("native-dispatch-workspace.png")));
         QCOMPARE(orderSignature(window.model()->snapshot()),orderSignature(initial));QCOMPARE(window.model()->snapshot().waiting,initial.waiting);
         QCOMPARE(window.model()->snapshot().devices[0].printed,initial.devices[0].printed);
+        for(int step=0;step<500&&canvas->property("dispatchTimeMs").toLongLong()<60*60000;++step)QVERIFY(press("dispatch-step_"));
+        QVERIFY(canvas->property("dispatchTimeMs").toLongLong()>=60*60000);
+        QVERIFY(saveEvidence(window,QStringLiteral("business-rolling-hour.png")));
         QVERIFY(press("dispatch-back_"));QVERIFY(!scenario->isVisible());
         QVERIFY(window.findChild<QPushButton*>("merchant_dispatch-open_"));
     }

@@ -13,7 +13,7 @@ class MerchantWindow : public QMainWindow {
 public:
     MerchantWindow(WindowOptions options,bool showcase=false);
     void setPage(int index);
-    void openDispatchWorkspace();
+    void openDispatchWorkspace(int scenario = -1);
     void captureAll(const QString& directory);
     merchant::MerchantData* model() const {return model_;}
 signals:

@@ -46,6 +46,7 @@ public:
     explicit MerchantData(WindowOptions options, bool showcase, QObject* parent = nullptr);
     ~MerchantData() override;
     const Snapshot& snapshot() const { return snapshot_; }
+    QJsonObject dispatchSource() const { return snapshot_.connected && !snapshot_.showcase ? lastState_.shop : QJsonObject{}; }
     void start();
     void execute(const QString& action, const QString& value = {});
     void exportReport(const QString& path);
