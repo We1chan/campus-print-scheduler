@@ -3,7 +3,7 @@ param(
     [string]$BindAddress = "0.0.0.0",
     [int]$Port = 8787,
     [string]$StateDirectory = "",
-    [ValidateRange(10, 1250)][int]$PageMs = 1000,
+    [ValidateRange(10, 3000)][int]$PageMs = 3000,
     [string]$Python = "python"
 )
 $ErrorActionPreference = "Stop"
@@ -43,7 +43,7 @@ if (-not $PublicUrl) {
 # ArgumentList requires quoting paths that contain spaces on Windows.
 $taskArguments = @('--data-dir', ('"' + $StateDirectory + '"'), '--demo-mode', '--page-ms', "$PageMs")
 # The owner window is intentionally visible for classroom projection.
-Start-Process -FilePath $taskApp -ArgumentList $taskArguments -WindowStyle Normal
+Start-Process -FilePath $taskApp -ArgumentList $taskArguments -WorkingDirectory $taskRoot -WindowStyle Normal
 Write-Host "LAN / public URL: $PublicUrl"
 Write-Host 'Keep this terminal open. Press Ctrl+C to stop the web gateway.'
 & $Python (Join-Path $taskRoot 'tools/classroom_web.py') --coordinator $taskCoordinator --state-dir $StateDirectory --host $BindAddress --port $Port --public-url $PublicUrl --open-browser

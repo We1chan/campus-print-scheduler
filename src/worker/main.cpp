@@ -19,7 +19,7 @@ int main(int argc, char* argv[]) {
     parser.addHelpOption();
     parser.addOptions({{{"j", "job"}, "Job JSON file", "file"},
         {{"o", "output-dir"}, "Output directory", "directory"},
-        {"page-ms", "Milliseconds per simulated sheet (10..10000)", "ms", "100"},
+        {"page-ms", "Milliseconds per simulated sheet (10..24000)", "ms", "100"},
         {"execution-token", "Optional receipt identifying this execution", "token"},
         {"completion-delay-ms", "Hold after atomic commit for race demonstrations (0..2000)", "ms", "0"}});
     parser.process(app);
@@ -30,7 +30,7 @@ int main(int argc, char* argv[]) {
     const QString executionToken = parser.value("execution-token");
     bool validCompletionDelay = false;
     const int completionDelay = parser.value("completion-delay-ms").toInt(&validCompletionDelay);
-    if (!validDelay || pageMs < 10 || pageMs > 10000 || parser.value("output-dir").isEmpty() ||
+    if (!validDelay || pageMs < 10 || pageMs > 24000 || parser.value("output-dir").isEmpty() ||
         !validCompletionDelay || completionDelay < 0 || completionDelay > 2000 ||
         (!executionToken.isEmpty() && !QRegularExpression("^[A-Za-z0-9_-]{1,80}$").match(executionToken).hasMatch()) ||
         !cps::readJob(parser.value("job"), job, error)) {

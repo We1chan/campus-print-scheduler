@@ -18,6 +18,14 @@ powershell -ExecutionPolicy Bypass -File .\start-classroom-demo.ps1
 ```
 
 脚本打开老板窗口和浏览器的二维码展示页，使用 `runtime/classroom-demo`，不会自动塞入预设订单。
+老板端顶栏有 **演示 +50 单** 小按钮，每次原子加入 50 单到共享后台，可连续点击。订单明确带“演示”标记，混合短长文档、A4/A3、黑白/彩色、单双面、份数与三种服务；学生网页的排队情况也会同步显示。按钮只在已连接的演示模式中出现，暂停派发时加单仍保持暂停。
+
+旁边的 **清空订单** 一次清空当前目录的全部订单与订单统计，便于重新演示。它先暂停派发并取消活动任务，确认执行进程停止后，将订单完整快照保存到 `<state-dir>/order-archives/`，再持久化空队列。设备配置、剩余纸张、上传文件和历史输出保留；已打印的纸张不会凭空补回。成功后恢复原先的派发开关；未确认停止或备份失败时保留订单，保持暂停并提示原因。此按钮仅演示模式提供，学生网页没有清空接口。
+
+课堂模式的新订单基础单价为 A4 黑白 **0.10 元/面**、彩色 **0.75 元/面**，A3 加倍，再叠加现有服务与双面折扣。报价和下单都由后台使用同一价格计算；历史订单锁定金额不变。普通后台及离线算法实验仍使用原定价。
+
+新课堂目录默认以 `-PageMs 3000` 启动，最快设备每面约 3 秒，其他设备按原速度比例放慢；最慢的 A3 彩色每面约 24 秒。已有目录保留保存的设备速度；可在设备空闲时用 `set_printer` 修改，避免启动时覆盖自定义设备。当前 `runtime/classroom-demo` 已按此慢速配置。worker 和预计时间共用设备参数，慢速任务的静默超时至少覆盖两面耗时。
+
 它默认监听 `0.0.0.0:8787`，按电脑默认路由选出局域网地址。保持终端打开；Ctrl+C 停止网页入口，老板窗口和后台独立运行。
 手机和电脑连同一 Wi-Fi，或让手机连电脑热点，再扫码即可。先用一部手机验证能打开并提交，再向全班展示。
 Windows 若询问防火墙访问权限，允许当前演示网络上的访问。若手机打不开，检查地址、8787 入站规则以及 Wi-Fi 是否隔离客户端；可以改用电脑热点。
@@ -74,7 +82,7 @@ powershell -ExecutionPolicy Bypass -File .\start-classroom-demo.ps1 -BindAddress
 二维码依赖安装到自己的 Python 环境后，启动老板窗口与网页服务：
 
 ```sh
-./build/dev/bin/campus-print --data-dir runtime/classroom-demo --demo-mode --page-ms 1000
+./build/dev/bin/campus-print --data-dir runtime/classroom-demo --demo-mode --page-ms 3000
 python tools/classroom_web.py --coordinator build/dev/bin/print-coordinator --state-dir runtime/classroom-demo --host 0.0.0.0 --public-url http://YOUR-LAN-IP:8787 --open-browser
 ```
 

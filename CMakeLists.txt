@@ -67,6 +67,8 @@ if(CPS_BUILD_QT_APPS)
     target_link_libraries(cps_runtime PUBLIC Qt6::Core cps_core PRIVATE cps_options)
     add_executable(shop-experiments tools/shop_experiments.cpp)
     target_link_libraries(shop-experiments PRIVATE cps_runtime cps_options)
+    add_executable(stress-replay tools/stress_replay.cpp)
+    target_link_libraries(stress-replay PRIVATE cps_runtime cps_options)
 
     add_executable(print-worker src/worker/main.cpp)
     target_link_libraries(print-worker PRIVATE cps_runtime cps_options)
@@ -92,6 +94,8 @@ if(CPS_BUILD_QT_APPS)
     set_target_properties(cps_gui PROPERTIES AUTOMOC ON)
     target_include_directories(cps_gui PUBLIC src/gui)
     target_link_libraries(cps_gui PUBLIC cps_runtime Qt6::Widgets Qt6::Network PRIVATE cps_options)
+    add_executable(teaching-schedule-input tools/teaching_schedule_input.cpp)
+    target_link_libraries(teaching-schedule-input PRIVATE cps_gui cps_options)
     add_executable(campus-print src/gui/main.cpp)
     if(WIN32)
         target_link_libraries(cps_gui PRIVATE shell32 shlwapi ole32 propsys uuid dwmapi)
@@ -149,6 +153,17 @@ if(CPS_BUILD_QT_APPS)
 
         set(Python3_FIND_STRATEGY LOCATION)
         find_package(Python3 3.10 REQUIRED COMPONENTS Interpreter)
+        add_test(NAME optimal_schedule COMMAND "${Python3_EXECUTABLE}"
+            "${CMAKE_SOURCE_DIR}/tests/optimal_schedule_test.py"
+            --exporter "$<TARGET_FILE:teaching-schedule-input>")
+        set_tests_properties(optimal_schedule PROPERTIES TIMEOUT 30)
+        add_test(NAME stress_schedule COMMAND "${Python3_EXECUTABLE}"
+            "${CMAKE_SOURCE_DIR}/tests/stress_schedule_test.py")
+        set_tests_properties(stress_schedule PROPERTIES TIMEOUT 30)
+        add_test(NAME cp_schedule COMMAND "${Python3_EXECUTABLE}"
+            "${CMAKE_SOURCE_DIR}/tests/cp_schedule_test.py"
+            --replay "$<TARGET_FILE:stress-replay>")
+        set_tests_properties(cp_schedule PROPERTIES TIMEOUT 60)
         add_test(NAME classroom_web COMMAND "${Python3_EXECUTABLE}"
             "${CMAKE_SOURCE_DIR}/tests/classroom_web_test.py" --coordinator "$<TARGET_FILE:print-coordinator>"
             --office-stub "$<TARGET_FILE:office_converter_stub>")

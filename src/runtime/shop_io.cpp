@@ -78,8 +78,8 @@ bool printerFromJson(const QJsonObject& o, Printer& p) {
         if (!o.value(pair.first).isBool()) return false;
         *pair.second = o.value(pair.first).toBool();
     }
-    return number(o, "mono_page_ms", 10, 10000, p.monoPageMs) &&
-        number(o, "color_page_ms", 10, 10000, p.colorPageMs) && validPrinter(p);
+    return number(o, "mono_page_ms", 10, 12000, p.monoPageMs) &&
+        number(o, "color_page_ms", 10, 12000, p.colorPageMs) && validPrinter(p);
 }
 QJsonObject shopMetricsToJson(const ShopMetrics& m) {
     return {{"gross_cents", double(m.grossCents)}, {"refund_cents", double(m.refundCents)},

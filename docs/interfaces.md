@@ -202,7 +202,7 @@ GUI 自动创建的是独立本地协调进程，不是 Windows Service；POSIX 
 {"version":1,"fleet":[{"name":"黑白快印 01","a3":false,"color":false,"duplex":true,"online":true,"mono_page_ms":150,"color_page_ms":150}],"supplied_a4":10000,"supplied_a3":3000}
 ```
 
-示例省略其余设备。fleet 长度必须等于顶层 printers（1–64）；每面延时 10–5000 ms，A3 执行时加倍。读取时校验库存未透支、设备索引与活动订单独占，校验失败不覆盖文件。每条订单保存完整经营字段，报价不会在读取时重算。新订单总页数仍不超过 10000。
+示例省略其余设备。fleet 长度必须等于顶层 printers（1–64）；每面延时 10–12000 ms，A3 执行时加倍，worker / supervisor 支持至 24000 ms/面。后台将 worker 静默超时至少设为两面耗时，避免把正常慢速演示误判为故障。读取时校验库存未透支、设备索引与活动订单独占，校验失败不覆盖文件。每条订单保存完整经营字段，报价不会在读取时重算。新订单总页数仍不超过 10000。
 
 ### IPC 增量
 
@@ -217,8 +217,13 @@ IPC 信封继续 schema_version 1，与持久文件版本分别管理。
 | restock | paper，quantity（1–1000000） | 增加累计供应，单纸型累计上限 1000000000 |
 | refund | job_id，cumulative_cents | 设置完成订单的累计退款额；界面提供全额退款 |
 | set_policy | policy=`fcfs/sjf/balanced` | 改变后续两层调度，不抢占当前订单；旧策略名映射到 balanced |
+| clear_orders | 无附加字段 | 仅演示经营后台；须已暂停，所有活动及恢复中的执行进程均已停止。先将完整快照写入 `order-archives/`，再持久清空全部订单；保留已完成订单耗纸，释放未完成及重试订单预留，设备配置不变，回复 `count` 与备份文件名 `archive`。空队列回复 count=0 |
 
 每次经营变更先持久化再回复 accepted。客户端丢失确认后不自动重发。quote 的库存只是预览，提交与预览之间可变化；实际库存以领取时的原子检查为准。系统不保证所有接受订单能按时交付，逾期单独统计。
+
+课堂演示的 `--demo-mode` 对新订单采用 `DemoPricing`：黑白 10 分/面、彩色 75 分/面，A3、服务、双面与整数分舍入规则不变。普通后台和离线实验仍用默认 `Pricing`（20 / 150 分）；恢复历史订单不重算。老板端“演示 +50 单”复用 `submit_batch`，每次生成独立 UUID，后台整体校验、持久化后确认；没有新增学生 HTTP 写接口，IPC 与持久 schema 不变。
+
+老板端清空操作先用既有暂停与取消命令排空执行进程，再请求 `clear_orders`；后台再次检查执行与恢复状态，拒绝直接丢弃运行历史。`Scheduler::clear()` 在同一 mutex 内拒绝 Running / Cancelling 订单；清空不改变设备与调度配置。客户端不会在丢失确认后自动重发清空请求。
 
 snapshot 新增 shop_enabled、fleet、stock_a4/stock_a3、supplied_a4/supplied_a3、shop_metrics。订单新增 JSON 字段 paper/color/duplex/service/deadline_ms/base_cents/quoted_cents/cost_cents/refund_cents/assigned_printer。`slot` 仅活动时展示，assigned_printer 保留上次派发设备供审计。
 

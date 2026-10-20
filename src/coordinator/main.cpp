@@ -26,6 +26,7 @@
 #include <QSet>
 #include <QStandardPaths>
 #include <QTimer>
+#include <QUuid>
 #include <algorithm>
 #include <chrono>
 #include <cmath>
@@ -361,7 +362,7 @@ private:
             bool supported = false;
             for (auto p : state_.fleet) { p.online = true; supported |= cps::compatible(job, p); }
             if (!supported) return false;
-            cps::quote(job);
+            cps::quote(job, demoMode_ ? cps::DemoPricing : cps::Pricing{});
         } else if (job.paper != cps::PaperSize::A4 || job.color || job.duplex ||
                    job.payment != cps::PaymentMethod::Counter || !job.customer.empty()) return false;
         return true;
@@ -546,6 +547,38 @@ private:
             reply(socket, requestId, {{"type", "accepted"}}); dispatch(); return;
         }
 
+        if (type == QLatin1String("clear_orders")) {
+            if (!demoMode_ || state_.fleet.empty() || stopping_ || !state_.paused ||
+                !active_.isEmpty() || !recovering_.isEmpty()) {
+                commandError(socket, requestId, "demo shop must be paused and all executors stopped before clearing");
+                return;
+            }
+            const auto jobs = scheduler_->snapshot();
+            if (jobs.empty()) { reply(socket, requestId, {{"type", "accepted"}, {"count", 0}}); return; }
+            auto archive = state_;
+            archive.jobs = jobs; archive.savedAtMs = scheduler_->nowMs();
+            const auto archiveDirectory = QDir(stateDirectory_).filePath("order-archives");
+            const auto archiveName = QString::number(archive.savedAtMs) + "-" +
+                QUuid::createUuid().toString(QUuid::WithoutBraces) + ".json";
+            QString error;
+            if (!QDir().mkpath(archiveDirectory) ||
+                !cps::writePersistentState(QDir(archiveDirectory).filePath(archiveName), archive, error)) {
+                commandError(socket, requestId, "cannot archive orders; nothing cleared"); return;
+            }
+            auto remaining = state_.supplied;
+            // Clearing also releases reservations retained by queued retries.
+            // Only committed, completed orders consumed physical paper.
+            for (const auto& job : jobs) if (job.state == cps::JobState::Completed)
+                (job.paper == cps::PaperSize::A3 ? remaining.a3 : remaining.a4) -= job.paperSheets();
+            if (!scheduler_->clear()) { commandError(socket, requestId, "executions are still active"); return; }
+            state_.supplied = remaining;
+            if (!persistOrStop()) return;
+            forecast_.clear(); forecastAtMs_ = 0;
+            reply(socket, requestId, {{"type", "accepted"}, {"count", static_cast<int>(jobs.size())}, {"archive", archiveName}});
+            broadcast({{"type", "queue_changed"}});
+            return;
+        }
+
         if (type == QLatin1String("submit") || type == QLatin1String("submit_batch")) {
             const QJsonArray input = type == QLatin1String("submit")
                 ? QJsonArray{command.value("job")} : command.value("jobs").toArray();
@@ -711,13 +744,14 @@ private:
             auto* process = new QProcess(this);
             cps::hideProcessConsole(*process);
             process->setProgram(cps::siblingExecutable("print-supervisor"));
+            const auto perFaceMs = state_.fleet.empty() ? pageMs_ :
+                cps::processingMs(*job, state_.fleet[job->assignedPrinter]) / job->sheets();
             QStringList arguments{
                 "--job", jobPath,
                 "--output-dir", outputDirectory_,
-                "--page-ms", QString::number(state_.fleet.empty() ? pageMs_ :
-                    cps::processingMs(*job, state_.fleet[job->assignedPrinter]) / job->sheets()),
+                "--page-ms", QString::number(perFaceMs),
                 "--max-restarts", QString::number(maxRestarts_),
-                "--timeout-ms", QString::number(timeoutMs_),
+                "--timeout-ms", QString::number(std::max<cps::TimeMs>(timeoutMs_, 2 * perFaceMs)),
                 "--cancel-file", cancellation,
                 "--claim-attempt", QString::number(job->attempts)
             };
@@ -964,7 +998,7 @@ int main(int argc, char* argv[]) {
         {"page-ms", "Milliseconds per simulated sheet", "ms", "100"},
         {"max-restarts", "Worker restart limit per supervisor", "count", "3"},
         {"timeout-ms", "Worker silence timeout", "ms", "30000"},
-        {"demo-mode", "Allow explicit worker fault injection"},
+        {"demo-mode", "Enable demonstration controls and half-price quotes for new shop orders"},
         {"daemon", "Detach coordinator from the terminal on POSIX"}
     });
     parser.process(app);

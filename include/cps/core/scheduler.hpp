@@ -92,6 +92,8 @@ public:
     // Load a validated snapshot into an empty scheduler. B reconciles outputs
     // and processes before calling finish/retry/acknowledgeCancel for recovery.
     bool restore(const std::vector<Job>& jobs, TimeMs now);
+    // The owner must stop executors before discarding their order history.
+    bool clear();
     std::vector<Job> snapshot() const;
 private:
     bool precedes(const Job& a, const Job& b, Policy policy, TimeMs now) const;

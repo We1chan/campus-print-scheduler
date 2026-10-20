@@ -16,6 +16,7 @@
 #include <QSaveFile>
 #include <QThread>
 #include <QUuid>
+#include <algorithm>
 #include <cmath>
 #ifdef Q_OS_WIN
 #include <qt_windows.h>
@@ -150,6 +151,79 @@ void PrintController::submitOrder(QJsonObject order) {
     const bool accepted = response.value("type").toString() == "accepted";
     emit orderResult(accepted, id, accepted ? QString() : response.isEmpty()
         ? QStringLiteral("未收到后台确认，请在订单列表核对后再操作。") : response.value("reason").toString());
+}
+void PrintController::submitDemoBatch() {
+    if (!options_.demoMode || !demoAvailable_ || !available_ || !view_.shop.value("shop_enabled").toBool()) {
+        emit feedback(QStringLiteral("请连接演示模式的打印店后台后添加演示订单。"), true);
+        return;
+    }
+    std::vector<Printer> fleet;
+    for (const auto& value : view_.shop.value("fleet").toArray()) {
+        Printer printer;
+        if (printerFromJson(value.toObject(), printer)) { printer.online = true; fleet.push_back(printer); }
+    }
+    const QStringList titles{QStringLiteral("操作系统实验报告.pdf"), QStringLiteral("课程设计说明书.pdf"),
+        QStringLiteral("英语课程论文.docx"), QStringLiteral("社团活动海报.pdf"),
+        QStringLiteral("高等数学复习资料.pdf"), QStringLiteral("课堂讲义.pdf")};
+    const std::array<int, 10> pages{{4, 8, 12, 16, 24, 32, 48, 64, 20, 36}};
+    const QStringList services{QStringLiteral("express"), QStringLiteral("standard"), QStringLiteral("flexible")};
+    QJsonArray jobs;
+    for (int i = 0; i < 50; ++i) {
+        Job probe;
+        probe.paper = i % 10 == 0 ? PaperSize::A3 : PaperSize::A4;
+        probe.color = i % 4 == 0; probe.duplex = i % 3 != 0;
+        if (std::none_of(fleet.begin(), fleet.end(), [&](const Printer& printer) { return compatible(probe, printer); })) {
+            probe.paper = PaperSize::A4; probe.color = false; probe.duplex = false;
+        }
+        jobs.append(QJsonObject{{"job_id", QStringLiteral("DEMO-") + QUuid::createUuid().toString(QUuid::WithoutBraces)},
+            {"title", QStringLiteral("演示 %1 · %2").arg(i + 1, 2, 10, QLatin1Char('0')).arg(titles[i % titles.size()])},
+            {"pages", pages[i % pages.size()]}, {"copies", i % 7 == 0 ? 2 : 1},
+            {"paper", probe.paper == PaperSize::A3 ? "a3" : "a4"}, {"color", probe.color}, {"duplex", probe.duplex},
+            {"service", services[i % services.size()]}, {"customer", QStringLiteral("演示学生 %1").arg(i + 1, 2, 10, QLatin1Char('0'))},
+            {"payment", "counter"}});
+    }
+    const auto result = mutate("submit_batch", {{"jobs", jobs}});
+    if (result.value("type").toString() == "accepted")
+        emit feedback(QStringLiteral("已加入 50 单演示订单，可再次点击继续加单。"));
+}
+void PrintController::clearDemoOrders() {
+    if (!options_.demoMode || !demoAvailable_ || !available_ || !view_.shop.value("shop_enabled").toBool()) {
+        emit feedback(QStringLiteral("仅已连接的演示后台可清空订单。"), true); return;
+    }
+    const bool wasPaused = view_.paused;
+    if (mutate("set_paused", {{"paused", true}}).value("type").toString() != "accepted") return;
+    emit feedback(QStringLiteral("正在停止打印并清空订单…"));
+    for (const auto& value : snapshot_.value("jobs").toArray()) {
+        const auto job = value.toObject();
+        if (job.value("state").toString() == "running" &&
+            request("cancel", {{"job_id", job.value("job_id")}}).value("type").toString() != "accepted") {
+            // Completion may win the race; the fresh snapshot below decides whether it is safe to clear.
+            if (!available_) { refresh(); return; }
+        }
+    }
+    QElapsedTimer deadline; deadline.start();
+    bool idle = false;
+    while (deadline.elapsed() < 10000) {
+        const auto current = request("snapshot");
+        if (current.isEmpty() || current.value("type").toString() != "snapshot") break;
+        idle = true;
+        for (const auto& value : current.value("jobs").toArray()) {
+            const auto job = value.toObject();
+            const auto state = job.value("state").toString();
+            if (state == "running" || state == "cancelling" || job.value("recovering").toBool()) { idle = false; break; }
+        }
+        if (idle) break;
+        QThread::msleep(50);
+    }
+    if (!idle) {
+        refresh(); emit feedback(QStringLiteral("执行进程尚未确认停止，订单未清空，派发已暂停。"), true); return;
+    }
+    const auto cleared = mutate("clear_orders");
+    if (cleared.value("type").toString() != "accepted") return;
+    if (!wasPaused && mutate("set_paused", {{"paused", false}}).value("type").toString() != "accepted") {
+        emit feedback(QStringLiteral("订单已清空；恢复派发未确认，请在店铺菜单检查。"), true); return;
+    }
+    emit feedback(QStringLiteral("已清空 %1 单，订单备份已保存在本地，可重新加单。").arg(cleared.value("count").toInt()));
 }
 void PrintController::requestQuote(QJsonObject order, int token) {
     // A quote never enters the queue; the id only has to satisfy validation.

@@ -1,5 +1,6 @@
 #pragma once
 #include <QAbstractButton>
+#include <functional>
 #include <QAbstractNativeEventFilter>
 #include <QApplication>
 #include <QCloseEvent>
@@ -59,12 +60,15 @@ class EditorialChrome : public QObject, public QAbstractNativeEventFilter {
         else window_->showMaximized();
     }
     bool nativeEventFilter(const QByteArray &, void *message, qintptr *result) override;
+    // Height of the draggable title strip in widget pixels, for windows whose
+    // title bar is not a fixed fraction of the window height.
+    void setTitleBand(std::function<qreal()> band) { titleBand_ = std::move(band); }
   protected:
     bool eventFilter(QObject *object, QEvent *event) override;
   private:
     void updateSystemFrame(bool active);
     bool draggable(QPoint point) const {
-        const qreal band = referenceHeight_ ? titleHeight_ * window_->height() / referenceHeight_ : titleHeight_;
+        const qreal band = titleBand_ ? titleBand_() : referenceHeight_ ? titleHeight_ * window_->height() / referenceHeight_ : titleHeight_;
         if (point.y() < 0 || point.y() >= band) return false;
         for (auto *child = window_->childAt(point); child && child != window_; child = child->parentWidget())
             if (qobject_cast<QAbstractButton *>(child) || qobject_cast<QLineEdit *>(child)) return false;
@@ -73,6 +77,7 @@ class EditorialChrome : public QObject, public QAbstractNativeEventFilter {
     QPointer<QWidget> window_;
     qreal titleHeight_, referenceHeight_;
     bool resizable_;
+    std::function<qreal()> titleBand_;
 };
 
 class EditorialWindowButton : public QPushButton {

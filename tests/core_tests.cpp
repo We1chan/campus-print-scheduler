@@ -30,6 +30,12 @@ int main() {
         require(fifo.claim(cps::Policy::Fcfs)->id == "later", "claim reserves job exactly once");
         require(fifo.finish("first", true), "running job completes");
         require(!fifo.finish("first", false), "terminal states cannot be changed");
+        require(!fifo.clear(), "clear cannot discard a running execution");
+        require(fifo.cancel("later", fifo.nowMs()), "cancel the remaining running execution");
+        require(!fifo.clear(), "clear must wait for cancellation acknowledgement");
+        require(fifo.acknowledgeCancel("later", 1, fifo.nowMs()), "executor confirms cancellation");
+        require(fifo.clear() && fifo.snapshot().empty(), "clear atomically removes all inactive orders");
+        require(fifo.submit(job("next-demo", 4, 0)) && fifo.clear(), "clear also removes waiting orders");
 
         cps::Scheduler shortest;
         shortest.submit(job("copies", 2, 0, 5));

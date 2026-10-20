@@ -17,6 +17,17 @@ int main() {
         cps::quote(j);
         check(j.sheets() == 6 && j.paperSheets() == 4, "odd duplex copies use separate sheets");
         check(j.baseCents == 120 && j.quotedCents == 97, "quote stacks the duplex discount on the locked tier");
+        auto demo = j;
+        cps::quote(demo, cps::DemoPricing);
+        check(demo.baseCents == 60 && demo.quotedCents == 48 && demo.deadlineMs == j.deadlineMs,
+              "demo prices halve face rates before the same tier and duplex rounding");
+        demo.color = true; demo.paper = cps::PaperSize::A3;
+        cps::quote(demo, cps::DemoPricing);
+        check(demo.baseCents == 900 && demo.quotedCents == 727, "demo A3 colour pricing");
+        const auto slowFleet = cps::defaultFleet(3000);
+        for (const auto& printer : slowFleet) check(cps::validPrinter(printer), "slow demo fleet remains valid");
+        check(slowFleet[0].monoPageMs == 3000 && cps::processingMs(demo, slowFleet[5]) == 144000,
+              "slow demo retains heterogeneous and A3 timing");
         auto fleet = cps::defaultFleet(100);
         j.color = true; j.paper = cps::PaperSize::A3;
         check(!cps::compatible(j, fleet[0]) && cps::compatible(j, fleet[5]), "capability matching");

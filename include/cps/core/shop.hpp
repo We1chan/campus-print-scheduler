@@ -8,10 +8,14 @@ bool validTerms(const Job& job);
 bool validPrinter(const Printer& printer);
 bool compatible(const Job& job, const Printer& printer);
 TimeMs serviceWindowMs(ServiceTier tier);
-void quote(Job& job);
+struct Pricing {
+    Money monoFaceCents = 20, colorFaceCents = 150;
+};
+inline constexpr Pricing DemoPricing{10, 75};
+void quote(Job& job, Pricing pricing = {});
 TimeMs processingMs(const Job& job, const Printer& printer);
 Money directCost(const Job& job, const Printer& printer);
-std::vector<Printer> defaultFleet(TimeMs basePageMs = 1500);
+std::vector<Printer> defaultFleet(TimeMs basePageMs = 1250);
 Inventory availablePaper(const std::vector<Job>& jobs, Inventory supplied);
 struct ShopMetrics {
     Money grossCents = 0, refundCents = 0, revenueCents = 0, costCents = 0, contributionCents = 0;

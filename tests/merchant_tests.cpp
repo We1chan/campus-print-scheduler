@@ -121,7 +121,7 @@ private slots:
         QPainter reference(&expected);
         QVector<Hit> unused;
         Painter referenceDrawing(reference, unused, assets, false);
-        referenceDrawing.badge(badge, order.state);
+        referenceDrawing.statusBadge(badge, order.state);
         reference.end();
         QCOMPARE(image.copy(badge), expected.copy(badge));
     }
@@ -232,13 +232,13 @@ private slots:
         MerchantWindow window({},true);window.show();
         QTRY_VERIFY(window.isVisible());
         const auto initial=window.model()->snapshot();
-        const auto orderSignature=[](const Snapshot& state){QStringList result;for(const auto& order:state.orders)result<<order.id+":"+order.state+":"+QString::number(order.printer);return result;};
+        const auto orderSignature=[](const Snapshot& state){QStringList result;for(const auto& order:state.orders)result<<order.id+":"+stateLabel(order.state)+":"+QString::number(order.printer);return result;};
         window.setPage(1);
         auto* entry=window.findChild<QPushButton*>("merchant_dispatch-open_");QVERIFY(entry&&entry->isVisible());entry->click();
         auto* canvas=window.findChild<QWidget*>("merchantCanvas");QVERIFY(canvas);
         auto* scenario=window.findChild<QComboBox*>("merchantDispatchScenario");
         auto* speed=window.findChild<QComboBox*>("merchantDispatchSpeed");QVERIFY(scenario&&speed&&scenario->isVisible()&&speed->isVisible());
-        QCOMPARE(scenario->count(),4);QCOMPARE(speed->count(),3);
+        QCOMPARE(scenario->count(),5);QCOMPARE(speed->count(),3);scenario->setCurrentIndex(0);
         const auto press=[&](const QString& name){auto* control=window.findChild<QPushButton*>("merchant_"+name);if(!control||!control->isVisible())return false;control->click();return true;};
         for(const QSize size:{QSize(950,594),QSize(1269,794),QSize(1586,992)}){
             window.resize(size);QApplication::processEvents();
@@ -303,7 +303,7 @@ private slots:
         const int initialPaper = data.snapshot().devices[1].paper;
         data.execute(QStringLiteral("start"), QStringLiteral("1"));
         QTRY_VERIFY_WITH_TIMEOUT(data.snapshot().orders[index].printed > 0, 2000);
-        QCOMPARE(data.snapshot().orders[index].state, QStringLiteral("打印中"));
+        QCOMPARE(data.snapshot().orders[index].state, OrderState::Printing);
         QCOMPARE(data.snapshot().devices[1].jobId, QStringLiteral("P1024"));
         QCOMPARE(data.snapshot().devices[1].paper, initialPaper - 4); // Eight duplex faces consume four sheets.
         QCOMPARE(data.snapshot().devices[0].printed, 18); // Only the explicitly started device advances.
@@ -313,12 +313,12 @@ private slots:
         QCOMPARE(data.snapshot().orders[index].printed, pausedAt);
         QVERIFY(!data.snapshot().devices[1].enabled);
         data.execute(QStringLiteral("start"), QStringLiteral("1"));
-        QTRY_COMPARE_WITH_TIMEOUT(data.snapshot().orders[index].state, QStringLiteral("待取件"), 6500);
+        QTRY_COMPARE_WITH_TIMEOUT(data.snapshot().orders[index].state, OrderState::Ready, 6500);
         QCOMPARE(data.snapshot().orders[index].printed, 8);
         QCOMPARE(data.snapshot().ready, 13);
         data.execute(QStringLiteral("pause"), QStringLiteral("1"));
         data.execute(QStringLiteral("pickup"), QStringLiteral("P1024"));
-        QCOMPARE(data.snapshot().orders[index].state, QStringLiteral("已完成"));
+        QCOMPARE(data.snapshot().orders[index].state, OrderState::Completed);
         QCOMPARE(data.snapshot().ready, 12);
         QCOMPARE(data.snapshot().completed, 30);
         QCOMPARE(data.snapshot().revenueCents, qint64(33820));
@@ -465,7 +465,7 @@ private slots:
         QCOMPARE(data.snapshot().orders[0].printer, 2);
         QVERIFY(data.snapshot().orders[0].color);
         // A test-page action starts its own simulation without a separate start command.
-        QTRY_COMPARE_WITH_TIMEOUT(data.snapshot().orders[0].state, QStringLiteral("待取件"), 2000);
+        QTRY_COMPARE_WITH_TIMEOUT(data.snapshot().orders[0].state, OrderState::Ready, 2000);
         QCOMPARE(data.snapshot().orders[0].printed, 1);
         QCOMPARE(data.snapshot().devices[2].paper, 499);
         QCOMPARE(data.snapshot().printedPages, 525);
@@ -565,7 +565,7 @@ private slots:
         QTest::mouseClick(complete, Qt::LeftButton);
         const auto firstPage = visibleTableRows(window);
         QCOMPARE(firstPage.size(), 5);
-        for (const int index : firstPage) QCOMPARE(window.model()->snapshot().orders[index].state, QStringLiteral("已完成"));
+        for (const int index : firstPage) QCOMPARE(window.model()->snapshot().orders[index].state, OrderState::Completed);
         auto* next = window.findChild<QPushButton*>("merchant_table-next_5");
         QVERIFY(next && next->isVisible());
         QTest::mouseClick(next, Qt::LeftButton);
@@ -830,6 +830,136 @@ private slots:
         window.close();
     }
 
+    void demoButtonAddsFiftySharedOrdersPerClick() {
+        BackendDirectory directory(QDir::tempPath() + QStringLiteral("/演示加单-XXXXXX"));
+        QVERIFY(directory.isValid());
+        MerchantWindow merchant({directory.path(), 3000, true, true});
+        merchant.show();
+        QTRY_VERIFY_WITH_TIMEOUT(merchant.model()->snapshot().demoAvailable, 10000);
+        CoordinatorClient audit(directory.path());
+        QCOMPARE(audit.request("set_paused", {{"paused", true}}).value("type").toString(), QStringLiteral("accepted"));
+        QTRY_VERIFY(merchant.model()->snapshot().paused);
+        auto* add = merchant.findChild<QPushButton*>(QStringLiteral("merchant_demo-add-50_"));
+        QVERIFY(add && add->isVisible() && add->isEnabled());
+        QCOMPARE(merchant.model()->snapshot().orders.size(), 0);
+        QTest::mouseClick(add, Qt::LeftButton);
+        QTRY_COMPARE_WITH_TIMEOUT(merchant.model()->snapshot().orders.size(), 50, 10000);
+        auto snapshot = audit.request("snapshot");
+        QCOMPARE(snapshot.value("jobs").toArray().size(), 50);
+        QVERIFY(snapshot.value("paused").toBool());
+        QCOMPARE(snapshot.value("fleet").toArray()[0].toObject().value("mono_page_ms").toInt(), 3000);
+        QCOMPARE(snapshot.value("fleet").toArray()[5].toObject().value("color_page_ms").toInt(), 12000);
+        QSet<QString> ids, tiers;
+        bool hasA3 = false, hasColor = false, hasDuplex = false;
+        for (const auto& value : snapshot.value("jobs").toArray()) {
+            const auto order = value.toObject();
+            ids.insert(order.value("job_id").toString()); tiers.insert(order.value("service").toString());
+            QVERIFY(order.value("job_id").toString().startsWith("DEMO-"));
+            QVERIFY(order.value("customer").toString().startsWith(QStringLiteral("演示学生")));
+            QCOMPARE(order.value("state").toString(), QStringLiteral("queued"));
+            hasA3 |= order.value("paper").toString() == "a3";
+            hasColor |= order.value("color").toBool(); hasDuplex |= order.value("duplex").toBool();
+        }
+        QCOMPARE(ids.size(), 50); QCOMPARE(tiers.size(), 3);
+        QVERIFY(hasA3 && hasColor && hasDuplex);
+        const QJsonObject probe{{"job_id", "demo-price-probe"}, {"title", "probe"}, {"pages", 8}, {"copies", 1},
+            {"paper", "a4"}, {"color", true}, {"duplex", true}, {"service", "standard"}, {"quoted_cents", 1}};
+        const auto quoted = audit.request("quote", {{"job", probe}});
+        QCOMPARE(quoted.value("base_cents").toInt(), 600);
+        QCOMPARE(quoted.value("quoted_cents").toInt(), 542);
+        merchant.setPage(1);
+        add = merchant.findChild<QPushButton*>(QStringLiteral("merchant_demo-add-50_"));
+        QVERIFY(add && add->isVisible());
+        QVERIFY(saveEvidence(merchant, QStringLiteral("demo-batch-50.png")));
+        QTest::mouseClick(add, Qt::LeftButton);
+        QTRY_COMPARE_WITH_TIMEOUT(merchant.model()->snapshot().orders.size(), 100, 10000);
+        const auto second = audit.request("snapshot");
+        for (const auto& value : second.value("jobs").toArray()) ids.insert(value.toObject().value("job_id").toString());
+        QCOMPARE(ids.size(), 100);
+        cps::PersistentState persisted; QString error;
+        QVERIFY2(cps::readPersistentState(QDir(directory.path()).filePath("state.json"), persisted, error), qPrintable(error));
+        QCOMPARE(persisted.jobs.size(), std::size_t(100));
+        QCOMPARE(persisted.fleet[5].colorPageMs, cps::TimeMs(12000));
+        QCOMPARE(persisted.jobs[0].quotedCents, second.value("jobs").toArray()[0].toObject().value("quoted_cents").toInteger());
+
+        auto* clear = merchant.findChild<QPushButton*>(QStringLiteral("merchant_demo-clear-orders_"));
+        QVERIFY(clear && clear->isVisible());
+        QVERIFY(!clear->geometry().intersects(add->geometry()));
+        QFile blockedArchive(QDir(directory.path()).filePath("order-archives"));
+        QVERIFY(blockedArchive.open(QIODevice::WriteOnly)); blockedArchive.close();
+        QCOMPARE(audit.request("clear_orders").value("type").toString(), QStringLiteral("error"));
+        QCOMPARE(audit.request("snapshot").value("jobs").toArray().size(), 100);
+        QVERIFY(blockedArchive.remove());
+        QTest::mouseClick(clear, Qt::LeftButton);
+        QTRY_COMPARE_WITH_TIMEOUT(merchant.model()->snapshot().orders.size(), 0, 10000);
+        QCOMPARE(audit.request("snapshot").value("jobs").toArray().size(), 0);
+        QCOMPARE(merchant.model()->snapshot().todayOrders, 0);
+        QVERIFY(merchant.model()->snapshot().paused);
+        auto archives = QDir(QDir(directory.path()).filePath("order-archives")).entryList({"*.json"}, QDir::Files);
+        QCOMPARE(archives.size(), 1);
+        cps::PersistentState archived;
+        QVERIFY(cps::readPersistentState(QDir(directory.path()).filePath("order-archives/" + archives[0]), archived, error));
+        QCOMPARE(archived.jobs.size(), std::size_t(100));
+        QVERIFY(saveEvidence(merchant, QStringLiteral("demo-cleared.png")));
+
+        // Clearing while real executors are running stops them before dropping their history.
+        const QJsonObject running{{"job_id", "clear-running"}, {"title", "running"}, {"pages", 64}, {"copies", 1}};
+        QCOMPARE(audit.request("submit", {{"job", running}}).value("type").toString(), QStringLiteral("accepted"));
+        QCOMPARE(audit.request("set_paused", {{"paused", false}}).value("type").toString(), QStringLiteral("accepted"));
+        QTRY_VERIFY(merchant.model()->snapshot().printing > 0);
+        QCOMPARE(audit.request("clear_orders").value("type").toString(), QStringLiteral("error"));
+        QTest::mouseClick(clear, Qt::LeftButton);
+        QTRY_COMPARE_WITH_TIMEOUT(merchant.model()->snapshot().orders.size(), 0, 10000);
+        QTRY_VERIFY(!merchant.model()->snapshot().paused);
+        const auto cleared = audit.request("snapshot");
+        QCOMPARE(cleared.value("stock_a4").toInt(), 10000);
+        QCOMPARE(cleared.value("fleet").toArray()[0].toObject().value("mono_page_ms").toInt(), 3000);
+        QVERIFY(!QFileInfo::exists(QDir(directory.path()).filePath("output/clear-running.txt")));
+        QTest::qWait(200);
+        QCOMPARE(audit.request("snapshot").value("jobs").toArray().size(), 0);
+        merchant.close();
+    }
+
+    void demoClearPreservesConsumedPaperAndConfiguration() {
+        BackendDirectory directory(QDir::tempPath() + QStringLiteral("/清空 库存-XXXXXX"));
+        QVERIFY(directory.isValid());
+        const auto now = QDateTime::currentMSecsSinceEpoch();
+        cps::PersistentState persisted;
+        persisted.fleet = cps::defaultFleet(3000); persisted.printers = 6;
+        persisted.supplied = {10000,3000}; persisted.paused = true; persisted.savedAtMs = now;
+        cps::Job done;
+        done.id = "clear-completed"; done.title = "completed"; done.pages = 2; done.submittedMs = now;
+        cps::quote(done, cps::DemoPricing);
+        cps::Scheduler finished({}, [now] { return now; });
+        QVERIFY(finished.submit(done));
+        QVERIFY(finished.claimFor(cps::Policy::Fcfs, now, persisted.fleet, {0}, {10000,3000}));
+        QVERIFY(finished.finish(done.id, 1, true, now));
+        auto retry = done; retry.id = "clear-retry"; retry.pages = 5; cps::quote(retry, cps::DemoPricing);
+        QVERIFY(finished.submit(retry));
+        QVERIFY(finished.claimFor(cps::Policy::Fcfs, now, persisted.fleet, {0}, {10000,3000}));
+        QVERIFY(finished.retry(retry.id, 1, now));
+        persisted.jobs = finished.snapshot();
+        QString error;
+        QVERIFY(cps::writePersistentState(QDir(directory.path()).filePath("state.json"), persisted, error));
+        MerchantWindow restored({directory.path(), 3000, true, true}); restored.show();
+        QTRY_VERIFY_WITH_TIMEOUT(restored.model()->snapshot().demoAvailable, 10000);
+        QTRY_COMPARE(restored.model()->snapshot().orders.size(), 2);
+        CoordinatorClient audit(directory.path());
+        QCOMPARE(audit.request("snapshot").value("stock_a4").toInt(), 9993);
+        auto* clearRestored = restored.findChild<QPushButton*>(QStringLiteral("merchant_demo-clear-orders_"));
+        QVERIFY(clearRestored);
+        QTest::mouseClick(clearRestored, Qt::LeftButton);
+        QTRY_COMPARE_WITH_TIMEOUT(restored.model()->snapshot().orders.size(), 0, 10000);
+        QCOMPARE(audit.request("snapshot").value("stock_a4").toInt(), 9998);
+        QVERIFY(cps::readPersistentState(QDir(directory.path()).filePath("state.json"), persisted, error));
+        QVERIFY(persisted.jobs.empty()); QCOMPARE(persisted.supplied.a4, 9998);
+        QCOMPARE(persisted.fleet[0].monoPageMs, cps::TimeMs(3000));
+        auto* add = restored.findChild<QPushButton*>(QStringLiteral("merchant_demo-add-50_"));
+        QVERIFY(add); QTest::mouseClick(add, Qt::LeftButton);
+        QTRY_COMPARE_WITH_TIMEOUT(restored.model()->snapshot().orders.size(), 50, 10000);
+        restored.close();
+    }
+
     void persistentBackendReceivesOtherClientOrder() {
         BackendDirectory directory(QDir::tempPath() + QStringLiteral("/店主 IPC-XXXXXX"));
         QVERIFY(directory.isValid());
@@ -838,6 +968,10 @@ private slots:
         merchant.show();
         QSignalSpy ready(&merchant, &MerchantWindow::backendReady);
         QTRY_VERIFY_WITH_TIMEOUT(merchant.model()->snapshot().connected, 10000);
+        QVERIFY(!merchant.findChild<QPushButton*>(QStringLiteral("merchant_demo-add-50_")));
+        QVERIFY(!merchant.findChild<QPushButton*>(QStringLiteral("merchant_demo-clear-orders_")));
+        CoordinatorClient normalAudit(directory.path());
+        QCOMPARE(normalAudit.request("clear_orders").value("type").toString(), QStringLiteral("error"));
         QVERIFY(!ready.isEmpty());
         QVERIFY(!merchant.model()->snapshot().showcase);
         QCOMPARE(merchant.model()->snapshot().devices.size(), 6);
@@ -888,26 +1022,16 @@ private slots:
         menuWatchdog.stop();
         QVERIFY(menusRounded&&menusSaved);
         merchant.setPage(1);
-        auto* queuePrevious=merchant.findChild<QPushButton*>("merchant_queue-device-page_-2");
-        QVERIFY(queuePrevious&&queuePrevious->isVisible()&&!queuePrevious->isEnabled());
-        for(int target:{2,4}){
-            auto* next=merchant.findChild<QPushButton*>(QStringLiteral("merchant_queue-device-page_%1").arg(target));
-            QVERIFY(next && next->isVisible());
-            QTest::mouseClick(next,Qt::LeftButton);
-            for(int device:{target,target+1}){
-                auto* lane=merchant.findChild<QPushButton*>(QStringLiteral("merchant_select-device_%1").arg(device));
-                QVERIFY(lane && lane->isVisible());
-            }
+        // The backend dispatches one global queue, so the live page lists every
+        // slot at once instead of the showcase's per-device lanes.
+        for(const auto* control:merchant.findChildren<QPushButton*>())
+            QVERIFY2(!control->objectName().startsWith("merchant_queue-device-page_")&&!control->objectName().startsWith("merchant_assign_"),
+                     qPrintable(control->objectName()));
+        for(int device=0;device<6;++device){
+            auto* row=merchant.findChild<QPushButton*>(QStringLiteral("merchant_select-device_%1").arg(device));
+            QVERIFY(row && row->isVisible());
         }
-        auto* queueNext=merchant.findChild<QPushButton*>("merchant_queue-device-page_6");
-        QVERIFY(queueNext&&queueNext->isVisible()&&!queueNext->isEnabled());
-        QVERIFY(saveEvidence(merchant,QStringLiteral("native-queue-last-device-page.png")));
-        for(int target:{2,0}){
-            auto* previous=merchant.findChild<QPushButton*>(QStringLiteral("merchant_queue-device-page_%1").arg(target));
-            QVERIFY(previous && previous->isVisible());
-            QTest::mouseClick(previous,Qt::LeftButton);
-        }
-        QVERIFY(saveEvidence(merchant,QStringLiteral("native-queue-first-device-page.png")));
+        QVERIFY(saveEvidence(merchant,QStringLiteral("native-queue-all-devices.png")));
         merchant.setPage(0);
         QSignalSpy navigationFeedback(merchant.model(),&MerchantData::feedback);
         auto* allDevices=merchant.findChild<QPushButton*>("merchant_page_devices");
@@ -986,7 +1110,7 @@ private slots:
         QCOMPARE(queued.pages, 3);
         QCOMPARE(queued.copies, 2);
         QVERIFY(queued.color && !queued.duplex);
-        QCOMPARE(queued.state, QStringLiteral("待打印"));
+        QCOMPARE(queued.state, OrderState::Waiting);
         QCOMPARE(queued.estimatedMinutes, -1); // A paused queue cannot promise completion from the current time.
         QCOMPARE(queued.printer, -1);
         QCOMPARE(queued.amountCents, qint64(855)); // Six colour faces at 150 cents with the standard 95% rate.
@@ -1013,7 +1137,7 @@ private slots:
         merchant.setPage(0);
 
         merchant.model()->execute(QStringLiteral("resume-all"));
-        QTRY_COMPARE_WITH_TIMEOUT(merchant.model()->snapshot().orders[0].state, QStringLiteral("已完成"), 10000);
+        QTRY_COMPARE_WITH_TIMEOUT(merchant.model()->snapshot().orders[0].state, OrderState::Completed, 10000);
         QCOMPARE(merchant.model()->snapshot().orders[0].estimatedMinutes, 0);
         QCOMPARE(merchant.model()->snapshot().orders[0].printed, 6);
         QCOMPARE(merchant.model()->snapshot().completed, 1);
@@ -1039,6 +1163,75 @@ private slots:
         merchant.close();
         QVERIFY(!merchant.isVisible());
         // The directory destructor sends shutdown only to this unique test endpoint.
+    }
+
+    void canvasScalesUniformlyAtAnyAspect() {
+        MerchantWindow window({}, true);
+        window.show();
+        QVERIFY(QTest::qWaitForWindowExposed(&window));
+        auto* canvas = window.findChild<QWidget*>("merchantCanvas");
+        QVERIFY(canvas);
+        for (const QSize size : {QSize(1800,700), QSize(1000,900), QSize(1269,794)}) {
+            window.resize(size);
+            QApplication::processEvents();
+            const qreal scale = std::min(canvas->width() / 1586., canvas->height() / 992.);
+            // A navigation tab keeps its 106×56 proportions instead of stretching.
+            auto* tab = window.findChild<QPushButton*>("merchant_nav_1");
+            QVERIFY(tab && tab->isVisible());
+            QVERIFY2(std::abs(tab->width() - 106 * scale) <= 2 && std::abs(tab->height() - 56 * scale) <= 2,
+                     qPrintable(QStringLiteral("%1×%2 at scale %3").arg(tab->width()).arg(tab->height()).arg(scale)));
+            // Title-bar controls stay anchored to the window's right edge.
+            auto* close = window.findChild<QPushButton*>("windowClose");
+            auto* shop = window.findChild<QPushButton*>("merchant_shop-menu_");
+            QVERIFY(close && shop);
+            QVERIFY(std::abs(close->geometry().right() + 1 - (canvas->width() - 4 * scale)) <= 2);
+            QVERIFY(std::abs(shop->geometry().right() + 1 - (canvas->width() - 236 * scale)) <= 2);
+            // The page is centred: the order table has equal margins either side of the page.
+            auto* search = window.findChild<QLineEdit*>("merchantSearch");
+            QVERIFY(search && canvas->rect().contains(search->geometry()));
+            const qreal pageLeft = (canvas->width() - 1586 * scale) / 2;
+            QVERIFY(std::abs(search->geometry().left() - (pageLeft + 826 * scale)) <= 2);
+            QVERIFY(saveEvidence(window, QStringLiteral("canvas-%1x%2.png").arg(size.width()).arg(size.height())));
+        }
+    }
+
+    void searchCoversEveryTabAndClosedOrdersStayVisible() {
+        MerchantWindow window({}, true);
+        window.show();
+        QVERIFY(QTest::qWaitForWindowExposed(&window));
+        auto* search = window.findChild<QLineEdit*>("merchantSearch");
+        QVERIFY(search);
+        // The waiting tab is open, yet a completed history order is still found.
+        search->setText(QStringLiteral("P980"));
+        const auto found = visibleTableRows(window);
+        QCOMPARE(found.size(), 1);
+        QCOMPARE(window.model()->snapshot().orders[*found.cbegin()].id, QStringLiteral("P980"));
+        search->clear();
+        window.model()->execute(QStringLiteral("cancel"), QStringLiteral("P1029"));
+        auto* closed = window.findChild<QPushButton*>(QStringLiteral("merchant_filter_%1").arg(static_cast<int>(OrderFilter::Closed)));
+        QVERIFY(closed && closed->isVisible());
+        QTest::mouseClick(closed, Qt::LeftButton);
+        const auto rows = visibleTableRows(window);
+        QCOMPARE(rows.size(), 1);
+        QCOMPARE(window.model()->snapshot().orders[*rows.cbegin()].state, OrderState::Cancelled);
+        // Choosing a tab ends a search, so the tab's own rows are shown.
+        search->setText(QStringLiteral("P1024"));
+        auto* all = window.findChild<QPushButton*>(QStringLiteral("merchant_filter_%1").arg(static_cast<int>(OrderFilter::All)));
+        QVERIFY(all);
+        QTest::mouseClick(all, Qt::LeftButton);
+        QVERIFY(search->text().isEmpty());
+        QCOMPARE(visibleTableRows(window).size(), 5);
+        QCOMPARE(filterCount(window.model()->snapshot(), OrderFilter::All), 48);
+    }
+
+    void emptyRangeHasNoAverageAndKeepsOpeningHours() {
+        MerchantData data({}, true);
+        data.start();
+        QCOMPARE(data.snapshot().hourlyLabels.first(), QStringLiteral("06"));
+        QCOMPARE(data.snapshot().hourlyLabels.last(), QStringLiteral("10"));
+        data.setRange(QStringLiteral("2026-10-04"));
+        QCOMPARE(data.snapshot().averageMinutes, -1.0); // Shown as a dash, not as zero minutes.
+        QCOMPARE(data.snapshot().hourlyRevenue.size(), data.snapshot().hourlyLabels.size());
     }
 };
 

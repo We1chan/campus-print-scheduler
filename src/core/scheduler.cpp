@@ -91,6 +91,14 @@ Scheduler::Scheduler(SchedulerOptions options, Clock clock) : options_(options),
     }
 }
 TimeMs Scheduler::nowMs() const { return clock_(); }
+bool Scheduler::clear() {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (std::any_of(jobs_.begin(), jobs_.end(), [](const Job& job) {
+            return job.state == JobState::Running || job.state == JobState::Cancelling;
+        })) return false;
+    jobs_.clear();
+    return true;
+}
 Job* Scheduler::find(const std::string& id) {
     const auto it = std::find_if(jobs_.begin(), jobs_.end(), [&](const Job& job) { return job.id == id; });
     return it == jobs_.end() ? nullptr : &*it;

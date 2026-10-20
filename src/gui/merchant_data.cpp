@@ -1,5 +1,6 @@
 #include "merchant_data.hpp"
 #include "order_preview_store.hpp"
+#include "view_text.hpp"
 #include "cps/runtime/state_store.hpp"
 
 #include <QJsonArray>
@@ -11,25 +12,66 @@
 #include <utility>
 
 namespace cps::gui::merchant {
-namespace {
-QString serviceText(const QString& value) {
-    if (value == QLatin1String("express")) return QStringLiteral("快速");
-    if (value == QLatin1String("flexible")) return QStringLiteral("灵活");
-    return QStringLiteral("普通");
-}
-QString stateText(JobState state) {
+QString stateLabel(OrderState state) {
     switch (state) {
-    case JobState::Queued: return QStringLiteral("待打印");
-    case JobState::Running: return QStringLiteral("打印中");
-    case JobState::Cancelling: return QStringLiteral("取消中");
-    case JobState::Completed: return QStringLiteral("已完成");
-    case JobState::Cancelled: return QStringLiteral("已取消");
-    case JobState::Failed: return QStringLiteral("失败");
+    case OrderState::Waiting: return QStringLiteral("待打印");
+    case OrderState::Printing: return QStringLiteral("打印中");
+    case OrderState::Cancelling: return QStringLiteral("取消中");
+    case OrderState::Ready: return QStringLiteral("待取件");
+    case OrderState::Completed: return QStringLiteral("已完成");
+    case OrderState::Cancelled: return QStringLiteral("已取消");
+    case OrderState::Failed: return QStringLiteral("失败");
     }
     return QStringLiteral("未知");
 }
-bool printedState(const Order& order) {
-    return order.state == QStringLiteral("已完成") || order.state == QStringLiteral("待取件");
+QString serviceLabel(cps::ServiceTier service) {
+    switch (service) {
+    case cps::ServiceTier::Express: return QStringLiteral("快速");
+    case cps::ServiceTier::Standard: return QStringLiteral("普通");
+    case cps::ServiceTier::Flexible: return QStringLiteral("灵活");
+    }
+    return QStringLiteral("普通");
+}
+QString policyLabel(const QString& name) {
+    if (name == QLatin1String("sjf")) return QStringLiteral("SJF · 短作业优先");
+    if (name == QLatin1String("fcfs")) return QStringLiteral("FCFS · 先来先服务");
+    return name.isEmpty() ? QString() : QStringLiteral("综合调度");
+}
+namespace {
+cps::ServiceTier serviceFromName(const QString& value) {
+    if (value == QLatin1String("express")) return cps::ServiceTier::Express;
+    if (value == QLatin1String("flexible")) return cps::ServiceTier::Flexible;
+    return cps::ServiceTier::Standard;
+}
+OrderState orderState(JobState state) {
+    switch (state) {
+    case JobState::Queued: return OrderState::Waiting;
+    case JobState::Running: return OrderState::Printing;
+    case JobState::Cancelling: return OrderState::Cancelling;
+    case JobState::Completed: return OrderState::Completed;
+    case JobState::Cancelled: return OrderState::Cancelled;
+    case JobState::Failed: return OrderState::Failed;
+    }
+    return OrderState::Failed;
+}
+JobState jobState(OrderState state) {
+    switch (state) {
+    case OrderState::Waiting: return JobState::Queued;
+    case OrderState::Printing: return JobState::Running;
+    case OrderState::Cancelling: return JobState::Cancelling;
+    case OrderState::Ready:
+    case OrderState::Completed: return JobState::Completed;
+    case OrderState::Cancelled: return JobState::Cancelled;
+    case OrderState::Failed: return JobState::Failed;
+    }
+    return JobState::Failed;
+}
+bool printedState(const Order& order) { return isPrinted(order.state); }
+// A finished order's pickup time can be days old; only today's time stays short.
+QString pickupText(qint64 deadlineMs, const QDate& today) {
+    if (deadlineMs <= 0) return QStringLiteral("—");
+    const auto deadline = QDateTime::fromMSecsSinceEpoch(deadlineMs);
+    return deadline.toString(deadline.date() == today ? QStringLiteral("HH:mm") : QStringLiteral("M月d日 HH:mm"));
 }
 int faces(const Order& order) { return order.pages * order.copies; }
 int paperSheets(const Order& order) {
@@ -65,13 +107,13 @@ MerchantData::MerchantData(WindowOptions options, bool showcase, QObject* parent
                 active = true;
                 if (!device.busy && device.online) {
                     for (auto& order : snapshot_.orders) {
-                        if (order.state != QStringLiteral("待打印") || order.printer != device.index || !compatible(order, device)) continue;
+                        if (order.state != OrderState::Waiting || order.printer != device.index || !compatible(order, device)) continue;
                         if (device.paper < paperSheets(order)) {
                             device.enabled = false;
                             emit feedback(QStringLiteral("样例：设备缺纸，请补纸后继续。"), true);
                             break;
                         }
-                        order.state = QStringLiteral("打印中");
+                        order.state = OrderState::Printing;
                         device.busy = true; device.jobId = order.id;
                         device.printed = order.printed; device.total = faces(order);
                         device.paper -= paperSheets(order);
@@ -84,7 +126,7 @@ MerchantData::MerchantData(WindowOptions options, bool showcase, QObject* parent
                     order.printed = std::min(faces(order), order.printed + 1);
                     device.printed = order.printed;
                     if (order.printed == faces(order)) {
-                        order.state = QStringLiteral("待取件");
+                        order.state = OrderState::Ready;
                         order.finishedMs = QDateTime(QDate(2026, 10, 3), QTime::fromString(snapshot_.clock, QStringLiteral("HH:mm"))).toMSecsSinceEpoch();
                         device.busy = false; device.jobId.clear(); device.printed = 0; device.total = 0;
                         emit feedback(QStringLiteral("样例：%1 已打印完成，等待取件。").arg(order.id), false);
@@ -132,28 +174,28 @@ void MerchantData::seedShowcase() {
     snapshot_.connection = QStringLiteral("本地交互样例 · 不连接真实后台");
     const QDate date(2026, 10, 3);
     const auto time = [date](const QString& text) { return QDateTime(date, QTime::fromString(text, QStringLiteral("HH:mm"))).toMSecsSinceEpoch(); };
-    const auto add = [&](QString id, QString title, int pages, bool color, bool duplex, bool a3, QString service,
+    const auto add = [&](QString id, QString title, int pages, bool color, bool duplex, bool a3, cps::ServiceTier service,
                          qint64 amount, QString pickup, int printer) {
         Order order;
         order.id = std::move(id); order.title = std::move(title); order.pages = pages;
-        order.color = color; order.duplex = duplex; order.a3 = a3; order.service = std::move(service);
+        order.color = color; order.duplex = duplex; order.a3 = a3; order.service = service;
         order.amountCents = amount; order.pickupTime = std::move(pickup); order.deadlineMs = time(order.pickupTime);
         order.student = QStringLiteral("202400000%1").arg(snapshot_.orders.size() + 1);
         order.printer = printer; order.submittedMs = time(QStringLiteral("10:18"));
         snapshot_.orders.append(order);
     };
-    add(QStringLiteral("P1024"), QStringLiteral("操作系统实验报告.pdf"), 8, true, true, false, QStringLiteral("普通"), 1140, QStringLiteral("10:32"), 1);
-    add(QStringLiteral("P1025"), QStringLiteral("英语课程论文.docx"), 12, false, true, false, QStringLiteral("快速"), 540, QStringLiteral("10:35"), 0);
-    add(QStringLiteral("P1026"), QStringLiteral("高等数学复习资料.pdf"), 24, false, true, false, QStringLiteral("灵活"), 720, QStringLiteral("11:00"), 0);
-    add(QStringLiteral("P1027"), QStringLiteral("社团活动海报.pdf"), 2, true, false, true, QStringLiteral("普通"), 600, QStringLiteral("10:45"), 1);
-    add(QStringLiteral("P1028"), QStringLiteral("课程设计说明书.pdf"), 16, false, true, false, QStringLiteral("快速"), 720, QStringLiteral("10:40"), 0);
-    add(QStringLiteral("P1029"), QStringLiteral("毕业论文终稿.pdf"), 32, false, true, false, QStringLiteral("普通"), 960, QStringLiteral("10:50"), -1);
+    add(QStringLiteral("P1024"), QStringLiteral("操作系统实验报告.pdf"), 8, true, true, false, cps::ServiceTier::Standard, 1140, QStringLiteral("10:32"), 1);
+    add(QStringLiteral("P1025"), QStringLiteral("英语课程论文.docx"), 12, false, true, false, cps::ServiceTier::Express, 540, QStringLiteral("10:35"), 0);
+    add(QStringLiteral("P1026"), QStringLiteral("高等数学复习资料.pdf"), 24, false, true, false, cps::ServiceTier::Flexible, 720, QStringLiteral("11:00"), 0);
+    add(QStringLiteral("P1027"), QStringLiteral("社团活动海报.pdf"), 2, true, false, true, cps::ServiceTier::Standard, 600, QStringLiteral("10:45"), 1);
+    add(QStringLiteral("P1028"), QStringLiteral("课程设计说明书.pdf"), 16, false, true, false, cps::ServiceTier::Express, 720, QStringLiteral("10:40"), 0);
+    add(QStringLiteral("P1029"), QStringLiteral("毕业论文终稿.pdf"), 32, false, true, false, cps::ServiceTier::Standard, 960, QStringLiteral("10:50"), -1);
     const QStringList students{QStringLiteral("2024000001"), QStringLiteral("2024000018"), QStringLiteral("2024000032"),
         QStringLiteral("2024000056"), QStringLiteral("2024000071"), QStringLiteral("2024000086")};
     for (int i = 0; i < students.size(); ++i) snapshot_.orders[i].student = students[i];
     snapshot_.orders.move(4, 2);
-    add(QStringLiteral("P1022"), QStringLiteral("实验资料汇编.pdf"), 24, false, true, false, QStringLiteral("普通"), 720, QStringLiteral("10:30"), 0);
-    snapshot_.orders.last().state = QStringLiteral("打印中"); snapshot_.orders.last().printed = 18;
+    add(QStringLiteral("P1022"), QStringLiteral("实验资料汇编.pdf"), 24, false, true, false, cps::ServiceTier::Standard, 720, QStringLiteral("10:30"), 0);
+    snapshot_.orders.last().state = OrderState::Printing; snapshot_.orders.last().printed = 18;
     const std::array<int, 4> groups{{7, 11, 13, 10}};
     const std::array<qint64, 4> totals{{4240, 8860, 10680, 8900}};
     const QStringList titles{QStringLiteral("课堂讲义.pdf"), QStringLiteral("课程复习资料.pdf"), QStringLiteral("实验记录.pdf"), QStringLiteral("活动手册.pdf")};
@@ -165,8 +207,8 @@ void MerchantData::seedShowcase() {
             order.student = QStringLiteral("样例客户 %1").arg(historyIndex + 1);
             order.pages = historyIndex == 40 ? 26 : 12; order.color = historyIndex < 8;
             order.printer = order.color ? 1 : 0; order.printed = order.pages;
-            order.state = historyIndex < 12 ? QStringLiteral("待取件") : QStringLiteral("已完成");
-            order.service = historyIndex < 10 ? QStringLiteral("快速") : historyIndex < 34 ? QStringLiteral("普通") : QStringLiteral("灵活");
+            order.state = historyIndex < 12 ? OrderState::Ready : OrderState::Completed;
+            order.service = historyIndex < 10 ? cps::ServiceTier::Express : historyIndex < 34 ? cps::ServiceTier::Standard : cps::ServiceTier::Flexible;
             order.amountCents = totals[group] / groups[group] + (row < totals[group] % groups[group] ? 1 : 0);
             const QTime finished(7 + group, group == 3 ? row * 2 : row * 4);
             order.finishedMs = QDateTime(date, finished).toMSecsSinceEpoch(); order.submittedMs = order.finishedMs - 252000;
@@ -188,10 +230,15 @@ void MerchantData::apply(const ViewState& state) {
     lastState_ = state;
     Snapshot next;
     next.connected = state.connected; next.paused = state.paused; next.connection = state.connection;
+    next.demoAvailable = options_.demoMode && state.connected && state.demoAvailable && state.shop.value("shop_enabled").toBool();
     const auto now = QDateTime::currentDateTime();
     next.date = now.toString(QStringLiteral("yyyy年M月d日")); next.clock = now.toString(QStringLiteral("HH:mm"));
     next.clearMinutes = state.queueClearMs >= state.nowMs
         ? static_cast<int>(std::ceil(static_cast<double>(state.queueClearMs - state.nowMs) / 60000.0)) : -1;
+    next.policy = state.shop.value(QStringLiteral("policy")).toString();
+    next.stockA4 = state.shop.value(QStringLiteral("stock_a4")).toInt(-1);
+    next.stockA3 = state.shop.value(QStringLiteral("stock_a3")).toInt(-1);
+    const TimeMs forecastNow = text::forecastNow(state);
     QHash<QString, QJsonObject> raw;
     for (const auto& value : state.shop.value(QStringLiteral("jobs")).toArray()) {
         const auto object = value.toObject(); raw.insert(object.value(QStringLiteral("job_id")).toString(), object);
@@ -212,12 +259,16 @@ void MerchantData::apply(const ViewState& state) {
             order.printer = object.value(QStringLiteral("slot")).toInt(job.printer);
         order.color = object.value(QStringLiteral("color")).toBool();
         order.duplex = object.value(QStringLiteral("duplex")).toBool(); order.a3 = object.value(QStringLiteral("paper")).toString() == QLatin1String("a3");
-        order.service = serviceText(object.value(QStringLiteral("service")).toString()); order.state = stateText(job.state);
+        order.service = serviceFromName(object.value(QStringLiteral("service")).toString());
+        order.state = orderState(job.state);
         order.amountCents = job.quotedCents; order.deadlineMs = static_cast<qint64>(object.value(QStringLiteral("deadline_ms")).toDouble());
         order.submittedMs = static_cast<qint64>(object.value(QStringLiteral("submitted_ms")).toDouble());
         order.finishedMs = static_cast<qint64>(object.value(QStringLiteral("finished_ms")).toDouble());
-        order.pickupTime = order.deadlineMs > 0 ? QDateTime::fromMSecsSinceEpoch(order.deadlineMs).toString(QStringLiteral("HH:mm")) : QStringLiteral("—");
+        order.pickupTime = pickupText(order.deadlineMs, now.date());
         order.estimatedMinutes=printedState(order)?0:job.estimatedFinishMs>=state.nowMs&&!(state.paused&&job.state==JobState::Queued)?static_cast<int>((job.estimatedFinishMs-state.nowMs+59999)/60000):-1;
+        order.blocked = job.blocked; order.ahead = job.ahead;
+        if (job.state == JobState::Queued && job.estimatedStartMs >= 0)
+            order.startInMs = std::max<qint64>(0, job.estimatedStartMs - forecastNow);
         // Existing IPC contains metadata only; no uploaded source path is available.
         if (printedState(order)) order.printed = faces(order);
         orders.insert(order.id, order);
@@ -245,20 +296,19 @@ void MerchantData::apply(const ViewState& state) {
 
 void MerchantData::recount() {
     snapshot_.todayOrders = 0; snapshot_.waiting = 0; snapshot_.printing = 0; snapshot_.ready = 0; snapshot_.completed = 0;
+    snapshot_.closed = 0; snapshot_.blocked = 0;
     snapshot_.printedPages = 0; snapshot_.blackPages = 0; snapshot_.colorPages = 0; snapshot_.revenueCents = 0;
-    snapshot_.averageMinutes = 0; snapshot_.serviceCounts = {{0, 0, 0}};
-    for (auto& device : snapshot_.devices) { device.queued = 0; device.todayPages = 0; }
+    snapshot_.averageMinutes = -1; snapshot_.serviceCounts = {{0, 0, 0}};
+    for (auto& device : snapshot_.devices) { device.queued = 0; device.todayPages = 0; device.todayOrders = 0; }
     const auto now = snapshot_.showcase ? QDateTime(QDate(2026, 10, 3), QTime(10, 24)) : QDateTime::currentDateTime();
     const auto customDate = QDate::fromString(range_, Qt::ISODate);
     const qint64 begin = rangeStart(range_, now);
     const qint64 end = customDate.isValid() ? QDateTime(customDate.addDays(1), QTime(0, 0)).toMSecsSinceEpoch()-1 : now.toMSecsSinceEpoch();
     snapshot_.rangeLabel=range_=="today"?QStringLiteral("今日"):range_=="week"?QStringLiteral("本周"):range_=="month"?QStringLiteral("本月"):QStringLiteral("指定日");
     snapshot_.rangeDate=customDate.isValid()?customDate.toString(QStringLiteral("yyyy年M月d日")):snapshot_.date;
-    snapshot_.hourlyLabels = {QStringLiteral("06"), QStringLiteral("07"), QStringLiteral("08"), QStringLiteral("09"), QStringLiteral("10")};
-    if (!snapshot_.showcase) {
-        snapshot_.hourlyLabels.clear();
-        for (int hour = 0; hour < 24; ++hour) snapshot_.hourlyLabels.append(QStringLiteral("%1").arg(hour, 2, 10, QLatin1Char('0')));
-    }
+    // Bucket by hour of day; the chart later trims to opening hours plus any hour with revenue.
+    snapshot_.hourlyLabels.clear();
+    for (int hour = 0; hour < 24; ++hour) snapshot_.hourlyLabels.append(QStringLiteral("%1").arg(hour, 2, 10, QLatin1Char('0')));
     snapshot_.hourlyRevenue.fill(0, snapshot_.hourlyLabels.size());
     QHash<QString, qint64> refunds;
     if (!snapshot_.showcase) for (const auto& job : lastState_.jobs) refunds.insert(job.id, job.refundCents);
@@ -275,11 +325,7 @@ void MerchantData::recount() {
         financial.quotedCents = order.amountCents;
         financial.refundCents = order.refundCents;
         financial.costCents = order.costCents;
-        financial.state = printedState(order) ? JobState::Completed :
-            order.state == QStringLiteral("打印中") ? JobState::Running :
-            order.state == QStringLiteral("取消中") ? JobState::Cancelling :
-            order.state == QStringLiteral("已取消") ? JobState::Cancelled :
-            order.state == QStringLiteral("失败") ? JobState::Failed : JobState::Queued;
+        financial.state = jobState(order.state);
         if (snapshot_.showcase) {
             financial.pages = order.pages; financial.copies = order.copies;
             financial.paper = order.a3 ? PaperSize::A3 : PaperSize::A4;
@@ -290,15 +336,17 @@ void MerchantData::recount() {
             financial.costCents = cps::directCost(financial, printer);
         }
         financialJobs.push_back(financial);
-        if (order.state == QStringLiteral("待打印")) ++snapshot_.waiting;
-        if (order.state == QStringLiteral("打印中") || order.state == QStringLiteral("取消中")) ++snapshot_.printing;
-        if (order.state == QStringLiteral("待取件")) ++snapshot_.ready;
-        if (order.state == QStringLiteral("已完成")) ++snapshot_.completed;
-        if (order.printer >= 0 && order.printer < snapshot_.devices.size() && order.state == QStringLiteral("待打印")) ++snapshot_.devices[order.printer].queued;
+        if (order.state == OrderState::Waiting) ++snapshot_.waiting;
+        if (isActive(order.state)) ++snapshot_.printing;
+        if (order.state == OrderState::Ready) ++snapshot_.ready;
+        if (order.state == OrderState::Completed) ++snapshot_.completed;
+        if (isClosed(order.state)) ++snapshot_.closed;
+        if (order.state == OrderState::Waiting && !order.blocked.isEmpty()) ++snapshot_.blocked;
+        if (order.printer >= 0 && order.printer < snapshot_.devices.size() && order.state == OrderState::Waiting) ++snapshot_.devices[order.printer].queued;
         const bool submittedInRange = order.submittedMs >= begin && order.submittedMs <= end;
         if (submittedInRange) {
             ++snapshot_.todayOrders;
-            const int service = order.service == QStringLiteral("快速") ? 0 : order.service == QStringLiteral("灵活") ? 2 : 1;
+            const int service = order.service == cps::ServiceTier::Express ? 0 : order.service == cps::ServiceTier::Flexible ? 2 : 1;
             ++snapshot_.serviceCounts[static_cast<std::size_t>(service)];
         }
         const bool completedInRange = printedState(order) && order.finishedMs >= begin && order.finishedMs <= end;
@@ -309,7 +357,10 @@ void MerchantData::recount() {
         const bool completedToday = printedState(order) && order.finishedMs >= todayBegin && order.finishedMs <= end;
         const bool submittedToday = order.submittedMs >= todayBegin && order.submittedMs <= end;
         const int deviceTodayCount = completedToday ? faces(order) : submittedToday && !printedState(order) ? order.printed : 0;
-        if (order.printer >= 0 && order.printer < snapshot_.devices.size()) snapshot_.devices[order.printer].todayPages += deviceTodayCount;
+        if (order.printer >= 0 && order.printer < snapshot_.devices.size()) {
+            snapshot_.devices[order.printer].todayPages += deviceTodayCount;
+            if (completedToday) ++snapshot_.devices[order.printer].todayOrders;
+        }
         if (!completedInRange) continue;
         const qint64 revenue = order.amountCents - refunds.value(order.id);
         snapshot_.revenueCents += revenue;
@@ -321,11 +372,20 @@ void MerchantData::recount() {
         }
     }
     if (turnaroundCount > 0) snapshot_.averageMinutes = turnaroundMs / (60000.0 * turnaroundCount);
+    // Opening hours 06–23 (the status bar's 06:00 - 23:00), widened to any hour with revenue.
+    // The showcase keeps the concept's 06–10 morning.
+    int first = 6, last = snapshot_.showcase ? 10 : 23;
+    for (int hour = 0; hour < 24; ++hour) {
+        if (snapshot_.hourlyRevenue[hour] <= 0) continue;
+        first = std::min(first, hour); last = std::max(last, hour);
+    }
+    snapshot_.hourlyLabels = snapshot_.hourlyLabels.mid(first, last - first + 1);
+    snapshot_.hourlyRevenue = snapshot_.hourlyRevenue.mid(first, last - first + 1);
     snapshot_.business = cps::shopMetrics(financialJobs, begin, end);
     if (snapshot_.showcase) {
         int remaining = 0;
         for(const auto& order:snapshot_.orders)
-            if(order.state==QStringLiteral("待打印")||order.state==QStringLiteral("打印中"))remaining+=std::max(0,faces(order)-order.printed);
+            if(order.state==OrderState::Waiting||order.state==OrderState::Printing)remaining+=std::max(0,faces(order)-order.printed);
         snapshot_.clearMinutes = (remaining + 8) / 9; // Sample aggregate throughput: nine faces/minute.
     }
 }
@@ -337,6 +397,16 @@ bool MerchantData::setOrderCover(const QString& id,const QImage& image) {
 }
 
 void MerchantData::execute(const QString& action, const QString& value) {
+    if (action == QLatin1String("demo-clear-orders")) {
+        if (!snapshot_.demoAvailable) { emit feedback(QStringLiteral("仅演示模式可清空订单。"), true); return; }
+        QMetaObject::invokeMethod(controller_, &PrintController::clearDemoOrders, Qt::QueuedConnection);
+        return;
+    }
+    if (action == QLatin1String("demo-add-50")) {
+        if (!snapshot_.demoAvailable) { emit feedback(QStringLiteral("仅演示模式可加入演示订单。"), true); return; }
+        QMetaObject::invokeMethod(controller_, &PrintController::submitDemoBatch, Qt::QueuedConnection);
+        return;
+    }
     if (action == QLatin1String("refresh")) {
         if (snapshot_.showcase) { recount(); emit changed(); emit feedback(QStringLiteral("样例状态已刷新。"), false); }
         else QMetaObject::invokeMethod(controller_, &PrintController::checkConnection, Qt::QueuedConnection);
@@ -391,16 +461,16 @@ void MerchantData::execute(const QString& action, const QString& value) {
     } else if (action == QLatin1String("move-before")) {
         int source=-1,target=-1;
         for(int i=0;i<snapshot_.orders.size();++i){if(snapshot_.orders[i].id==fields.value(0))source=i;if(snapshot_.orders[i].id==fields.value(1))target=i;}
-        if(source<0||target<0||snapshot_.orders[source].state!=QStringLiteral("待打印")||snapshot_.orders[target].state!=QStringLiteral("待打印")||snapshot_.orders[source].printer!=snapshot_.orders[target].printer){fail(QStringLiteral("仅可拖动同设备的等待任务；跨设备请使用转移设备。"));return;}
+        if(source<0||target<0||snapshot_.orders[source].state!=OrderState::Waiting||snapshot_.orders[target].state!=OrderState::Waiting||snapshot_.orders[source].printer!=snapshot_.orders[target].printer){fail(QStringLiteral("仅可拖动同设备的等待任务；跨设备请使用转移设备。"));return;}
         if(source!=target){const auto moved=snapshot_.orders.takeAt(source);if(source<target)--target;snapshot_.orders.insert(target,moved);}
     } else if (action == QLatin1String("reorder") || action == QLatin1String("transfer") || action == QLatin1String("assign")) {
         int row = -1; for (int i = 0; i < snapshot_.orders.size(); ++i) if (snapshot_.orders[i].id == fields.value(0)) { row = i; break; }
-        if (row < 0 || snapshot_.orders[row].state != QStringLiteral("待打印")) { fail(QStringLiteral("仅可操作待打印订单。")); return; }
+        if (row < 0 || snapshot_.orders[row].state != OrderState::Waiting) { fail(QStringLiteral("仅可操作待打印订单。")); return; }
         if (action == QLatin1String("reorder")) {
             const int step = fields.value(1) == QLatin1String("up") ? -1 : fields.value(1) == QLatin1String("down") ? 1 : 0;
             if (step == 0) { fail(QStringLiteral("未知排序方向。")); return; }
             int other = row + step;
-            while (other >= 0 && other < snapshot_.orders.size() && (snapshot_.orders[other].state != QStringLiteral("待打印") || snapshot_.orders[other].printer != snapshot_.orders[row].printer)) other += step;
+            while (other >= 0 && other < snapshot_.orders.size() && (snapshot_.orders[other].state != OrderState::Waiting || snapshot_.orders[other].printer != snapshot_.orders[row].printer)) other += step;
             if (other < 0 || other >= snapshot_.orders.size()) { fail(QStringLiteral("订单已在当前设备队列边缘。")); return; }
             snapshot_.orders.swapItemsAt(row, other);
         } else {
@@ -416,8 +486,8 @@ void MerchantData::execute(const QString& action, const QString& value) {
         bool found = false;
         for (auto& order : snapshot_.orders) {
             if (order.id != value) continue;
-            if (action == QLatin1String("pickup") && order.state == QStringLiteral("待取件")) { order.state = QStringLiteral("已完成"); found = true; }
-            if (action == QLatin1String("cancel") && order.state == QStringLiteral("待打印")) { order.state = QStringLiteral("已取消"); found = true; }
+            if (action == QLatin1String("pickup") && order.state == OrderState::Ready) { order.state = OrderState::Completed; found = true; }
+            if (action == QLatin1String("cancel") && order.state == OrderState::Waiting) { order.state = OrderState::Cancelled; found = true; }
             break;
         }
         if (!found) { fail(QStringLiteral("订单状态不允许此操作。")); return; }
@@ -475,7 +545,7 @@ void MerchantData::exportReport(const QString& path) {
     }
     QJsonArray orders;
     for (const auto& order : snapshot_.orders) orders.append(QJsonObject{{QStringLiteral("job_id"), order.id}, {QStringLiteral("title"), order.title},
-        {QStringLiteral("customer"), order.student}, {QStringLiteral("state"), order.state}, {QStringLiteral("pages"), order.pages}, {QStringLiteral("copies"), order.copies},
+        {QStringLiteral("customer"), order.student}, {QStringLiteral("state"), stateLabel(order.state)}, {QStringLiteral("pages"), order.pages}, {QStringLiteral("copies"), order.copies},
         {QStringLiteral("printed_sheets"), order.printed}, {QStringLiteral("assigned_printer"), order.printer}, {QStringLiteral("quoted_cents"), static_cast<double>(order.amountCents)},
         {QStringLiteral("submitted_ms"), static_cast<double>(order.submittedMs)}, {QStringLiteral("finished_ms"), static_cast<double>(order.finishedMs)}});
     const QJsonObject report{{QStringLiteral("schema_version"), 1}, {QStringLiteral("mode"), QStringLiteral("merchant_showcase")},

@@ -6,10 +6,11 @@
 namespace cps::gui::merchant {
 
 struct DispatchDemoSelection {
-    int policy = 1;
+    int policy = 2;
     QString order;
     cps::TimeMs nowMs = 0;
     bool playing = false;
+    int orderOffset = 0;
 };
 
 // Paints the body only. The window owns navigation, footer, combo boxes and clock.

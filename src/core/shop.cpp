@@ -17,8 +17,8 @@ bool validTerms(const Job& j) {
          j.payment == PaymentMethod::Alipay || j.payment == PaymentMethod::CampusCard) && j.customer.size() <= 256;
 }
 bool validPrinter(const Printer& p) {
-    return !p.name.empty() && p.name.size() <= 200 && p.monoPageMs >= 10 && p.monoPageMs <= 5000 &&
-        p.colorPageMs >= 10 && p.colorPageMs <= 5000;
+    return !p.name.empty() && p.name.size() <= 200 && p.monoPageMs >= 10 && p.monoPageMs <= 12000 &&
+        p.colorPageMs >= 10 && p.colorPageMs <= 12000;
 }
 bool compatible(const Job& j, const Printer& p) {
     return p.online && (j.paper != PaperSize::A3 || p.a3) && (!j.color || p.color) && (!j.duplex || p.duplex);
@@ -31,11 +31,14 @@ TimeMs serviceWindowMs(ServiceTier tier) {
     }
     throw std::invalid_argument("unknown service tier");
 }
-void quote(Job& j) {
+void quote(Job& j, Pricing pricing) {
     if (j.pages < 1 || j.pages > 1000 || j.copies < 1 || j.copies > 100 || j.sheets() > 10000 ||
+        pricing.monoFaceCents < 1 || pricing.monoFaceCents > 150 ||
+        pricing.colorFaceCents < 1 || pricing.colorFaceCents > 150 ||
         j.submittedMs < 0 || j.submittedMs > MaxTimeMs - serviceWindowMs(j.service))
         throw std::invalid_argument("invalid order for quote");
-    j.baseCents = Money(j.sheets()) * (j.color ? 150 : 20) * (j.paper == PaperSize::A3 ? 2 : 1);
+    j.baseCents = Money(j.sheets()) * (j.color ? pricing.colorFaceCents : pricing.monoFaceCents) *
+        (j.paper == PaperSize::A3 ? 2 : 1);
     const int discount = j.service == ServiceTier::Express ? 100 : j.service == ServiceTier::Standard ? 95 : 85;
     j.quotedCents = (j.baseCents * discount + 50) / 100;
     // Duplex halves the paper the shop buys, so the saving is passed on as a
@@ -51,7 +54,7 @@ Money directCost(const Job& j, const Printer& p) {
         Money(j.sheets()) * (j.color ? 45 : p.color ? 7 : 5) * (j.paper == PaperSize::A3 ? 2 : 1);
 }
 std::vector<Printer> defaultFleet(TimeMs base) {
-    base = std::clamp<TimeMs>(base, 10, 1250);
+    base = std::clamp<TimeMs>(base, 10, 3000);
     return {{"黑白快印 01", false, false, true, true, base, base},
             {"黑白快印 02", false, false, true, true, base * 2, base * 2},
             {"黑白单面 03", false, false, false, true, base * 3, base * 3},

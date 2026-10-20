@@ -13,8 +13,8 @@ QString number(int value) { return QString::number(value); }
 QString supply(int value, const QString& unit) {
     return value < 0 ? QStringLiteral("未配置") : number(value) + unit;
 }
-QString deviceState(const Device& device) {
-    if (!device.online) return QStringLiteral("离线");
+QString deviceState(const Device& device, bool showcase) {
+    if (!device.online) return showcase ? QStringLiteral("离线") : QStringLiteral("停止接单");
     if (!device.enabled) return QStringLiteral("暂停");
     return device.busy ? QStringLiteral("打印中") : QStringLiteral("空闲");
 }
@@ -22,6 +22,44 @@ double fraction(int value, int total) {
     return total > 0 ? std::clamp(static_cast<double>(value) / total, 0.0, 1.0) : 0.0;
 }
 QString percent(double value) { return QString::number(value * 100.0, 'f', 0) + QStringLiteral("%"); }
+// Shared backend stock below about one twentieth of the default supply.
+constexpr int lowA4 = 500, lowA3 = 150;
+int lowStock(const Snapshot& state) {
+    return (state.stockA4 >= 0 && state.stockA4 < lowA4 ? 1 : 0) + (state.stockA3 >= 0 && state.stockA3 < lowA3 ? 1 : 0);
+}
+QString stockText(const Snapshot& state) {
+    if (state.stockA4 < 0) return QStringLiteral("库存未知");
+    return QStringLiteral("A4 %1 张 · A3 %2 张").arg(state.stockA4).arg(state.stockA3);
+}
+QString jobTitle(const Snapshot& state, const QString& id) {
+    for (const Order& order : state.orders) if (order.id == id) return order.title;
+    return {};
+}
+// The live backend reports capability and progress per slot; paper is one shared stock.
+void liveCardDetails(Painter& d, const Snapshot& state, const Device& device, qreal x, qreal taskY, qreal w) {
+    d.text(x + 22, taskY, 87, 30, QStringLiteral("当前任务"), 14, navy, true);
+    if (device.busy) {
+        const QString title = jobTitle(state, device.jobId);
+        d.text(x + 103, taskY, w - 240, 30, title.isEmpty() ? device.jobId : device.jobId + QStringLiteral(" · ") + title, 14);
+        d.text(x + w - 130, taskY, 108, 30, QStringLiteral("%1 / %2 页").arg(device.printed).arg(device.total), 14, faded, false, false, Qt::AlignRight | Qt::AlignVCenter);
+        const double ratio = fraction(device.printed, device.total);
+        d.progress({x + 22, taskY + 40, w - 100, 12}, ratio, blue);
+        d.text(x + w - 70, taskY + 30, 48, 31, percent(ratio), 14, faded, false, false, Qt::AlignRight | Qt::AlignVCenter);
+    } else {
+        d.text(x + 103, taskY, w - 125, 30, device.online ? QStringLiteral("空闲") : QStringLiteral("已停止接单"), 14, faded);
+        d.text(x + 22, taskY + 30, w - 44, 31, device.online ? QStringLiteral("后台会按当前策略自动派发兼容订单")
+               : QStringLiteral("恢复接单后才会领取新订单"), 13, faded);
+    }
+    d.rule(x + 22, taskY + 70, w - 44);
+    d.text(x + 22, taskY + 81, 90, 31, QStringLiteral("打印能力"), 14, navy, true);
+    const QStringList labels{QStringLiteral("A4"), QStringLiteral("A3"), device.color ? QStringLiteral("彩色") : QStringLiteral("黑白"),
+                             device.duplex ? QStringLiteral("双面") : QStringLiteral("单面")};
+    for (int i = 0; i < labels.size(); ++i)
+        d.chip({x + 112 + i * 60, taskY + 84, 52, 25}, labels[i], i != 1 || device.a3);
+    d.text(x + 22, taskY + 117, w - 44, 30, QStringLiteral("纸张来自店铺共享纸库"), 13, faded);
+    d.text(x + 22, taskY + 117, w - 44, 30, QStringLiteral("今日 %1 页 · 完成 %2 单").arg(device.todayPages).arg(device.todayOrders),
+           13, navy, false, false, Qt::AlignRight | Qt::AlignVCenter);
+}
 void vertical(Painter& d, qreal x, qreal y, qreal h) {
     d.p.save(); d.p.setPen(QPen(ruleColor, 1)); d.p.drawLine(QPointF(x, y), QPointF(x, y + h)); d.p.restore();
 }
@@ -52,7 +90,7 @@ void deviceCard(Painter& d, const Snapshot& state, const Device& device,
     const qreal nameWidth=std::min(QFontMetricsF(merchantFont(18,true)).horizontalAdvance(device.name)+2,w-164);
     d.text(x+22,y+12,nameWidth,40,device.name,18,navy,true);
     // Optical centering compensates for the 14px status beside an 18px name.
-    d.dot(x+22+nameWidth+18,y+31.5,deviceState(device),device.online&&device.enabled?green:slate);
+    d.dot(x+22+nameWidth+18,y+31.5,deviceState(device,state.showcase),device.online&&device.enabled?green:slate);
     d.hit(card.adjusted(3,3,-3,-3),QStringLiteral("select-device"),number(device.index),device.name);
     const QRectF imageArea(x + (w - 360) / 2, y + 58, 360, 174 + extra);
     QSizeF imageSize=device.color ? QSizeF(251,185) : QSizeF(297,179);
@@ -60,6 +98,7 @@ void deviceCard(Painter& d, const Snapshot& state, const Device& device,
     const QRectF image(imageArea.center()-QPointF(imageSize.width()/2,imageSize.height()/2),imageSize);
     d.art(device.color ? QStringLiteral("printer-color") : QStringLiteral("printer-black"), image);
 
+    if (!state.showcase) { liveCardDetails(d, state, device, x, taskY, w); return; }
     if (device.color) {
         d.text(x + 21, taskY - 2, w - 145, 29,
                device.busy ? QStringLiteral("当前任务  ") + device.jobId :
@@ -114,7 +153,6 @@ void deviceCard(Painter& d, const Snapshot& state, const Device& device,
         supplyBar(d, {x + half + 50, y + 347 + extra, half - 12, 13}, toner, 100, toner >= 0 && toner < 20 ? red : navy);
         if (toner >= 0 && toner < 20) d.text(x + w - 146, y + 362 + extra, 122, 27, QStringLiteral("建议准备耗材"), 14, red, true, false, Qt::AlignRight | Qt::AlignVCenter);
     }
-    Q_UNUSED(state);
 }
 void drawToggle(Painter& d, QRectF rect, bool on, const QString& value) {
     d.panel(rect, on ? navy : track, on ? navy : track, rect.height() / 2);
@@ -134,28 +172,34 @@ void deviceDetails(Painter& d, const Snapshot& state, const Device* device) {
     const QString id = number(device->index);
     d.icon(QStringLiteral("printer"), 1180, 149, 42);
     d.text(1236, 151, 211, 40, device->name, 18, navy, true);
-    d.dot(1448, 172, device->online ? QStringLiteral("设备在线") : QStringLiteral("设备离线"), device->online ? green : slate);
+    const QString online = state.showcase ? QStringLiteral("设备在线") : QStringLiteral("接单中");
+    const QString offline = state.showcase ? QStringLiteral("设备离线") : QStringLiteral("停止接单");
+    d.dot(1448, 172, device->online ? online : offline, device->online ? green : slate);
     d.rule(1177, 215, 376);
     d.text(1177, 228, 250, 36, QStringLiteral("设备配置"), 16, navy, true);
     d.detailRow(272, QStringLiteral("支持纸张"), device->a3 ? QStringLiteral("A4 / A3") : QStringLiteral("A4"));
     d.detailRow(312, QStringLiteral("打印色彩"), device->color ? QStringLiteral("黑白 / 彩色") : QStringLiteral("黑白"));
     d.detailRow(352, QStringLiteral("双面打印"), device->duplex ? QStringLiteral("支持") : QStringLiteral("不支持"));
-    d.detailRow(393, QStringLiteral("默认纸盒"), device->paper < 0 ? QStringLiteral("未配置") : QStringLiteral("纸盒 1 · A4"));
+    if (state.showcase) d.detailRow(393, QStringLiteral("默认纸盒"), QStringLiteral("纸盒 1 · A4"));
+    else d.detailRow(393, QStringLiteral("纸张来源"), QStringLiteral("店铺共享纸库"));
     d.text(1177, 429, 175, 35, QStringLiteral("自动接单"), 14, faded);
     drawToggle(d, {1464, 434, 45, 25}, device->enabled, id);
     d.text(1516, 430, 40, 34, device->enabled ? QStringLiteral("开启") : QStringLiteral("关闭"), 14);
     d.rule(1177, 486, 376);
     d.text(1177, 503, 270, 40, QStringLiteral("当前任务"), 16, navy, true);
-    QString title;
-    for (const Order& order : state.orders) if (order.id == device->jobId) { title = order.title; break; }
-    const QString task = device->jobId.isEmpty() ? QStringLiteral("暂无打印任务") : device->jobId + (title.isEmpty() ? QString() : QStringLiteral(" · ") + title);
-    d.text(1177, 546, 292, 35, task, 14);
-    d.text(1470, 547, 82, 34, QStringLiteral("%1 / %2 页").arg(device->printed).arg(device->total), 14, navy, false, false, Qt::AlignRight | Qt::AlignVCenter);
-    const double ratio = fraction(device->printed, device->total);
-    d.progress({1177, 587, 333, 14}, ratio, blue);
-    d.text(1519, 578, 43, 33, percent(ratio), 12);
+    const QString title = jobTitle(state, device->jobId);
+    if (device->jobId.isEmpty()) {
+        d.text(1177, 546, 376, 35, QStringLiteral("暂无打印任务"), 14, faded);
+        d.text(1177, 578, 376, 33, device->online ? QStringLiteral("设备空闲，可接收新订单") : QStringLiteral("恢复接单后才会领取新订单"), 12, faded);
+    } else {
+        d.text(1177, 546, 292, 35, device->jobId + (title.isEmpty() ? QString() : QStringLiteral(" · ") + title), 14);
+        d.text(1470, 547, 82, 34, QStringLiteral("%1 / %2 页").arg(device->printed).arg(device->total), 14, navy, false, false, Qt::AlignRight | Qt::AlignVCenter);
+        const double ratio = fraction(device->printed, device->total);
+        d.progress({1177, 587, 333, 14}, ratio, blue);
+        d.text(1519, 578, 43, 33, percent(ratio), 12);
+    }
     d.rule(1177, 636, 376);
-    d.text(1177, 650, 280, 40, QStringLiteral("维护记录"), 16, navy, true);
+    d.text(1177, 650, 280, 40, state.showcase ? QStringLiteral("维护记录") : QStringLiteral("今日用量"), 16, navy, true);
     if (state.showcase) {
         d.text(1177, 699, 94, 35, QStringLiteral("10月1日"), 14, faded);
         d.text(1275, 699, 270, 35, QStringLiteral("清洁进纸滚轮"), 14, faded);
@@ -163,13 +207,18 @@ void deviceDetails(Painter& d, const Snapshot& state, const Device* device) {
         d.text(1177, 740, 94, 35, QStringLiteral("9月28日"), 14, faded);
         d.text(1275, 740, 270, 35, QStringLiteral("更换黑色墨粉"), 14, faded);
     } else {
-        d.text(1177, 699, 368, 64, QStringLiteral("暂无维护记录"), 14, faded);
+        d.detailRow(695, QStringLiteral("打印页数"), QStringLiteral("%1 页").arg(device->todayPages));
+        d.detailRow(735, QStringLiteral("完成订单"), QStringLiteral("%1 单").arg(device->todayOrders));
     }
     d.rule(1177, 798, 376);
-    d.text(1177, 807, 376, 35,
-           device->paper < 0 || device->toner[0] < 0 ? QStringLiteral("尚未接入设备耗材遥测。") : QStringLiteral("耗材充足时，设备可持续接单。"), 14, faded);
     d.button({1177, 872, 178, 48}, QStringLiteral("设备设置"), QStringLiteral("device-settings"), id);
-    d.button({1371, 872, 182, 48}, QStringLiteral("打印测试页"), QStringLiteral("test-page"), id, true);
+    if (state.showcase) {
+        d.text(1177, 807, 376, 35, QStringLiteral("耗材充足时，设备可持续接单。"), 14, faded);
+        d.button({1371, 872, 182, 48}, QStringLiteral("打印测试页"), QStringLiteral("test-page"), id, true);
+        return;
+    }
+    d.text(1177, 807, 376, 35, QStringLiteral("共享纸库：") + stockText(state), 14, lowStock(state) > 0 ? red : faded);
+    d.button({1371, 872, 182, 48}, QStringLiteral("补充纸张"), QStringLiteral("restock"), id, true);
 }
 QPainterPath receiptPath(QRectF rect) {
     QPainterPath path;
@@ -255,7 +304,11 @@ void revenueChart(Painter& d, const Snapshot& state) {
     const QRectF plot(96, 400, 997, 181);
     double maximum = 0;
     for (double value : state.hourlyRevenue) maximum = std::max(maximum, value);
-    const double ceiling = std::max(120.0, std::ceil(maximum / 40.0) * 40.0);
+    // Three gridline steps of 1, 2, 4 or 5 × 10ⁿ yuan, the smallest that fits the peak.
+    double step = 1;
+    for (double scale = 1; step * 3 < maximum; scale *= 10)
+        for (double factor : {1.0, 2.0, 4.0, 5.0}) { step = factor * scale; if (step * 3 >= maximum) break; }
+    const double ceiling = step * 3;
     d.p.save();
     QPen grid(QColor("#DFE3EB"), 1); grid.setDashPattern({4, 3});
     for (int i = 0; i < 4; ++i) {
@@ -267,7 +320,7 @@ void revenueChart(Painter& d, const Snapshot& state) {
     d.p.drawLine(plot.bottomLeft(), plot.topLeft());
     d.p.drawLine(plot.bottomLeft(), QPointF(plot.right() + 22, plot.bottom()));
     const qsizetype count = state.hourlyRevenue.size();
-    if (count == 0) {
+    if (count == 0 || maximum <= 0) {
         d.text(plot.x(), plot.y() + 48, plot.width(), 64, QStringLiteral("暂无营业数据"), 16, faded, false, false, Qt::AlignCenter);
         d.p.restore(); return;
     }
@@ -290,7 +343,7 @@ void revenueChart(Painter& d, const Snapshot& state) {
         if (i != peak && (count<=6||i%(std::max(1,int((count+5)/6)))==0)) {
             const QString amount = QStringLiteral("¥") + QString::number(state.hourlyRevenue[i], 'f', state.hourlyRevenue[i] == 0 ? 0 : 2);
             const qreal labelX = std::clamp(points[i].x() - 54, plot.left(), plot.right() - 96);
-            d.text(labelX, points[i].y() - 32, 108, 27, amount, 14, navy, false, false, Qt::AlignCenter);
+            if (state.hourlyRevenue[i] > 0) d.text(labelX, points[i].y() - 32, 108, 27, amount, 14, navy, false, false, Qt::AlignCenter);
         }
     }
     const QPointF peakPoint = points[peak];
@@ -368,7 +421,7 @@ void breakdown(Painter& d, const Snapshot& state) {
     for (int i = 0; i < 3; ++i) d.p.drawLine(QPointF(1188 + i * 9, 779), QPointF(1188 + i * 9, 764 - i * 6));
     d.p.restore();
     const int promised=state.business.onTime+state.business.late;
-    d.text(1238, 750, 315, 40,promised>0 ? QStringLiteral("按时完成率 %1%").arg(QString::number(100.0*state.business.onTime/promised,'f',1)) : QStringLiteral("暂无有取件期限的完成订单"),14,navy,true);
+    d.text(1238, 750, 315, 40,promised>0 ? QStringLiteral("按时完成率 %1%").arg(QString::number(100.0*state.business.onTime/promised,'f',1)) : QStringLiteral("暂无带取件期限的完成订单"),14,navy,true);
     d.rule(1175, 795, 375);
     d.p.save(); d.p.setPen(QPen(navy, 2)); d.p.setBrush(Qt::NoBrush); d.p.drawEllipse(QRectF(1181, 811, 26, 26));
     QPainterPath pie; pie.moveTo(1194, 824); pie.lineTo(1194, 809); pie.arcTo({1179, 809, 30, 30}, 90, -90); pie.closeSubpath(); d.p.setBrush(blue); d.p.drawPath(pie); d.p.restore();
@@ -388,7 +441,9 @@ void paintDevices(Painter& d, const Snapshot& state, const Selection& selection)
         for (int toner : device.toner) low = low || (toner >= 0 && toner < 20);
         if (low) { ++alerts; if (lowDevice < 0) lowDevice = device.index; }
     }
-    const QStringList labels{QStringLiteral("已连接"), QStringLiteral("打印中"), QStringLiteral("空闲"), QStringLiteral("耗材提醒")};
+    if (!state.showcase) alerts = lowStock(state);
+    const QStringList labels{state.showcase ? QStringLiteral("已连接") : QStringLiteral("接单中"), QStringLiteral("打印中"), QStringLiteral("空闲"),
+                             state.showcase ? QStringLiteral("耗材提醒") : QStringLiteral("纸张提醒")};
     const std::array<int, 4> values{{connected, printing, idle, alerts}};
     for (int i = 0; i < 4; ++i)
         d.heroMetric(i,labels[i],number(values[static_cast<std::size_t>(i)]),i==3&&alerts>0?red:navy);
@@ -418,21 +473,31 @@ void paintDevices(Painter& d, const Snapshot& state, const Selection& selection)
     d.panel({40, 877, 1081, 51}, QColor("#FCF6ED"), QColor("#EEE8DE"), 6);
     d.icon(QStringLiteral("printer"), 65, 887, 31);
     QString reminder = QStringLiteral("耗材状态正常，设备可持续接单。");
-    if (lowDevice >= 0) {
+    if (!state.showcase) {
+        reminder = QStringLiteral("店铺共享纸库：") + stockText(state);
+        if (state.stockA4 >= 0 && state.stockA4 < lowA4) reminder = QStringLiteral("A4 纸张仅剩 %1 张，建议尽快补充。").arg(state.stockA4);
+        else if (state.stockA3 >= 0 && state.stockA3 < lowA3) reminder = QStringLiteral("A3 纸张仅剩 %1 张，建议尽快补充。").arg(state.stockA3);
+    } else if (lowDevice >= 0) {
         for (const Device& device : state.devices) if (device.index == lowDevice) {
             const int toner = *std::min_element(device.toner.begin(), device.toner.end(), [](int a, int b) { return (a < 0 ? 101 : a) < (b < 0 ? 101 : b); });
             reminder = device.name + (toner >= 0 && toner < 20 ? QStringLiteral(" 的墨粉剩余 %1%，建议提前备货。").arg(toner) : QStringLiteral(" 的纸张余量较低，建议提前补充。"));
             break;
         }
-    } else if (selected && selected->paper < 0) reminder = QStringLiteral("后台提供共享纸张库存，尚未提供每台设备的耗材遥测。");
-    d.text(119, 883, 865, 39, reminder, 14, navy, true);
-    d.text(1015, 882, 74, 39, QStringLiteral("查看耗材"), 14, faded); smallArrow(d, 1093, 896, faded);
-    d.hit({995, 877, 126, 51}, QStringLiteral("restock"), lowDevice < 0 && selected ? number(selected->index) : number(lowDevice), QStringLiteral("查看耗材"));
+    }
+    d.text(119, 883, 865, 39, reminder, 14, alerts > 0 && !state.showcase ? red : navy, true);
+    const QString restock = state.showcase ? QStringLiteral("查看耗材") : QStringLiteral("补充纸张");
+    d.text(1015, 882, 74, 39, restock, 14, faded); smallArrow(d, 1093, 896, faded);
+    d.hit({995, 877, 126, 51}, QStringLiteral("restock"), lowDevice < 0 && selected ? number(selected->index) : number(lowDevice), restock);
     deviceDetails(d, state, selected);
 }
 
+// No completed order in the range: show a dash rather than a zero-minute average.
+QString averageText(const Snapshot& state) {
+    return state.averageMinutes < 0 ? QStringLiteral("—") : QString::number(state.averageMinutes, 'f', 1);
+}
+
 StatsMetricLayout statsMetricLayout(const Snapshot& state) {
-    const QStringList values{money(state.revenueCents),number(state.todayOrders),number(state.printedPages),QString::number(state.averageMinutes,'f',1)};
+    const QStringList values{money(state.revenueCents),number(state.todayOrders),number(state.printedPages),averageText(state)};
     const QStringList labels{state.rangeLabel+QStringLiteral("营业额"),QStringLiteral("订单总数"),QStringLiteral("打印页数"),QStringLiteral("平均完成")};
     const QFontMetricsF labelMetrics(merchantFont(14));
     const qreal unitWidth=QFontMetricsF(merchantFont(14,true)).horizontalAdvance(QStringLiteral("分钟"))+8;
@@ -469,12 +534,12 @@ void paintStats(Painter& d, const Snapshot& state, const Selection& selection) {
     d.text(59,159,650,37,QStringLiteral("把每一份打印，记成清楚的账。"),21,faded);
     const auto layout=statsMetricLayout(state);
     const QStringList labels{state.rangeLabel+QStringLiteral("营业额"),QStringLiteral("订单总数"),QStringLiteral("打印页数"),QStringLiteral("平均完成")};
-    const QStringList values{money(state.revenueCents),number(state.todayOrders),number(state.printedPages),QString::number(state.averageMinutes,'f',1)};
+    const QStringList values{money(state.revenueCents),number(state.todayOrders),number(state.printedPages),averageText(state)};
     for (int i=0;i<4;++i) {
         const QRectF column=layout.columns[static_cast<std::size_t>(i)];
         d.text(column.x(),206,column.width(),27,labels[i],14,faded);
         d.text(column.x(),235,column.width(),43,values[i],layout.valueSize,navy,true);
-        if (i==3) {
+        if (i==3 && state.averageMinutes>=0) {
             const QFontMetricsF valueMetrics(merchantFont(layout.valueSize,true)),unitMetrics(merchantFont(14,true));
             const qreal offset=(valueMetrics.ascent()-valueMetrics.descent()-unitMetrics.ascent()+unitMetrics.descent())/2;
             d.text(column.x()+valueMetrics.horizontalAdvance(values[i])+8,235+offset,unitMetrics.horizontalAdvance(QStringLiteral("分钟"))+2,43,QStringLiteral("分钟"),14,navy,true);

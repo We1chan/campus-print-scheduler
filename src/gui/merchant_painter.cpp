@@ -95,7 +95,10 @@ void Painter::heroMetric(int column,const QString& label,const QString& value,QC
     if(column<3){const std::array<qreal,3> dividers{{205,431,666}};p.save();p.setPen(QPen(ruleColor,1.4));p.drawLine(QPointF(dividers[static_cast<std::size_t>(column)],211),QPointF(dividers[static_cast<std::size_t>(column)],267));p.restore();}
 }
 void Painter::panel(QRectF r,QColor fill,QColor border,qreal radius) { p.setPen(QPen(border,1));p.setBrush(fill);p.drawRoundedRect(r,radius,radius);p.setBrush(Qt::NoBrush); }
-void Painter::hit(QRectF r,const QString& action,const QString& value,const QString& label) {hits.push_back({r,action,value,label.isEmpty()?action:label});}
+// Hits are recorded with the painter's current transform, so a page painted
+// under any scale or offset places its buttons over what was drawn.
+void Painter::record(Hit hit) {hit.bounds=p.transform().mapRect(hit.rect);hits.push_back(hit);}
+void Painter::hit(QRectF r,const QString& action,const QString& value,const QString& label) {record({r,action,value,label.isEmpty()?action:label});}
 void Painter::button(QRectF r,const QString& label,const QString& action,const QString& value,bool primary) {
     const bool enabled=showcase_||!requiresShowcase(action);
     const QColor fill=enabled?(primary?red:QColor(Qt::white)):(primary?QColor("#CFA097"):QColor("#F1F0ED"));
@@ -103,17 +106,40 @@ void Painter::button(QRectF r,const QString& label,const QString& action,const Q
     const int size=primary?21:16;
     const QColor ink=enabled?(primary?QColor(Qt::white):navy):(primary?QColor("#FFF7F4"):QColor("#A2A7B0"));
     text(r.x()+12,r.y(),r.width()-24,r.height(),label,size,ink,primary,false,Qt::AlignCenter);
-    hits.push_back({r,action,value,label,true,primary});
+    record({r,action,value,label,true,primary});
 }
 void Painter::pageButton(QRectF r,const QString& label,const QString& action,const QString& value,bool enabled) {
     if(enabled){button(r,label,action,value);return;}
     panel(r,QColor("#F7F8FA"),ruleColor,7);
     text(r.x(),r.y(),r.width(),r.height(),label,14,slate,false,false,Qt::AlignCenter);
-    hits.push_back({r,action,value,label,false,false,false});
+    record({r,action,value,label,false,false,false});
 }
 void Painter::badge(QRectF r,const QString& label,bool accent) {
     panel(r,accent?QColor("#FFF9F7"):QColor("#FAFBFD"),accent?red:QColor("#ADB7C8"),r.height()/2);
     text(r.x()+5,r.y(),r.width()-10,r.height(),label,15,accent?red:navy,false,false,Qt::AlignCenter);
+}
+void Painter::statusBadge(QRectF r,OrderState state) {
+    QColor fill("#FAFBFD"),border("#ADB7C8"),ink=navy;
+    switch(state) {
+    case OrderState::Waiting: break;
+    case OrderState::Printing:
+    case OrderState::Cancelling: fill=QColor("#EEF4FF");border=QColor("#A9C1E8");ink=QColor("#234A85");break;
+    case OrderState::Ready: fill=QColor("#EEF8F1");border=QColor("#9FD0B1");ink=green;break;
+    case OrderState::Completed: fill=QColor("#F4F5F7");border=QColor("#CDD2DA");ink=slate;break;
+    case OrderState::Cancelled:
+    case OrderState::Failed: fill=QColor("#FFF4F1");border=QColor("#EBB8AE");ink=QColor("#B8382A");break;
+    }
+    panel(r,fill,border,r.height()/2);
+    text(r.x()+5,r.y(),r.width()-10,r.height(),stateLabel(state),15,ink,false,false,Qt::AlignCenter);
+}
+void Painter::chip(QRectF r,const QString& label,bool on) {
+    panel(r,on?QColor("#F3F5F9"):Qt::white,on?QColor("#D5DBE5"):ruleColor,r.height()/2);
+    text(r.x(),r.y(),r.width(),r.height(),label,12,on?navy:QColor("#A2A7B0"),false,false,Qt::AlignCenter);
+}
+void Painter::emptyState(QRectF r,const QString& name,const QString& message) {
+    const qreal size=std::min<qreal>(48,r.height()/3);
+    icon(name,r.center().x()-size/2,r.center().y()-size-6,size,QColor("#B4BDCC"));
+    text(r.x(),r.center().y()+4,r.width(),32,message,15,slate,false,false,Qt::AlignHCenter|Qt::AlignTop);
 }
 void Painter::progress(QRectF r,double value,QColor color) {
     p.setPen(Qt::NoPen);p.setBrush(QColor("#E1E5EE"));p.drawRoundedRect(r,r.height()/2,r.height()/2);
@@ -167,12 +193,60 @@ QString specs(const Order& o,bool compact) {
     const QString s=QStringLiteral("%1 页 / %2 / %3 / %4").arg(o.pages).arg(o.a3?"A3":"A4").arg(o.color?QStringLiteral("彩色"):QStringLiteral("黑白")).arg(o.duplex?QStringLiteral("双面"):QStringLiteral("单面"));
     return compact?s: (o.copies>1?s+QStringLiteral(" / %1 份").arg(o.copies):s);
 }
+QString capability(const Device& device) {
+    return QStringLiteral("%1 · %2 · %3").arg(device.a3?QStringLiteral("A3/A4"):QStringLiteral("A4"),
+        device.color?QStringLiteral("彩色"):QStringLiteral("黑白"),device.duplex?QStringLiteral("双面"):QStringLiteral("单面"));
+}
+QVector<OrderFilter> orderFilters(bool showcase) {
+    if(showcase)return {OrderFilter::Waiting,OrderFilter::Printing,OrderFilter::Ready,OrderFilter::Completed,OrderFilter::Closed,OrderFilter::All};
+    return {OrderFilter::Waiting,OrderFilter::Printing,OrderFilter::Completed,OrderFilter::Closed,OrderFilter::All};
+}
+QString filterLabel(OrderFilter filter) {
+    switch(filter) {
+    case OrderFilter::Waiting: return QStringLiteral("待打印");
+    case OrderFilter::Printing: return QStringLiteral("打印中");
+    case OrderFilter::Ready: return QStringLiteral("待取件");
+    case OrderFilter::Completed: return QStringLiteral("已完成");
+    case OrderFilter::Closed: return QStringLiteral("已取消");
+    case OrderFilter::All: return QStringLiteral("全部");
+    }
+    return {};
+}
+static bool inFilter(OrderState state,OrderFilter filter) {
+    switch(filter) {
+    case OrderFilter::Waiting: return state==OrderState::Waiting;
+    case OrderFilter::Printing: return isActive(state);
+    case OrderFilter::Ready: return state==OrderState::Ready;
+    case OrderFilter::Completed: return state==OrderState::Completed;
+    case OrderFilter::Closed: return isClosed(state);
+    case OrderFilter::All: return true;
+    }
+    return false;
+}
+int filterCount(const Snapshot& s,OrderFilter filter) {
+    return static_cast<int>(std::count_if(s.orders.cbegin(),s.orders.cend(),[filter](const Order& o){return inFilter(o.state,filter);}));
+}
+QVector<int> waitingOrders(const Snapshot& s) {
+    QVector<int> result;
+    for(int i=0;i<s.orders.size();++i)if(s.orders[i].state==OrderState::Waiting)result.push_back(i);
+    return result;
+}
+// A search covers every order, whatever tab is open.
 QVector<int> visibleOrders(const Snapshot& s,const Selection& sel) {
-    QVector<int> result;const QStringList states{QStringLiteral("待打印"),QStringLiteral("打印中"),QStringLiteral("待取件"),QStringLiteral("已完成")};
-    for(int i=0;i<s.orders.size();++i) {const auto& o=s.orders[i];if(sel.filter>=0&&sel.filter<4&&o.state!=states[sel.filter])continue;
-        if(!sel.search.isEmpty()&&!o.title.contains(sel.search,Qt::CaseInsensitive)&&!o.id.contains(sel.search,Qt::CaseInsensitive)&&!o.student.contains(sel.search))continue;
-        result.push_back(i);}
-    std::stable_sort(result.begin(),result.end(),[&s](int a,int b){return s.orders[a].id<s.orders[b].id;});
+    QVector<int> result;
+    for(int i=0;i<s.orders.size();++i) {
+        const auto& o=s.orders[i];
+        if(sel.search.isEmpty()?!inFilter(o.state,sel.filter):
+           !o.title.contains(sel.search,Qt::CaseInsensitive)&&!o.id.contains(sel.search,Qt::CaseInsensitive)&&!o.student.contains(sel.search))continue;
+        result.push_back(i);
+    }
+    // Sample ids follow the concept artwork. Live waiting orders keep the backend's
+    // dispatch order; everything else lists the latest activity first.
+    if(s.showcase)std::stable_sort(result.begin(),result.end(),[&s](int a,int b){return s.orders[a].id<s.orders[b].id;});
+    else if(!sel.search.isEmpty()||sel.filter!=OrderFilter::Waiting) {
+        const auto latest=[&s](int i){const auto& o=s.orders[i];return o.finishedMs>0?o.finishedMs:o.submittedMs;};
+        std::stable_sort(result.begin(),result.end(),[&](int a,int b){return latest(a)>latest(b);});
+    }
     return result;
 }
 }

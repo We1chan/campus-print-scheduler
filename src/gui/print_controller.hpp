@@ -76,6 +76,8 @@ public slots:
     void submit(const QString& title, int pages, int copies, int priority);
     void importFile(const QString& path);
     void submitOrder(QJsonObject order);
+    void submitDemoBatch();
+    void clearDemoOrders();
     void requestQuote(QJsonObject order, int token);
     void runExperiments(const QString& path, int customers);
     void shopCommand(const QString& type, QJsonObject payload);
