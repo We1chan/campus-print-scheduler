@@ -92,6 +92,24 @@ function recalcPages() {
   return total;
 }
 function syncPages() { lockPages(!(docs.length === 1 && docs[0].record && !docs[0].record.pages_locked)); recalcPages(); }
+function renderFilePicker() {
+  const selected = docs.length > 0;
+  $("file-card").classList.toggle("has-file", selected);
+  $("remove-file").hidden = true;
+  if (!selected) {
+    $("file-name").textContent = "选择要打印的文件";
+    $("file-info").textContent = "PDF / Word / PPT / Excel / 图片 / 文本 · 单个最大 10 MiB · 一次最多 10 个";
+    $("choose-text").textContent = "选择文件";
+    $("choose-label").setAttribute("aria-label", "选择文件");
+    $("choose-label").title = "选择文件";
+    return;
+  }
+  $("file-name").textContent = `已选 ${docs.length} 个文件`;
+  $("file-info").textContent = `点击「＋ 添加文件」继续选择 · 最多还可添加 ${MAX_DOCS - docs.length} 个`;
+  $("choose-text").textContent = "添加文件";
+  $("choose-label").setAttribute("aria-label", "继续添加文件");
+  $("choose-label").title = "继续添加文件";
+}
 function locate(page) {
   let offset = 0;
   for (const doc of docs) {
@@ -341,9 +359,6 @@ async function chooseFiles(fileList) {
     if (!file.size || file.size > MAX_FILE) { say(`「${file.name}」为空或超过 10 MiB。`, "error"); $("file").value = ""; return; }
   }
   $("file").value = "";
-  $("file-card").classList.add("has-file");
-  $("remove-file").hidden = false;
-  $("choose-label").firstChild.textContent = "加选文件";
   $("upload-progress").hidden = false;
   $("upload-progress").value = 0;
   uploadToken += 1;
@@ -447,7 +462,7 @@ function fileMeta(doc) {
 function renderFileList() {
   const list = $("file-list");
   if (!list) return;
-  if (!docs.length) { list.hidden = true; list.replaceChildren(); return; }
+  if (!docs.length) { list.hidden = true; list.replaceChildren(); renderFilePicker(); return; }
   list.hidden = false;
   list.replaceChildren(...docs.map((doc, position) => {
     const row = node("li", "file-row");
@@ -460,10 +475,8 @@ function renderFileList() {
     return row;
   }));
   const first = docs[0].record;
-  $("file-name").textContent = docs.length > 1 ? `${first.name} 等${docs.length}份` : first.name;
-  $("file-info").textContent = docs.length > 1 ? `共 ${docs.length} 个文件 · 合计 ${recalcPages()} 页` : fileMeta(docs[0]);
   $("page-note").textContent = docs.length > 1 ? "多文件将合并为一单，合计页数为各文件之和。" : first.note;
-  $("choose-label").firstChild.textContent = docs.length > 1 ? "加选文件" : "更换文件";
+  renderFilePicker();
 }
 
 function applyUpload(record, fresh) {
@@ -472,8 +485,6 @@ function applyUpload(record, fresh) {
   else docs.push({record, url: null, lines: null, pages: record.pages});
   if (fresh) { aspects.clear(); resetBook(); rotation = 0; }
   persistDocs();
-  $("file-card").classList.add("has-file");
-  $("remove-file").hidden = false;
   renderFileList();
   syncPages();
   clearTimeout(conversionTimer);
@@ -530,12 +541,7 @@ function clearDocument(keepMessage) {
   docs = [];
   persistDocs();
   $("file").value = "";
-  $("file-name").textContent = "选择要打印的文件";
-  $("file-info").textContent = "PDF / Word / PPT / Excel / 图片 / 文本 · 单个最大 10 MiB · 一次最多 10 个";
   $("page-note").textContent = "页数按文档自动识别；无法识别时请手动填写。";
-  $("choose-label").firstChild.textContent = "选择文件";
-  $("remove-file").hidden = true;
-  $("file-card").classList.remove("has-file");
   $("upload-progress").hidden = true;
   renderFileList();
   lockPages(false);

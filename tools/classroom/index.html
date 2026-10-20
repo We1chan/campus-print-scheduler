@@ -62,7 +62,11 @@
           <strong id="file-name">选择要打印的文件</strong>
           <span id="file-info">PDF / Word / PPT / Excel / 图片 / 文本 · 单个最大 10 MiB · 一次最多 10 个</span>
         </div>
-        <label class="choose" id="choose-label">选择文件<input id="file" type="file" multiple accept=".pdf,.txt,.md,.png,.jpg,.jpeg,.doc,.docx,.ppt,.pptx,.xls,.xlsx,application/pdf,image/png,image/jpeg"></label>
+        <label class="choose" id="choose-label" aria-label="选择文件" title="选择文件">
+          <svg class="choose-plus" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+          <span id="choose-text">选择文件</span>
+          <input id="file" type="file" multiple accept=".pdf,.txt,.md,.png,.jpg,.jpeg,.doc,.docx,.ppt,.pptx,.xls,.xlsx,application/pdf,image/png,image/jpeg">
+        </label>
         <button type="button" id="remove-file" class="link" hidden>移除全部</button>
         <progress id="upload-progress" max="100" value="0" hidden></progress>
       </div>

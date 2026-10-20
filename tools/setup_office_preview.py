@@ -103,7 +103,10 @@ def main():
     startup.wShowWindow = 0
     subprocess.run(["msiexec.exe", "/a", str(installer), "/qn", "TARGETDIR=" + str(output),
                     "/L*v", str(output / "extraction.log")], startupinfo=startup,
-                   creationflags=subprocess.CREATE_NO_WINDOW, check=True, timeout=240)
+                   # Full administrative images include language resources and can
+                   # take several minutes to expand on Windows; keep the installer
+                   # client alive until msiexec has finished writing the private tree.
+                   creationflags=subprocess.CREATE_NO_WINDOW, check=True, timeout=900)
     programs = list(output.rglob("soffice.com"))
     if len(programs) != 1:
         raise RuntimeError("Expected one extracted LibreOffice executable")
