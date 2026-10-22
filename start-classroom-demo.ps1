@@ -34,10 +34,19 @@ if ($LASTEXITCODE -ne 0) {
     throw 'Install QR dependency first: python -m pip install --target runtime/classroom-python -r tools/classroom/requirements.txt'
 }
 if (-not $PublicUrl) {
-    # A UDP connect selects the local address of the default route without
-    # sending traffic. Override -PublicUrl when using a different adapter.
-    $taskAddress = (& $Python -c 'import socket,ipaddress; s=socket.socket(socket.AF_INET,socket.SOCK_DGRAM); s.connect((str(ipaddress.IPv4Address(3221225985)),80)); print(s.getsockname()[0]); s.close()').Trim()
-    if ($LASTEXITCODE -ne 0 -or -not $taskAddress) { throw 'Cannot select a LAN address; pass -PublicUrl http://YOUR-LAN-IP:8787.' }
+    # VPN/TUN adapters can own the default route but cannot be reached by phones.
+    # Prefer a connected physical adapter with a gateway, then the lowest metric.
+    $taskAddress = Get-NetIPConfiguration |
+        Where-Object { $_.NetAdapter.Status -eq 'Up' -and $_.NetAdapter.HardwareInterface -and $_.IPv4DefaultGateway } |
+        Sort-Object { $_.NetIPv4Interface.InterfaceMetric } |
+        ForEach-Object { $_.IPv4Address.IPAddress } |
+        Where-Object { $_ -and $_ -notlike '169.254.*' -and $_ -notlike '127.*' } |
+        Select-Object -First 1
+    if (-not $taskAddress) {
+        # Preserve the default-route fallback for networks without physical adapters.
+        $taskAddress = (& $Python -c 'import socket,ipaddress; s=socket.socket(socket.AF_INET,socket.SOCK_DGRAM); s.connect((str(ipaddress.IPv4Address(3221225985)),80)); print(s.getsockname()[0]); s.close()').Trim()
+        if ($LASTEXITCODE -ne 0 -or -not $taskAddress) { throw 'Cannot select a LAN address; pass -PublicUrl http://YOUR-LAN-IP:8787.' }
+    }
     $PublicUrl = "http://${taskAddress}:$Port"
 }
 # ArgumentList requires quoting paths that contain spaces on Windows.
