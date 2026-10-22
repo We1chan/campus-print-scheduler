@@ -96,8 +96,6 @@ public:
     bool clear();
     std::vector<Job> snapshot() const;
 private:
-    bool precedes(const Job& a, const Job& b, Policy policy, TimeMs now) const;
-    TimeMs balancedScore(const Job& job, TimeMs now) const;
     Job* find(const std::string& id);
     bool finishLocked(Job& job, int attempt, bool success, TimeMs now);
     Job startLocked(Job& job, TimeMs now);

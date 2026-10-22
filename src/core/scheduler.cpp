@@ -75,6 +75,77 @@ bool validSnapshot(const Job& job, TimeMs now) {
     }
     return job.accumulatedWaitMs == wait;
 }
+
+// Everything the queue comparison needs for one decision at a fixed `now`.
+// Built once per waiting job, so sorting compares stored integers instead of
+// re-evaluating the Balanced score inside every comparison.
+struct QueueKey {
+    std::size_t index; // position in the scheduler's job list
+    int sheets;
+    TimeMs queuedSinceMs;
+    TimeMs waitedMs;   // accumulated queue wait at `now`, kept across retries
+    TimeMs score;      // Balanced weighted value; zero for FCFS and SJF
+};
+TimeMs balancedScore(const Job& job, TimeMs waited, TimeMs now, TimeMs agingIntervalMs) {
+    // Fixed-point points (100 units = 1 point) keep ties reproducible. All
+    // business bonuses are bounded; accumulated waiting grows without a cap.
+    // Concave waiting growth avoids reducing a busy shop to arrival order.
+    // Correct the floating-point sqrt estimate using exact integer squares so
+    // score boundaries and ties remain identical across platforms.
+    const auto ageUnits = waited * 100 / agingIntervalMs;
+    auto root = static_cast<TimeMs>(std::sqrt(static_cast<double>(ageUnits)));
+    while ((root + 1) * (root + 1) <= ageUnits) ++root;
+    while (root * root > ageUnits) --root;
+    const auto aging = root * 10;
+    const int service = job.service == ServiceTier::Express ? 3200 :
+        job.service == ServiceTier::Standard ? 1600 : 0;
+    const auto window = serviceWindowMs(job.service);
+    const auto remaining = std::max<TimeMs>(0, job.deadlineMs - now);
+    const auto urgency = job.deadlineMs == 0 || remaining == 0 ? 0 :
+        400 * (window - std::min(window, remaining)) / window;
+    // Queue ranking uses nominal consumables, independent of idle devices.
+    // Actual device cost is computed and recorded only after assignment.
+    const auto contribution = std::max<Money>(0, job.quotedCents - directCost(job, Printer{}));
+    const auto earnings = std::min<Money>(3200, 3200 * contribution / (100 * job.sheets()));
+    return 100 + aging + service + urgency + earnings;
+}
+bool precedes(const QueueKey& a, const QueueKey& b, Policy policy) {
+    if (policy == Policy::ShortestJobFirst && a.sheets != b.sheets) return a.sheets < b.sheets;
+    if (policy == Policy::Balanced) {
+        // Beyond the longest offered service window, protect old documents
+        // ahead of new business bonuses. This is queue priority, not a deadline
+        // guarantee when devices or paper are unavailable.
+        const auto protection = serviceWindowMs(ServiceTier::Flexible);
+        const bool oldA = a.waitedMs >= protection, oldB = b.waitedMs >= protection;
+        if (oldA != oldB) return oldA;
+        if (oldA && a.waitedMs != b.waitedMs) return a.waitedMs > b.waitedMs;
+        // Weighted response ratio: useful work per face, with integer cross
+        // products for reproducible comparisons and no rounded ratio ties.
+        const auto lhs = a.score * b.sheets;
+        const auto rhs = b.score * a.sheets;
+        if (lhs != rhs) return lhs > rhs;
+    }
+    return a.queuedSinceMs < b.queuedSinceMs;
+}
+// Arrived Queued jobs accepted by `eligible`, keyed for `policy`, in list order.
+template <class Eligible>
+std::vector<QueueKey> waitingKeys(const std::vector<Job>& jobs, Policy policy, TimeMs now,
+                                  TimeMs agingIntervalMs, Eligible eligible) {
+    std::vector<QueueKey> keys;
+    for (std::size_t i = 0; i < jobs.size(); ++i) {
+        const auto& job = jobs[i];
+        if (job.state != JobState::Queued || job.queuedSinceMs > now || !eligible(job)) continue;
+        const auto waited = job.accumulatedWaitMs + now - job.queuedSinceMs;
+        keys.push_back({i, job.sheets(), job.queuedSinceMs, waited,
+                        policy == Policy::Balanced ? balancedScore(job, waited, now, agingIntervalMs) : 0});
+    }
+    return keys;
+}
+void sortKeys(std::vector<QueueKey>& keys, Policy policy) {
+    std::stable_sort(keys.begin(), keys.end(), [policy](const QueueKey& a, const QueueKey& b) {
+        return precedes(a, b, policy);
+    });
+}
 }
 
 Scheduler::Scheduler(SchedulerOptions options, Clock clock) : options_(options), clock_(std::move(clock)) {
@@ -129,73 +200,26 @@ bool Scheduler::submitBatch(std::vector<Job> jobs) {
     }
     return true;
 }
-TimeMs Scheduler::balancedScore(const Job& job, TimeMs now) const {
-    // Fixed-point points (100 units = 1 point) keep ties reproducible. All
-    // business bonuses are bounded; accumulated waiting grows without a cap.
-    const auto waited = job.accumulatedWaitMs + now - job.queuedSinceMs;
-    // Concave waiting growth avoids reducing a busy shop to arrival order.
-    // Correct the floating-point sqrt estimate using exact integer squares so
-    // score boundaries and ties remain identical across platforms.
-    const auto ageUnits = waited * 100 / options_.agingIntervalMs;
-    auto root = static_cast<TimeMs>(std::sqrt(static_cast<double>(ageUnits)));
-    while ((root + 1) * (root + 1) <= ageUnits) ++root;
-    while (root * root > ageUnits) --root;
-    const auto aging = root * 10;
-    const int service = job.service == ServiceTier::Express ? 3200 :
-        job.service == ServiceTier::Standard ? 1600 : 0;
-    const auto window = serviceWindowMs(job.service);
-    const auto remaining = std::max<TimeMs>(0, job.deadlineMs - now);
-    const auto urgency = job.deadlineMs == 0 || remaining == 0 ? 0 :
-        400 * (window - std::min(window, remaining)) / window;
-    // Queue ranking uses nominal consumables, independent of idle devices.
-    // Actual device cost is computed and recorded only after assignment.
-    const auto contribution = std::max<Money>(0, job.quotedCents - directCost(job, Printer{}));
-    const auto earnings = std::min<Money>(3200, 3200 * contribution / (100 * job.sheets()));
-    return 100 + aging + service + urgency + earnings;
-}
-bool Scheduler::precedes(const Job& a, const Job& b, Policy policy, TimeMs now) const {
-    if (policy == Policy::ShortestJobFirst && a.sheets() != b.sheets()) return a.sheets() < b.sheets();
-    if (policy == Policy::Balanced) {
-        const auto wait = [now](const Job& j) { return j.accumulatedWaitMs + now - j.queuedSinceMs; };
-        // Beyond the longest offered service window, protect old documents
-        // ahead of new business bonuses. This is queue priority, not a deadline
-        // guarantee when devices or paper are unavailable.
-        const auto protection = serviceWindowMs(ServiceTier::Flexible);
-        const bool oldA = wait(a) >= protection, oldB = wait(b) >= protection;
-        if (oldA != oldB) return oldA;
-        if (oldA && wait(a) != wait(b)) return wait(a) > wait(b);
-        // Weighted response ratio: useful work per face, with integer cross
-        // products for reproducible comparisons and no rounded ratio ties.
-        const auto lhs = balancedScore(a, now) * b.sheets();
-        const auto rhs = balancedScore(b, now) * a.sheets();
-        if (lhs != rhs) return lhs > rhs;
-    }
-    return a.queuedSinceMs < b.queuedSinceMs;
-}
 std::vector<std::string> Scheduler::waitingOrder(Policy policy, TimeMs now) const {
     if (!validTime(now) || !validPolicy(policy)) return {};
     std::lock_guard<std::mutex> lock(mutex_);
-    std::vector<const Job*> waiting;
-    for (const auto& job : jobs_)
-        if (job.state == JobState::Queued && job.queuedSinceMs <= now) waiting.push_back(&job);
-    std::stable_sort(waiting.begin(), waiting.end(), [&](const Job* a, const Job* b) {
-        return precedes(*a, *b, policy, now);
-    });
+    auto keys = waitingKeys(jobs_, policy, now, options_.agingIntervalMs, [](const Job&) { return true; });
+    sortKeys(keys, policy);
     std::vector<std::string> ids;
-    for (const auto* job : waiting) ids.push_back(job->id);
+    for (const auto& key : keys) ids.push_back(jobs_[key.index].id);
     return ids;
 }
 std::optional<Job> Scheduler::claim(Policy policy) { return claim(policy, nowMs()); }
 std::optional<Job> Scheduler::claim(Policy policy, TimeMs now) {
     if (!validTime(now) || !validPolicy(policy)) return std::nullopt;
     std::lock_guard<std::mutex> lock(mutex_);
-    Job* best = nullptr;
-    for (auto& job : jobs_) {
-        if (job.state != JobState::Queued || job.queuedSinceMs > now) continue;
-        if (!best || precedes(job, *best, policy, now)) best = &job;
-    }
-    if (!best) return std::nullopt;
-    return startLocked(*best, now);
+    const auto keys = waitingKeys(jobs_, policy, now, options_.agingIntervalMs, [](const Job&) { return true; });
+    if (keys.empty()) return std::nullopt;
+    // The first minimum keeps list order among equal keys, like the stable sort.
+    const auto best = std::min_element(keys.begin(), keys.end(), [policy](const QueueKey& a, const QueueKey& b) {
+        return precedes(a, b, policy);
+    });
+    return startLocked(jobs_[best->index], now);
 }
 Job Scheduler::startLocked(Job& value, TimeMs now) {
     auto* best = &value;
@@ -218,15 +242,12 @@ std::optional<Job> Scheduler::claimFor(Policy policy, TimeMs now, const std::vec
     for (const auto& other : jobs_) if (other.assignedPrinter >= 0 && other.assignedPrinter < static_cast<int>(fleet.size()) &&
         (other.state == JobState::Running || other.state == JobState::Cancelling)) occupied[other.assignedPrinter] = true;
     // Layer 1: exactly the same queue comparison as waitingOrder() / claim().
-    std::vector<Job*> waiting;
-    for (auto& j : jobs_) {
-        if (j.state != JobState::Queued || j.queuedSinceMs > now ||
-            (j.attempts == 0 && j.paperSheets() > (j.paper == PaperSize::A3 ? stock.a3 : stock.a4))) continue;
-        waiting.push_back(&j);
-    }
-    std::stable_sort(waiting.begin(), waiting.end(), [&](const Job* a, const Job* b) {
-        return precedes(*a, *b, policy, now);
+    auto keys = waitingKeys(jobs_, policy, now, options_.agingIntervalMs, [&](const Job& j) {
+        return j.attempts > 0 || j.paperSheets() <= (j.paper == PaperSize::A3 ? stock.a3 : stock.a4);
     });
+    sortKeys(keys, policy);
+    std::vector<Job*> waiting;
+    for (const auto& key : keys) waiting.push_back(&jobs_[key.index]);
     // Layer 2: normalize idle indices, then choose a device for the queue head.
     std::vector<int> free;
     for (int i : idle)
